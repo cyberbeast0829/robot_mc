@@ -24,110 +24,60 @@
 
 /* USER CODE END 0 */
 
-UART_HandleTypeDef huart2;
+USART_InitType huart2;
 
 /* USART2 init function */
 
 void MX_USART2_UART_Init(void)
 {
+  GPIO_InitType GPIO_InitStructure;
+  NVIC_InitType NVIC_InitStructure;  
 
-  /* USER CODE BEGIN USART2_Init 0 */
+  RCC_EnableAHB1PeriphClk(RCC_AHB_PERIPHEN_GPIOB | RCC_AHB_PERIPHEN_GPIOC, ENABLE);
+  RCC_EnableAPB2PeriphClk(RCC_APB2_PERIPH_AFIO, ENABLE);
+  RCC_EnableAPB1PeriphClk(RCC_APB1_PERIPH_USART3, ENABLE);
 
-  /* USER CODE END USART2_Init 0 */
+  GPIO_InitStructure.Pin        = USART_TX_Pin;
+  GPIO_InitStructure.GPIO_Mode  = GPIO_MODE_AF_PP;
+  GPIO_InitStructure.GPIO_Pull  = GPIO_NO_PULL;
+  GPIO_InitStructure.GPIO_Current = GPIO_DC_12mA;
+  GPIO_InitStructure.GPIO_Alternate = GPIO_AF_USART3_TX;
+  GPIO_InitStructure.GPIO_Slew_Rate = GPIO_SLEW_RATE_FAST;
+  GPIO_InitPeripheral(USART_TX_GPIO_Port, &GPIO_InitStructure);
 
-  /* USER CODE BEGIN USART2_Init 1 */
+  GPIO_InitStructure.Pin        = USART_RX_Pin;
+  GPIO_InitStructure.GPIO_Mode  = GPIO_MODE_INPUT;
+  GPIO_InitStructure.GPIO_Alternate = GPIO_AF_USART3_RX;
+  GPIO_InitPeripheral(USART_RX_GPIO_Port, &GPIO_InitStructure);
 
-  /* USER CODE END USART2_Init 1 */
-  huart2.Instance = USART2;
-  huart2.Init.BaudRate = 115200;
-  huart2.Init.WordLength = UART_WORDLENGTH_8B;
-  huart2.Init.StopBits = UART_STOPBITS_1;
-  huart2.Init.Parity = UART_PARITY_NONE;
-  huart2.Init.Mode = UART_MODE_TX_RX;
-  huart2.Init.HwFlowCtl = UART_HWCONTROL_NONE;
-  huart2.Init.OverSampling = UART_OVERSAMPLING_16;
-  if (HAL_UART_Init(&huart2) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN USART2_Init 2 */
+  GPIO_InitStructure.Pin        = USART_EN_Pin;
+  GPIO_InitStructure.GPIO_Mode  = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitPeripheral(USART_EN_GPIO_Port, &GPIO_InitStructure);
 
-  /* USER CODE END USART2_Init 2 */
+  huart2.BaudRate           = 115200;
+  huart2.Parity             = USART_PE_NO;
+  huart2.WordLength         = USART_WL_8B;
+  huart2.StopBits            = USART_STPB_1;
+  huart2.HardwareFlowControl = USART_HFCTRL_NONE;
+  huart2.Mode                = USART_MODE_RX | USART_MODE_TX;
+  USART_Init(USART3, &huart2);
 
-}
+  NVIC_InitStructure.NVIC_IRQChannel                   = USART3_IRQn;
+  NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 0;
+  NVIC_InitStructure.NVIC_IRQChannelSubPriority        = 0;
+  NVIC_InitStructure.NVIC_IRQChannelCmd                = ENABLE;
+  NVIC_Init(&NVIC_InitStructure);
 
-void HAL_UART_MspInit(UART_HandleTypeDef* uartHandle)
-{
+  USART_ConfigInt(USART3, USART_INT_RXDNE, ENABLE);
 
-  GPIO_InitTypeDef GPIO_InitStruct = {0};
-  if(uartHandle->Instance==USART2)
-  {
-  /* USER CODE BEGIN USART2_MspInit 0 */
-
-  /* USER CODE END USART2_MspInit 0 */
-    /* USART2 clock enable */
-    __HAL_RCC_USART2_CLK_ENABLE();
-
-    __HAL_RCC_GPIOA_CLK_ENABLE();
-    /**USART2 GPIO Configuration
-    PA2     ------> USART2_TX
-    PA3     ------> USART2_RX
-    */
-    GPIO_InitStruct.Pin = USART_TX_Pin|USART_RX_Pin;
-    GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-    GPIO_InitStruct.Pull = GPIO_NOPULL;
-    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
-    GPIO_InitStruct.Alternate = GPIO_AF7_USART2;
-    HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
-
-    /* USART2 interrupt Init */
-    HAL_NVIC_SetPriority(USART2_IRQn, 0, 0);
-    HAL_NVIC_EnableIRQ(USART2_IRQn);
-  /* USER CODE BEGIN USART2_MspInit 1 */
-
-  /* USER CODE END USART2_MspInit 1 */
-  }
-}
-
-void HAL_UART_MspDeInit(UART_HandleTypeDef* uartHandle)
-{
-
-  if(uartHandle->Instance==USART2)
-  {
-  /* USER CODE BEGIN USART2_MspDeInit 0 */
-
-  /* USER CODE END USART2_MspDeInit 0 */
-    /* Peripheral clock disable */
-    __HAL_RCC_USART2_CLK_DISABLE();
-
-    /**USART2 GPIO Configuration
-    PA2     ------> USART2_TX
-    PA3     ------> USART2_RX
-    */
-    HAL_GPIO_DeInit(GPIOA, USART_TX_Pin|USART_RX_Pin);
-
-    /* USART2 interrupt Deinit */
-    HAL_NVIC_DisableIRQ(USART2_IRQn);
-  /* USER CODE BEGIN USART2_MspDeInit 1 */
-
-  /* USER CODE END USART2_MspDeInit 1 */
-  }
+  USART_Enable(USART3, ENABLE);
 }
 
 /* USER CODE BEGIN 1 */
 int __io_putchar(int ch) {
-HAL_UART_Transmit(&huart2, (uint8_t*)&ch, 1, 0xffff);
-return 0;
+  USART_SendData(&huart2, ch);
+  return 0;
 }
 
-void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
-{
-  /* Prevent unused argument(s) compilation warning */
-	HAL_UART_Receive_IT(&huart2, (uint8_t *)Serial2RxBuffer, 1);
-  /* NOTE: This function should not be modified, when the callback is needed,
-           the HAL_UART_RxCpltCallback could be implemented in the user file
-   */
-}
-/* USER CODE END 1 */
 
 /************************ (C) COPYRIGHT STMicroelectronics *****END OF FILE****/

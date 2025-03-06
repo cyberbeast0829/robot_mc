@@ -30,147 +30,96 @@ TIM_HandleTypeDef htim1;
 void MX_TIM1_Init(void)
 {
 
-  /* USER CODE BEGIN TIM1_Init 0 */
+  GPIO_InitType GPIO_InitStructure;
+  TIM_TimeBaseInitType TIM_TimeBaseStructure;
+  OCInitType TIM_OCInitStructure;
+  TIM_BDTRInitType TIM_BDTRInitStructure;
+  NVIC_InitType NVIC_InitStructure; 
 
-  /* USER CODE END TIM1_Init 0 */
+  // Enable peripheral clocks
+  RCC_EnableAHBPeriphClk(RCC_AHB_PERIPHEN_ATIM1, ENABLE);
+  RCC_EnableAPB2PeriphClk(RCC_APB2_PERIPH_AFIO, ENABLE);
+  RCC_EnableAHB1PeriphClk(RCC_AHB_PERIPHEN_GPIOA | RCC_AHB_PERIPHEN_GPIOB, ENABLE);
 
-  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
-  TIM_MasterConfigTypeDef sMasterConfig = {0};
-  TIM_OC_InitTypeDef sConfigOC = {0};
-  TIM_BreakDeadTimeConfigTypeDef sBreakDeadTimeConfig = {0};
+  // PA8 --> GHS_U
+  // PA9 --> GHS_V
+  // PA10 --> GHS_W
+  GPIO_InitStruct(&GPIO_InitStructure);
+  GPIO_InitStructure.Pin        = GHS_U_Pin | GHS_V_Pin | GHS_W_Pin;
+  GPIO_InitStructure.GPIO_Mode  = GPIO_MODE_AF_PP;
+  GPIO_InitStructure.GPIO_Pull  = GPIO_NO_PULL;
+  GPIO_InitStructure.GPIO_Current = GPIO_DC_12mA;
+  GPIO_InitStructure.GPIO_Alternate = GPIO_AF_ATIM1_CH1_PA8; // GPIO_AF_ATIM1_CH2_PA9/GPIO_AF_ATIM1_CH3_PA10
+  GPIO_InitStructure.GPIO_Slew_Rate = GPIO_SLEW_RATE_FAST;
+  GPIO_InitPeripheral(GHS_GPIO_Port, &GPIO_InitStructure);
 
-  /* USER CODE BEGIN TIM1_Init 1 */
+  // PA7 --> GLS_U
+  // PB0 --> GLS_V
+  // PB1 --> GLS_W
+  GPIO_InitStructure.Pin = GLS_U_Pin;
+  GPIO_InitStructure.GPIO_Alternate = GPIO_AF_ATIM1_CH1N_PA7;
+  GPIO_InitPeripheral(GLS_U_GPIO_Port, &GPIO_InitStructure);
+  GPIO_InitStructure.Pin = GLS_V_Pin | GLS_W_Pin;
+  GPIO_InitStructure.GPIO_Alternate = GPIO_AF_ATIM1_CH2N_PB0; // GPIO_AF_ATIM1_CH3N_PB1
+  GPIO_InitPeripheral(GLS_VW_GPIO_Port, &GPIO_InitStructure);
 
-  /* USER CODE END TIM1_Init 1 */
-  htim1.Instance = TIM1;
-  htim1.Init.Prescaler = 0;
-  htim1.Init.CounterMode = TIM_COUNTERMODE_CENTERALIGNED1;
-  htim1.Init.Period = 0x8CA;
-  htim1.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
-  htim1.Init.RepetitionCounter = 1;
-  htim1.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_ENABLE;
-  if (HAL_TIM_Base_Init(&htim1) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
-  if (HAL_TIM_ConfigClockSource(&htim1, &sClockSourceConfig) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  if (HAL_TIM_PWM_Init(&htim1) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
-  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
-  if (HAL_TIMEx_MasterConfigSynchronization(&htim1, &sMasterConfig) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  sConfigOC.OCMode = TIM_OCMODE_PWM1;
-  sConfigOC.Pulse = 0;
-  sConfigOC.OCPolarity = TIM_OCPOLARITY_LOW;
-  sConfigOC.OCNPolarity = TIM_OCNPOLARITY_HIGH;
-  sConfigOC.OCFastMode = TIM_OCFAST_ENABLE;
-  sConfigOC.OCIdleState = TIM_OCIDLESTATE_RESET;
-  sConfigOC.OCNIdleState = TIM_OCNIDLESTATE_RESET;
-  if (HAL_TIM_PWM_ConfigChannel(&htim1, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  if (HAL_TIM_PWM_ConfigChannel(&htim1, &sConfigOC, TIM_CHANNEL_2) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  if (HAL_TIM_PWM_ConfigChannel(&htim1, &sConfigOC, TIM_CHANNEL_3) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  sBreakDeadTimeConfig.OffStateRunMode = TIM_OSSR_DISABLE;
-  sBreakDeadTimeConfig.OffStateIDLEMode = TIM_OSSI_DISABLE;
-  sBreakDeadTimeConfig.LockLevel = TIM_LOCKLEVEL_OFF;
-  sBreakDeadTimeConfig.DeadTime = 0;
-  sBreakDeadTimeConfig.BreakState = TIM_BREAK_DISABLE;
-  sBreakDeadTimeConfig.BreakPolarity = TIM_BREAKPOLARITY_HIGH;
-  sBreakDeadTimeConfig.AutomaticOutput = TIM_AUTOMATICOUTPUT_DISABLE;
-  if (HAL_TIMEx_ConfigBreakDeadTime(&htim1, &sBreakDeadTimeConfig) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN TIM1_Init 2 */
+  TIM_InitTimBaseStruct(&TIM_TimeBaseStructure);
+  TIM_TimeBaseStructure.Prescaler = 0;
+  TIM_TimeBaseStructure.CounterMode = TIM_CNT_MODE_CENTER_ALIGN1;
+  TIM_TimeBaseStructure.Period    = 3000; // HCLK = 240M, 240M/3000/2 = 40KHz PWM
+  TIM_TimeBaseStructure.ClkDiv    = TIM_CLK_DIV1;
+  TIM_TimeBaseStructure.RepetCnt  = 1;
+  TIM_InitTimeBase(ATIM1, &TIM_TimeBaseStructure);
 
-  /* USER CODE END TIM1_Init 2 */
-  HAL_TIM_MspPostInit(&htim1);
+  // 使用SYSCLK作为ATIM的时钟源
+  RCC_ConfigATimClk(RCC_ATIM_CLKSRC_SYSCLK);
 
-}
+  TIM_InitOcStruct(&TIM_OCInitStructure);
+  TIM_OCInitStructure.OCMode       = TIM_OCMODE_PWM1;
+  TIM_OCInitStructure.OutputState  = TIM_OUTPUT_STATE_ENABLE;
+  TIM_OCInitStructure.OutputNState = TIM_OUTPUT_NSTATE_ENABLE;
+  TIM_OCInitStructure.Pulse        = 0;
+  TIM_OCInitStructure.OCPolarity   = TIM_OC_POLARITY_LOW;
+  TIM_OCInitStructure.OCNPolarity  = TIM_OCN_POLARITY_HIGH;
+  TIM_OCInitStructure.OCIdleState  = TIM_OC_IDLE_STATE_RESET;
+  TIM_OCInitStructure.OCNIdleState = TIM_OCN_IDLE_STATE_RESET;
 
-void HAL_TIM_Base_MspInit(TIM_HandleTypeDef* tim_baseHandle)
-{
+  TIM_InitOc1(ATIM1, &TIM_OCInitStructure);
+  TIM_ConfigOc1Fast(ATIM1, TIM_OC_FAST_ENABLE);
+  TIM_ConfigOc1Preload(ATIM1, TIM_OC_PRE_LOAD_ENABLE);
+  TIM_InitOc2(ATIM1, &TIM_OCInitStructure);
+  TIM_ConfigOc2Fast(ATIM1, TIM_OC_FAST_ENABLE);
+  TIM_ConfigOc2Preload(ATIM1, TIM_OC_PRE_LOAD_ENABLE);
+  TIM_InitOc3(ATIM1, &TIM_OCInitStructure);
+  TIM_ConfigOc3Fast(ATIM1, TIM_OC_FAST_ENABLE);
+  TIM_ConfigOc3Preload(ATIM1, TIM_OC_PRE_LOAD_ENABLE);
 
-  if(tim_baseHandle->Instance==TIM1)
-  {
-  /* USER CODE BEGIN TIM1_MspInit 0 */
+  // No master slave mode
+  TIM_SelectOutputTrig(ATIM1, TIM_TRGO_SRC_RESET);
+  TIM_SelectMasterSlaveMode(ATIM1, TIM_MASTER_SLAVE_MODE_DISABLE);
 
-  /* USER CODE END TIM1_MspInit 0 */
-    /* TIM1 clock enable */
-    __HAL_RCC_TIM1_CLK_ENABLE();
+  TIM_InitBkdtStruct(&TIM_BDTRInitStructure);
+  TIM_BDTRInitStructure.OSSRState       = TIM_OSSR_STATE_DISABLE;
+  TIM_BDTRInitStructure.OSSIState       = TIM_OSSI_STATE_DISABLE;
+  TIM_BDTRInitStructure.LOCKLevel       = TIM_LOCK_LEVEL_OFF;
+  TIM_BDTRInitStructure.DeadTime        = 0;
+  TIM_BDTRInitStructure.Break           = TIM_BREAK_IN_DISABLE;
+  TIM_BDTRInitStructure.BreakPolarity   = TIM_BREAK_POLARITY_HIGH;
+  TIM_BDTRInitStructure.AutomaticOutput = TIM_AUTO_OUTPUT_DISABLE;
+  TIM_BDTRInitStructure.Bidirection     = TIM_BREAK_BID_DISABLE;
 
-    /* TIM1 interrupt Init */
-    HAL_NVIC_SetPriority(TIM1_UP_TIM10_IRQn, 0, 0);
-    HAL_NVIC_EnableIRQ(TIM1_UP_TIM10_IRQn);
-  /* USER CODE BEGIN TIM1_MspInit 1 */
+  TIM_ConfigBkdt(ATIM1, &TIM_BDTRInitStructure);
 
-  /* USER CODE END TIM1_MspInit 1 */
-  }
-}
-void HAL_TIM_MspPostInit(TIM_HandleTypeDef* timHandle)
-{
+  NVIC_InitStructure.NVIC_IRQChannel                   = ATIM1_UP_IRQn;
+  NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 0;
+  NVIC_InitStructure.NVIC_IRQChannelSubPriority        = 0;
+  NVIC_InitStructure.NVIC_IRQChannelCmd                = ENABLE;
+  NVIC_Init(&NVIC_InitStructure);
 
-  GPIO_InitTypeDef GPIO_InitStruct = {0};
-  if(timHandle->Instance==TIM1)
-  {
-  /* USER CODE BEGIN TIM1_MspPostInit 0 */
+  TIM_Enable(ATIM1, ENABLE);
 
-  /* USER CODE END TIM1_MspPostInit 0 */
-
-    __HAL_RCC_GPIOA_CLK_ENABLE();
-    /**TIM1 GPIO Configuration
-    PA8     ------> TIM1_CH1
-    PA9     ------> TIM1_CH2
-    PA10     ------> TIM1_CH3
-    */
-    GPIO_InitStruct.Pin = GPIO_PIN_8|GPIO_PIN_9|GPIO_PIN_10;
-    GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-    GPIO_InitStruct.Pull = GPIO_NOPULL;
-    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
-    GPIO_InitStruct.Alternate = GPIO_AF1_TIM1;
-    HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
-
-  /* USER CODE BEGIN TIM1_MspPostInit 1 */
-
-  /* USER CODE END TIM1_MspPostInit 1 */
-  }
-
-}
-
-void HAL_TIM_Base_MspDeInit(TIM_HandleTypeDef* tim_baseHandle)
-{
-
-  if(tim_baseHandle->Instance==TIM1)
-  {
-  /* USER CODE BEGIN TIM1_MspDeInit 0 */
-
-  /* USER CODE END TIM1_MspDeInit 0 */
-    /* Peripheral clock disable */
-    __HAL_RCC_TIM1_CLK_DISABLE();
-
-    /* TIM1 interrupt Deinit */
-    HAL_NVIC_DisableIRQ(TIM1_UP_TIM10_IRQn);
-  /* USER CODE BEGIN TIM1_MspDeInit 1 */
-
-  /* USER CODE END TIM1_MspDeInit 1 */
-  }
+  /* TIM1 Main Output Disable */
+  TIM_EnableCtrlPwmOutputs(ATIM1, DISABLE);
 }
 
 /* USER CODE BEGIN 1 */

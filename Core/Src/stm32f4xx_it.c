@@ -278,18 +278,15 @@ void TIM1_UP_TIM10_IRQHandler(void)
 /**
   * @brief This function handles USART2 global interrupt.
   */
-void USART2_IRQHandler(void)
+void USART3_IRQHandler(void)
 {
-  /* USER CODE BEGIN USART2_IRQn 0 */
-	HAL_UART_IRQHandler(&huart2);
+  if (SET == USART_GetIntStatus(USART3, USART_INT_RXDNE)) {
+    USART_ClrFlag(USART3, USART_FLAG_RXDNE);
+    pxMBFrameCBByteReceived();
+  }
 
-	char c = Serial2RxBuffer[0];
+	char c = USART_ReceiveData(USART3);
 	update_fsm(&state, c);
-
-  /* USER CODE END USART2_IRQn 0 */
-  HAL_UART_IRQHandler(&huart2);
-  /* USER CODE BEGIN USART2_IRQn 1 */
-  /* USER CODE END USART2_IRQn 1 */
 }
 
 

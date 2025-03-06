@@ -26,97 +26,77 @@
 #include "math_ops.h"
 /* USER CODE END 0 */
 
-CAN_HandleTypeDef hcan1;
+FDCAN_InitType hcan1 = {
+  .FrameFormat = FDCAN_FRAME_CLASSIC,
+  .Mode = FDCAN_MODE_NORMAL,
+  .Prescaler = 2,
+  .SyncJumpWidth = 2,
+  .TimeSeg1 = 34,
+  .TimeSeg2 = 5, // 默认500K波特率
+  .MsgRamStrAddr = (uint32_t)FDCAN_ram,
+  .MsgRamOffset = 0,
+  .pMsgInfo = &Node_msg,
+  .RxFifo0Size = 8,
+  .RxFifo0DataSize = FDCAN_DATA_BYTES_8,
+  .RxFifo1Size = 0,
+  .RxFifo1DataSize = FDCAN_DATA_BYTES_8,
+  .RxBufferSize = 0,
+  .RxBufferDataSize = FDCAN_DATA_BYTES_8,
+  .TxBufferSize = 0,
+  .TxBufferDataSize = FDCAN_DATA_BYTES_8,
+  .TxFifoQueueSize = 8,
+  .TxFifoQueueMode = FDCAN_TX_FIFO_MODE,
+  .TxEventSize = 0,
+  .AutoRetransmission = DISABLE,
+  .TransmitPause = DISABLE,
+  .ProtocolException = DISABLE,
+};
 
 /* CAN1 init function */
 void MX_CAN1_Init(void)
 {
+  GPIO_InitType GPIO_InitStructure;
+  NVIC_InitType NVIC_InitStructure;
 
-  /* USER CODE BEGIN CAN1_Init 0 */
+  RCC_ConfigFDCANPllClk(RCC_FDCAN_PLLSRC_DIV6); // 6分频，240M / 6 = 40M
+  RCC_ConfigFDCANClksrc(RCC_FDCAN_CLKSRC_PLL);
 
-  /* USER CODE END CAN1_Init 0 */
+  RCC_EnableAPB1PeriphClk(RCC_APB1_PERIPH_FDCAN2, ENABLE);
+  RCC_EnableAPB1PeriphReset(RCC_APB1_PERIPH_FDCAN2);
+  RCC_EnableAPB2PeriphClk(RCC_APB2_PERIPH_AFIO, ENABLE);
+  RCC_EnableAHB1PeriphClk(RCC_AHB_PERIPHEN_GPIOB, ENABLE);
 
-  /* USER CODE BEGIN CAN1_Init 1 */
+  GPIO_InitStructure.Pin       = CAN_RX_Pin;
+  GPIO_InitStructure.GPIO_Mode  = GPIO_MODE_INPUT;
+  GPIO_InitStructure.GPIO_Alternate = GPIO_AF_FDCAN2_RX;
+  GPIO_InitStructure.GPIO_Pull  = GPIO_PULL_UP;
+  GPIO_InitStructure.GPIO_Current = GPIO_DC_12mA;
+  GPIO_InitStructure.GPIO_Slew_Rate = GPIO_SLEW_RATE_FAST;
+  GPIO_InitPeripheral(CAN_RX_GPIO_Port, &GPIO_InitStructure);
+  
+  GPIO_InitStructure.Pin        = CAN_TX_Pin;
+  GPIO_InitStructure.GPIO_Alternate = GPIO_AF_FDCAN2_TX;
+  GPIO_InitStructure.GPIO_Mode  = GPIO_MODE_AF_PP;
+  GPIO_InitPeripheral(CAN_TX_GPIO_Port, &GPIO_InitStructure);
+  
+  FDCAN_DeInit(FDCAN2);
 
-  /* USER CODE END CAN1_Init 1 */
-  hcan1.Instance = CAN1;
-  hcan1.Init.Prescaler = 3;
-  hcan1.Init.Mode = CAN_MODE_NORMAL;
-  hcan1.Init.SyncJumpWidth = CAN_SJW_1TQ;
-  hcan1.Init.TimeSeg1 = CAN_BS1_12TQ;
-  hcan1.Init.TimeSeg2 = CAN_BS2_2TQ;
-  hcan1.Init.TimeTriggeredMode = DISABLE;
-  hcan1.Init.AutoBusOff = DISABLE;
-  hcan1.Init.AutoWakeUp = DISABLE;
-  hcan1.Init.AutoRetransmission = DISABLE;
-  hcan1.Init.ReceiveFifoLocked = DISABLE;
-  hcan1.Init.TransmitFifoPriority = DISABLE;
-  if (HAL_CAN_Init(&hcan1) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN CAN1_Init 2 */
+  FDCAN_Init(FDCAN2, &hcan1);
 
-  /* USER CODE END CAN1_Init 2 */
+  FDCAN_ConfigTSPrescaler(FDCAN2, FDCAN_TIMESTAMP_PRESC_16);
+  FDCAN_Config_TS(FDCAN2, FDCAN_TIMESTAMP_DISABLE);
 
-}
+  NVIC_InitStructure.NVIC_IRQChannel                   = FDCAN2_INT0_IRQn;
+  NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 0;
+  NVIC_InitStructure.NVIC_IRQChannelSubPriority        = 0;
+  NVIC_InitStructure.NVIC_IRQChannelCmd                = ENABLE;
+  NVIC_Init(&NVIC_InitStructure);
 
-void HAL_CAN_MspInit(CAN_HandleTypeDef* canHandle)
-{
+  FDCAN_ConfigIntLine(FDCAN2, FDCAN_INT_RX_FIFO0_NEW_MESSAGE, FDCAN_INTERRUPT_LINE0);
+  FDCAN_ActivateInt(FDCAN2, FDCAN_INT_RX_FIFO0_NEW_MESSAGE, FDCAN_TX_BUFFER0);
 
-  GPIO_InitTypeDef GPIO_InitStruct = {0};
-  if(canHandle->Instance==CAN1)
-  {
-  /* USER CODE BEGIN CAN1_MspInit 0 */
+  FDCAN_Start(FDCAN2);
 
-  /* USER CODE END CAN1_MspInit 0 */
-    /* CAN1 clock enable */
-    __HAL_RCC_CAN1_CLK_ENABLE();
-
-    __HAL_RCC_GPIOB_CLK_ENABLE();
-    /**CAN1 GPIO Configuration
-    PB8     ------> CAN1_RX
-    PB9     ------> CAN1_TX
-    */
-    GPIO_InitStruct.Pin = GPIO_PIN_8|GPIO_PIN_9;
-    GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-    GPIO_InitStruct.Pull = GPIO_NOPULL;
-    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
-    GPIO_InitStruct.Alternate = GPIO_AF9_CAN1;
-    HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
-
-    /* CAN1 interrupt Init */
-    HAL_NVIC_SetPriority(CAN1_RX0_IRQn, 0, 0);
-    HAL_NVIC_EnableIRQ(CAN1_RX0_IRQn);
-  /* USER CODE BEGIN CAN1_MspInit 1 */
-
-  /* USER CODE END CAN1_MspInit 1 */
-  }
-}
-
-void HAL_CAN_MspDeInit(CAN_HandleTypeDef* canHandle)
-{
-
-  if(canHandle->Instance==CAN1)
-  {
-  /* USER CODE BEGIN CAN1_MspDeInit 0 */
-
-  /* USER CODE END CAN1_MspDeInit 0 */
-    /* Peripheral clock disable */
-    __HAL_RCC_CAN1_CLK_DISABLE();
-
-    /**CAN1 GPIO Configuration
-    PB8     ------> CAN1_RX
-    PB9     ------> CAN1_TX
-    */
-    HAL_GPIO_DeInit(GPIOB, GPIO_PIN_8|GPIO_PIN_9);
-
-    /* CAN1 interrupt Deinit */
-    HAL_NVIC_DisableIRQ(CAN1_RX0_IRQn);
-  /* USER CODE BEGIN CAN1_MspDeInit 1 */
-
-  /* USER CODE END CAN1_MspDeInit 1 */
-  }
 }
 
 /* USER CODE BEGIN 1 */
