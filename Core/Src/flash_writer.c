@@ -16,27 +16,30 @@ bool flash_writer_ready(FlashWriter fw) {
 
 void flash_writer_open(FlashWriter * fw) {
     FLASH_Unlock();
-    FLASH_ClearFlag( FLASH_FLAG_EOP |  FLASH_FLAG_WRPERR | FLASH_FLAG_PGAERR | FLASH_FLAG_PGPERR | FLASH_FLAG_PGSERR);
-    FLASH_EraseSector(__SECTORS[fw->sector], VoltageRange_3);
+    // FLASH_ClearFlag( FLASH_STS_CLRFLAG );
+    FLASH_EraseOnePage(w->base);
     fw->ready = true;
 }
 
 void flash_writer_write_int(FlashWriter fw, uint32_t index, int x) {
-    union UN {int a; uint32_t b;};
+    union UN {int a; union {uint32_t c; uint32_t d} b;};
     union UN un;
     un.a = x;
-    FLASH_ProgramWord(fw.base + 4 * index, un.b);
+    FLASH_ProgramdoubleWord(fw.base + 8 * index, un.b.c, un.b.d);
 }
 
 void flash_writer_write_uint(FlashWriter fw, uint32_t index, unsigned int x) {
-    FLASH_ProgramWord(fw.base + 4 * index, x);
+    union UN {unsigned int a; union {uint32_t c; uint32_t d} b;};
+    union UN un;
+    un.a = x;
+    FLASH_ProgramdoubleWord(fw.base + 8 * index, un.b.c, un.b.d);
 }
 
 void flash_writer_write_float(FlashWriter fw, uint32_t index, float x) {
-    union UN {float a; uint32_t b;};
+    union UN {float a; union {uint32_t c; uint32_t d} b;};
     union UN un;
     un.a = x;
-    FLASH_ProgramWord(fw.base + 4 * index, un.b);
+    FLASH_ProgramdoubleWord(fw.base + 8 * index, un.b.c, un.b.d);
 }
 
 void flash_writer_close(FlashWriter * fw) {
@@ -45,15 +48,15 @@ void flash_writer_close(FlashWriter * fw) {
 }
 
 int flash_read_int(FlashWriter fw, uint32_t index) {
-    return *(int*) (__SECTOR_ADDRS[fw.sector] + 4 * index);
+    return *(int*) (__SECTOR_ADDRS[fw.sector] + 8 * index);
 }
 
 uint32_t flash_read_uint(FlashWriter fw, uint32_t index) {
-    return *(uint32_t*) (__SECTOR_ADDRS[fw.sector] + 4 * index);
+    return *(uint32_t*) (__SECTOR_ADDRS[fw.sector] + 8 * index);
 }
 
 float flash_read_float(FlashWriter fw, uint32_t index) {
-    return *(float*) (__SECTOR_ADDRS[fw.sector] + 4 * index);
+    return *(float*) (__SECTOR_ADDRS[fw.sector] + 8 * index);
 }
 
 
