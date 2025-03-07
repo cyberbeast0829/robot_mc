@@ -67,10 +67,6 @@ void MX_USART2_UART_Init(void)
   NVIC_InitStructure.NVIC_IRQChannelSubPriority        = 0;
   NVIC_InitStructure.NVIC_IRQChannelCmd                = ENABLE;
   NVIC_Init(&NVIC_InitStructure);
-
-  USART_ConfigInt(USART3, USART_INT_RXDNE, ENABLE);
-
-  USART_Enable(USART3, ENABLE);
 }
 
 /* USER CODE BEGIN 1 */

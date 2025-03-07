@@ -213,13 +213,9 @@ void SysTick_Handler(void)
 /**
   * @brief This function handles CAN1 RX0 interrupt.
   */
-void CAN1_RX0_IRQHandler(void)
+void FDCAN2_INT0_IRQHandler(void)
 {
   /* USER CODE BEGIN CAN1_RX0_IRQn 0 */
-
-  /* USER CODE END CAN1_RX0_IRQn 0 */
-  HAL_CAN_IRQHandler(&hcan1);
-  /* USER CODE BEGIN CAN1_RX0_IRQn 1 */
 
   HAL_CAN_GetRxMessage(&CAN_H, CAN_RX_FIFO0, &can_rx.rx_header, can_rx.data);	// Read CAN
   uint32_t TxMailbox;

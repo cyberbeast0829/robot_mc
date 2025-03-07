@@ -10,8 +10,8 @@
 #define INVERT_DTC		1					// PWM inverting (1) or non-inverting (0)
 
 /* ISRs */
-#define PWM_ISR			TIM1_UP_TIM10_IRQn	// PWM Timer ISR
-#define CAN_ISR			CAN1_RX0_IRQn		// CAN Receive ISR
+#define PWM_ISR			ATIM1_UP_IRQn	// PWM Timer ISR
+#define CAN_ISR			FDCAN2_INT0_IRQn		// CAN Receive ISR
 
 /* ADC */
 

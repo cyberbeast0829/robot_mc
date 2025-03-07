@@ -145,10 +145,10 @@ int main(void)
   MX_TIM1_Init();
   MX_CAN1_Init();
   MX_SPI1_Init();
-  MX_SPI3_Init();
+  // MX_SPI3_Init();
   MX_ADC1_Init();
   MX_ADC2_Init();
-  MX_ADC3_Init();
+  // MX_ADC3_Init();
   /* USER CODE BEGIN 2 */
 
   /* Load settings from flash */
@@ -205,48 +205,59 @@ int main(void)
   //for(int i = 0; i<128; i++){printf("%d\r\n", comm_encoder.offset_lut[i]);}
 
   /* Turn on ADCs */
-  HAL_ADC_Start(&hadc1);
-  HAL_ADC_Start(&hadc2);
-  HAL_ADC_Start(&hadc3);
+  ADC_Enable(ADC1, ENABLE);
+  while(ADC_GetFlagStatus(ADC1, ADC_FLAG_RDY) == RESET);
+  ADC_CalibrationOperation(ADC1, ADC_CALIBRATION_SINGLE_MODE);
+  while (ADC_GetCalibrationStatus(ADC1, ADC_CALIBRATION_SINGLE_MODE));
+  ADC_Enable(ADC2, ENABLE);
+  while(ADC_GetFlagStatus(ADC2, ADC_FLAG_RDY) == RESET);
+  ADC_CalibrationOperation(ADC2, ADC_CALIBRATION_SINGLE_MODE);
+  while (ADC_GetCalibrationStatus(ADC2, ADC_CALIBRATION_SINGLE_MODE));
 
   /* DRV8323 setup */
-  HAL_GPIO_WritePin(DRV_CS, GPIO_PIN_SET ); 	// CS high
-  HAL_GPIO_WritePin(ENABLE_PIN, GPIO_PIN_SET );
-  HAL_Delay(1);
+  GPIO_WriteBits(DRV_CS, Bit_SET ); 	// CS high
+  // GPIO_WriteBits(ENABLE_PIN, Bit_SET );
+  // HAL_Delay(1);
   //drv_calibrate(drv);
-  HAL_Delay(1);
-  drv_write_DCR(drv, 0x0, DIS_GDF_EN, 0x0, PWM_MODE_3X, 0x0, 0x0, 0x0, 0x0, 0x1);
-  HAL_Delay(1);
-  int CSA_GAIN;
-  if(I_MAX <= 40.0f){CSA_GAIN = CSA_GAIN_40;}	// Up to 40A use 40X amplifier gain
-  else{CSA_GAIN = CSA_GAIN_20;}					// From 40-60A use 20X amplifier gain.  (Make this generic in the future)
-  drv_write_CSACR(drv, 0x0, 0x1, 0x0, CSA_GAIN_40, 0x0, 0x1, 0x1, 0x1, SEN_LVL_0_25);
-  HAL_Delay(1);
-  drv_write_CSACR(drv, 0x0, 0x1, 0x0, CSA_GAIN, 0x1, 0x0, 0x0, 0x0, SEN_LVL_0_25);
-  HAL_Delay(1);
+  // HAL_Delay(1);
+  // drv_write_DCR(drv, 0x0, DIS_GDF_EN, 0x0, PWM_MODE_3X, 0x0, 0x0, 0x0, 0x0, 0x1);
+  // HAL_Delay(1);
+  // int CSA_GAIN;
+  // if(I_MAX <= 40.0f){CSA_GAIN = CSA_GAIN_40;}	// Up to 40A use 40X amplifier gain
+  // else{CSA_GAIN = CSA_GAIN_20;}					// From 40-60A use 20X amplifier gain.  (Make this generic in the future)
+  // drv_write_CSACR(drv, 0x0, 0x1, 0x0, CSA_GAIN_40, 0x0, 0x1, 0x1, 0x1, SEN_LVL_0_25);
+  // HAL_Delay(1);
+  // drv_write_CSACR(drv, 0x0, 0x1, 0x0, CSA_GAIN, 0x1, 0x0, 0x0, 0x0, SEN_LVL_0_25);
+  // HAL_Delay(1);
   zero_current(&controller);
-  HAL_Delay(1);
-  drv_write_OCPCR(drv, TRETRY_50US, DEADTIME_50NS, OCP_RETRY, OCP_DEG_8US, VDS_LVL_0_45);
-  HAL_Delay(1);
-  drv_disable_gd(drv);
-  HAL_Delay(1);
+  // HAL_Delay(1);
+  // drv_write_OCPCR(drv, TRETRY_50US, DEADTIME_50NS, OCP_RETRY, OCP_DEG_8US, VDS_LVL_0_45);
+  // HAL_Delay(1);
+  // drv_disable_gd(drv);
+  // HAL_Delay(1);
   //drv_enable_gd(drv);   */
   printf("ADC A OFFSET: %d     ADC B OFFSET: %d\r\n", controller.adc_a_offset, controller.adc_b_offset);
 
   /* Turn on PWM */
-  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
-  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);
-  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_3);
+  ATIM1->CCDAT1 = ATIM1->AR / 2;
+  ATIM1->CCDAT2 = ATIM1->AR / 2;
+  ATIM1->CCDAT3 = ATIM1->AR / 2;
+  ATIM1->CCEN |= TIM_CCEN_CC1EN;
+  ATIM1->CCEN |= TIM_CCEN_CC1NEN;
+  ATIM1->CCEN |= TIM_CCEN_CC2EN;
+  ATIM1->CCEN |= TIM_CCEN_CC2NEN;
+  ATIM1->CCEN |= TIM_CCEN_CC3EN;
+  ATIM1->CCEN |= TIM_CCEN_CC3NEN;
 
   /* CAN setup */
   can_rx_init(&can_rx);
   can_tx_init(&can_tx);
-  HAL_CAN_Start(&CAN_H); //start CAN
+  FDCAN_Start(FDCAN2); //start CAN
   //__HAL_CAN_ENABLE_IT(&CAN_H, CAN_IT_RX_FIFO0_MSG_PENDING); // Start can interrupt
 
   /* Set Interrupt Priorities */
-  HAL_NVIC_SetPriority(PWM_ISR, 0x0,0x0); // commutation > communication
-  HAL_NVIC_SetPriority(CAN_ISR, 0x01, 0x01);
+  NVIC_SetPriority(PWM_ISR, 0x0); // commutation > communication
+  NVIC_SetPriority(CAN_ISR, 0x01);
 
   /* Start the FSM */
   state.state = MENU_MODE;
@@ -255,8 +266,12 @@ int main(void)
 
 
   /* Turn on interrupts */
-  HAL_UART_Receive_IT(&huart2, (uint8_t *)Serial2RxBuffer, 1);
-  HAL_TIM_Base_Start_IT(&htim1);
+  USART_ConfigInt(USART3, USART_INT_RXDNE, ENABLE);
+  USART_Enable(USART3, ENABLE);
+
+  TIM_ClearFlag(ATIM1, TIM_FLAG_UPDATE);
+  TIM_ClrIntPendingBit(ATIM1, TIM_INT_UPDATE);
+  TIM_ConfigInt(ATIM1, TIM_INT_UPDATE, ENABLE);
 
   /* USER CODE END 2 */
 
@@ -265,8 +280,8 @@ int main(void)
   while (1)
   {
 
-	  HAL_Delay(100);
-	  drv_print_faults(drv);
+	  // HAL_Delay(100);
+	  // drv_print_faults(drv);
 	 // if(state.state==MOTOR_MODE){
 	  	  //printf("%.2f %.2f %.2f %.2f %.2f\r\n", controller.p_des, controller.v_des, controller.kp, controller.kd, controller.t_ff);
 	  //}
@@ -283,48 +298,41 @@ int main(void)
   */
 void SystemClock_Config(void)
 {
-  RCC_OscInitTypeDef RCC_OscInitStruct = {0};
-  RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
+  ErrorStatus HSEStartUpStatus;
 
-  /** Configure the main internal regulator output voltage
-  */
-  __HAL_RCC_PWR_CLK_ENABLE();
-  __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE1);
-  /** Initializes the RCC Oscillators according to the specified parameters
-  * in the RCC_OscInitTypeDef structure.
-  */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
-  RCC_OscInitStruct.HSEState = RCC_HSE_ON;
-  RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
-  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
-  RCC_OscInitStruct.PLL.PLLM = 4;
-  RCC_OscInitStruct.PLL.PLLN = 180;
-  RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
-  RCC_OscInitStruct.PLL.PLLQ = 2;
-  RCC_OscInitStruct.PLL.PLLR = 2;
-  if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /** Activate the Over-Drive mode
-  */
-  if (HAL_PWREx_EnableOverDrive() != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /** Initializes the CPU, AHB and APB buses clocks
-  */
-  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
-                              |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
-  RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
-  RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
-  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV4;
-  RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV2;
+  RCC_DeInit();
+  RCC_ConfigLse(RCC_LSE_DISABLE);
+  RCC_ConfigHse(RCC_HSE_ENABLE);
 
-  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_5) != HAL_OK)
-  {
-    Error_Handler();
+  HSEStartUpStatus = RCC_WaitHseStable();
+
+  if (HSEStartUpStatus == SUCCESS) {
+    // FLASH_PrefetchBufSet(FLASH_PrefetchBuf_EN);
+    // FLASH_SetLatency(FLASH_LATENCY_4);
+
+    // HCLK = SYSCLK 240M
+    RCC_ConfigHclk(RCC_SYSCLK_DIV1);
+    // PCLK2 = HCLK/2 120M (APB2)
+    RCC_ConfigPclk2(RCC_HCLK_DIV2);
+    // PCLK1 = HCLK/4 60M (APB1)
+    RCC_ConfigPclk1(RCC_HCLK_DIV4);
+    // 24M HSE -> /4 x40 /1 -> 240M PLLCLK
+    RCC_ConfigPll(RCC_PLL_SRC_HSE, RCC_PLL_PRE_4, RCC_PLL_MUL_40, RCC_PLLOUT_DIV_1);
+    RCC_EnablePll(ENABLE);
+    // wait till PLL is ready
+    while (RCC_GetFlagStatus(RCC_FLAG_PLLRDF) == RESET);
+    // SYSCLK = PLLCLK select PLL as system clock source
+    RCC_ConfigSysclk(RCC_SYSCLK_SRC_PLL);
+    // wait till PLL is used as system clock source
+    while (RCC_GetSysclkSrc() != RCC_CFG_SCLKSTS_PLL);
   }
+  else {
+    _Error_Handler(__FILE__, __LINE__);
+  }
+
+  SysTick_CLKSourceConfig(SysTick_CLKSource_HCLK);
+  SysTick_Config(SystemCoreClock / 1000);
+
 }
 
 /* USER CODE BEGIN 4 */

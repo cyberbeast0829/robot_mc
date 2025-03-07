@@ -144,8 +144,9 @@ void init_controller_params(ControllerStruct *controller){
     controller->ki_fw = .1f*controller->ki_d;
     controller->phase_order = PHASE_ORDER;
     controller->flux_linkage = KT/(1.5f*PPAIRS);
-    if(I_MAX <= 40.0f){controller->i_scale = I_SCALE;}
-    else{controller->i_scale = 2.0f*I_SCALE;}
+    controller->i_scale = I_SCALE;
+    // if(I_MAX <= 40.0f){controller->i_scale = I_SCALE;}
+    // else{controller->i_scale = 2.0f*I_SCALE;}
     for(int i = 0; i<128; i++)	// Approximate duty cycle linearization
     {
         controller->inverter_tab[i] = 1.0f + 1.2f*exp(-0.0078125f*i/.032f);
