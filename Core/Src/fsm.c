@@ -16,7 +16,6 @@
 #include "foc.h"
 #include "math_ops.h"
 #include "position_sensor.h"
-#include "drv8323.h"
 
  void run_fsm(FSMStruct * fsmstate){
 	 /* run_fsm is run every commutation interrupt cycle */
@@ -104,9 +103,10 @@
 			case MOTOR_MODE:
 
 				//printf("Entering Motor Mode\r\n");
-				HAL_GPIO_WritePin(LED, GPIO_PIN_SET );
+				GPIO_WriteBits(LED, Bit_SET );
 				reset_foc(&controller);
-				drv_enable_gd(drv);
+				// drv_enable_gd(drv);
+				TIM_EnableCtrlPwmOutputs(ATIM1, ENABLE);
 				break;
 			case CALIBRATION_MODE:
 				//printf("Entering Calibration Mode\r\n");
@@ -117,7 +117,8 @@
 				comm_encoder_cal.started = 0;
 				comm_encoder.e_zero = 0;
 				memset(&comm_encoder.offset_lut, 0, sizeof(comm_encoder.offset_lut));
-				drv_enable_gd(drv);
+				// drv_enable_gd(drv);
+				TIM_EnableCtrlPwmOutputs(ATIM1, ENABLE);
 				break;
 
 		}
@@ -144,16 +145,18 @@
 				/* Don't stop commutating if there are high currents or FW happening */
 				//if( (fabs(controller.i_q_filt)<1.0f) && (fabs(controller.i_d_filt)<1.0f) ){
 					fsmstate->ready = 1;
-					drv_disable_gd(drv);
+					TIM_EnableCtrlPwmOutputs(ATIM1, DISABLE);
+					// drv_disable_gd(drv);
 					reset_foc(&controller);
 					//printf("Leaving Motor Mode\r\n");
-					HAL_GPIO_WritePin(LED, GPIO_PIN_RESET );
+					GPIO_WriteBits(LED, Bit_RESET );
 				//}
 				zero_commands(&controller);		// Set commands to zero
 				break;
 			case CALIBRATION_MODE:
 				//printf("Exiting Calibration Mode\r\n");
-				drv_disable_gd(drv);
+				TIM_EnableCtrlPwmOutputs(ATIM1, DISABLE);
+				// drv_disable_gd(drv);
 				//free(error_array);
 				//free(lut_array);
 

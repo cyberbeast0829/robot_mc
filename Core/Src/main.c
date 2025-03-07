@@ -45,7 +45,6 @@
 #include "hw_config.h"
 #include "user_config.h"
 #include "fsm.h"
-#include "drv8323.h"
 #include "foc.h"
 #include "math_ops.h"
 #include "calibration.h"
@@ -86,7 +85,6 @@ ObserverStruct observer;
 COMStruct com;
 FSMStruct state;
 EncoderStruct comm_encoder;
-DRVStruct drv;
 CalStruct comm_encoder_cal;
 CANTxMessage can_tx;
 CANRxMessage can_rx;
@@ -248,6 +246,7 @@ int main(void)
   ATIM1->CCEN |= TIM_CCEN_CC2NEN;
   ATIM1->CCEN |= TIM_CCEN_CC3EN;
   ATIM1->CCEN |= TIM_CCEN_CC3NEN;
+  // TIM_EnableCtrlPwmOutputs(ATIM1, ENABLE); // 打开PWM输出使能
 
   /* CAN setup */
   can_rx_init(&can_rx);
