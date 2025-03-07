@@ -54,9 +54,9 @@ void SVC_Handler(void);
 void DebugMon_Handler(void);
 void PendSV_Handler(void);
 void SysTick_Handler(void);
-void CAN1_RX0_IRQHandler(void);
-void TIM1_UP_TIM10_IRQHandler(void);
-void USART2_IRQHandler(void);
+void FDCAN2_INT0_IRQHandler(void);
+void ATIM1_UP_IRQHandler(void);
+void USART3_IRQHandler(void);
 /* USER CODE BEGIN EFP */
 void can_tx_rx(void);
 /* USER CODE END EFP */

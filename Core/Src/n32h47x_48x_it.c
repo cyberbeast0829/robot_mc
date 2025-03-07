@@ -273,11 +273,10 @@ void USART3_IRQHandler(void)
 {
   if (SET == USART_GetIntStatus(USART3, USART_INT_RXDNE)) {
     USART_ClrFlag(USART3, USART_FLAG_RXDNE);
-    pxMBFrameCBByteReceived();
+    char c = USART_ReceiveData(USART3);
+    update_fsm(&state, c);
   }
-
-	char c = USART_ReceiveData(USART3);
-	update_fsm(&state, c);
+	
 }
 
 
