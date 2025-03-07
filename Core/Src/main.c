@@ -125,15 +125,15 @@ int main(void)
 
   /* MCU Configuration--------------------------------------------------------*/
 
-  /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
-  HAL_Init();
-
   /* USER CODE BEGIN Init */
 
   /* USER CODE END Init */
 
   /* Configure the system clock */
   SystemClock_Config();
+
+  // 设置NVIC的priority方式
+  NVIC_PriorityGroupConfig(NVIC_PriorityGroup_4);
 
   /* USER CODE BEGIN SysInit */
 

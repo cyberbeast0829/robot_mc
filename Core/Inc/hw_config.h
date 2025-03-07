@@ -3,7 +3,7 @@
 
 
 /* Timer and PWM */
-#define TIM_PWM			htim1				// PWM/ISR timer handle
+#define TIM_PWM			ATIM1				// PWM/ISR timer handle
 #define TIM_CH_U		TIM_CHANNEL_1		// Terminal U timer channel
 #define TIM_CH_V		TIM_CHANNEL_2		// Terminal V timer channel
 #define TIM_CH_W		TIM_CHANNEL_3		// Terminal W timer channel
@@ -40,8 +40,10 @@
 #define CAN_H			hcan1				// CAN handle
 
 /* Other hardware-related constants */
-#define I_SCALE 			0.0201416f  // Amps per A/D Count at 40X amplifier gain
-#define V_SCALE 			0.0128906f    // Bus volts per A/D Count
+// I_SCALE = ((3.3 / (2^12)) / OPA_GAIN) / RSHUNT
+#define I_SCALE 			0.05035400390625f  // Amps per A/D Count at 40X amplifier gain
+// V_SCALE = (3.3 * VBUS_S_DIVIDER) / (2^12) 其中 VBUS_S_DIVIDER = 93.91 / 3.01
+#define V_SCALE 			0.02513618342504f    // Bus volts per A/D Count
 #define DTC_MAX 			0.94f          	// Max duty cycle
 #define DTC_MIN 			0.0f          	// Min duty cycle
 #define DTC_COMP 			0.000f          // deadtime compensation (100 ns / 25 us)

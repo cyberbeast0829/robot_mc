@@ -28,14 +28,20 @@ void set_dtc(ControllerStruct *controller){
 	}
 	/* Handle phase order swapping so that voltage/current/torque match encoder direction */
 	if(!PHASE_ORDER){
-		__HAL_TIM_SET_COMPARE(&TIM_PWM, TIM_CH_U, ((TIM_PWM.Instance->ARR))*dtc_u);
-		__HAL_TIM_SET_COMPARE(&TIM_PWM, TIM_CH_V, ((TIM_PWM.Instance->ARR))*dtc_v);
-		__HAL_TIM_SET_COMPARE(&TIM_PWM, TIM_CH_W, ((TIM_PWM.Instance->ARR))*dtc_w);
+        TIM_PWM->CCDAT1 = ((TIM_PWM->AR))*dtc_u;
+        TIM_PWM->CCDAT2 = ((TIM_PWM->AR))*dtc_v;
+        TIM_PWM->CCDAT3 = ((TIM_PWM->AR))*dtc_w;
+		// __HAL_TIM_SET_COMPARE(&TIM_PWM, TIM_CH_U, ((TIM_PWM->AR))*dtc_u);
+		// __HAL_TIM_SET_COMPARE(&TIM_PWM, TIM_CH_V, ((TIM_PWM->AR))*dtc_v);
+		// __HAL_TIM_SET_COMPARE(&TIM_PWM, TIM_CH_W, ((TIM_PWM->AR))*dtc_w);
 	}
 	else{
-		__HAL_TIM_SET_COMPARE(&TIM_PWM, TIM_CH_V, ((TIM_PWM.Instance->ARR))*dtc_u);
-		__HAL_TIM_SET_COMPARE(&TIM_PWM, TIM_CH_U, ((TIM_PWM.Instance->ARR))*dtc_v);
-		__HAL_TIM_SET_COMPARE(&TIM_PWM, TIM_CH_W, ((TIM_PWM.Instance->ARR))*dtc_w);
+        TIM_PWM->CCDAT2 = ((TIM_PWM->AR))*dtc_u;
+        TIM_PWM->CCDAT1 = ((TIM_PWM->AR))*dtc_v;
+        TIM_PWM->CCDAT3 = ((TIM_PWM->AR))*dtc_w;
+		// __HAL_TIM_SET_COMPARE(&TIM_PWM, TIM_CH_V, ((TIM_PWM->AR))*dtc_u);
+		// __HAL_TIM_SET_COMPARE(&TIM_PWM, TIM_CH_U, ((TIM_PWM->AR))*dtc_v);
+		// __HAL_TIM_SET_COMPARE(&TIM_PWM, TIM_CH_W, ((TIM_PWM->AR))*dtc_w);
 	}
 }
 
@@ -43,27 +49,28 @@ void analog_sample (ControllerStruct *controller){
 	/* Sampe ADCs */
 	/* Handle phase order swapping so that voltage/current/torque match encoder direction */
 	if(!PHASE_ORDER){
-		controller->adc_a_raw = HAL_ADC_GetValue(&ADC_CH_IA);
-		controller->adc_b_raw = HAL_ADC_GetValue(&ADC_CH_IB);
+		controller->adc_a_raw = ADC1->JDAT1;
+		controller->adc_b_raw = ADC2->JDAT1;
 		//adc_ch_ic = ADC_CH_IC;
 	}
 	else{
-		controller->adc_a_raw = HAL_ADC_GetValue(&ADC_CH_IB);
-		controller->adc_b_raw = HAL_ADC_GetValue(&ADC_CH_IA);
+		controller->adc_a_raw = ADC2->JDAT1;
+		controller->adc_b_raw = ADC1->JDAT1;
 		//adc_ch_ic = ADC_CH_IB;
 	}
 
 
-	HAL_ADC_Start(&ADC_CH_MAIN);
-	HAL_ADC_PollForConversion(&ADC_CH_MAIN, HAL_MAX_DELAY);
+	ADC_EnableSoftwareStartInjectedConv(ADC1, ENABLE);
+    ADC_EnableSoftwareStartInjectedConv(ADC2, ENABLE);
 
-	controller->adc_vbus_raw = HAL_ADC_GetValue(&ADC_CH_VBUS);
+	controller->adc_vbus_raw = ADC2->DAT1;
 	controller->v_bus = (float)controller->adc_vbus_raw*V_SCALE;
 
     controller->i_a = controller->i_scale*(float)(controller->adc_a_raw - controller->adc_a_offset);    // Calculate phase currents from ADC readings
     controller->i_b = controller->i_scale*(float)(controller->adc_b_raw - controller->adc_b_offset);
     controller->i_c = -controller->i_a - controller->i_b;
 
+    ADC_EnableSoftwareStartConv(ADC2, ENABLE);
 }
 
 void abc( float theta, float d, float q, float *a, float *b, float *c){
@@ -148,9 +155,9 @@ void init_controller_params(ControllerStruct *controller){
 
 void reset_foc(ControllerStruct *controller){
 
-	TIM_PWM.Instance->CCR3 = ((TIM_PWM.Instance->ARR))*(0.5f);
-	TIM_PWM.Instance->CCR1 = ((TIM_PWM.Instance->ARR))*(0.5f);
-	TIM_PWM.Instance->CCR2 = ((TIM_PWM.Instance->ARR))*(0.5f);
+	TIM_PWM->CCDAT3 = ((TIM_PWM->AR))*(0.5f);
+	TIM_PWM->CCDAT1 = ((TIM_PWM->AR))*(0.5f);
+	TIM_PWM->CCDAT2 = ((TIM_PWM->AR))*(0.5f);
     controller->i_d_des = 0;
     controller->i_q_des = 0;
     controller->i_d = 0;

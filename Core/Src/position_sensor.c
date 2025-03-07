@@ -15,10 +15,11 @@ void ps_warmup(EncoderStruct * encoder, int n){
 	/* Hall position sensors noisy on startup.  Take a bunch of samples to clear this data */
 	for(int i = 0; i<n; i++){
 		encoder->spi_tx_word = 0x0000;
-		HAL_GPIO_WritePin(ENC_CS, GPIO_PIN_RESET ); 	// CS low
-		HAL_SPI_TransmitReceive(&ENC_SPI, (uint8_t*)encoder->spi_tx_buff, (uint8_t *)encoder->spi_rx_buff, 1, 100);
-		while( ENC_SPI.State == HAL_SPI_STATE_BUSY );  					// wait for transmission complete
-		HAL_GPIO_WritePin(ENC_CS, GPIO_PIN_SET ); 	// CS high
+		GPIO_WriteBits(ENC_CS, Bit_RESET); // CS low
+		SPI_I2S_TransmitData(SPI1, encoder->spi_tx_word);
+		while( SPI_I2S_GetStatus(SPI1, SPI_I2S_RNE_FLAG) == RESET );
+		encoder->spi_rx_word = SPI_I2S_ReceiveData(SPI1);
+		GPIO_WriteBits(ENC_CS, Bit_SET); // CS high
 	}
 }
 
@@ -34,10 +35,11 @@ void ps_sample(EncoderStruct * encoder, float dt){
 
 	/* SPI read/write */
 	encoder->spi_tx_word = ENC_READ_WORD;
-	HAL_GPIO_WritePin(ENC_CS, GPIO_PIN_RESET ); 	// CS low
-	HAL_SPI_TransmitReceive(&ENC_SPI, (uint8_t*)encoder->spi_tx_buff, (uint8_t *)encoder->spi_rx_buff, 1, 100);
-	while( ENC_SPI.State == HAL_SPI_STATE_BUSY );  					// wait for transmission complete
-	HAL_GPIO_WritePin(ENC_CS, GPIO_PIN_SET ); 	// CS high
+	GPIO_WriteBits(ENC_CS, Bit_RESET); // CS low
+	SPI_I2S_TransmitData(SPI1, encoder->spi_tx_word);
+	while( SPI_I2S_GetStatus(SPI1, SPI_I2S_RNE_FLAG) == RESET );
+	encoder->spi_rx_word = SPI_I2S_ReceiveData(SPI1);
+	GPIO_WriteBits(ENC_CS, Bit_SET); // CS high
 	encoder->raw = encoder ->spi_rx_word;
 
 	/* Linearization */

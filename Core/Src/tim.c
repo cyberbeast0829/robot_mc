@@ -24,8 +24,6 @@
 
 /* USER CODE END 0 */
 
-TIM_HandleTypeDef htim1;
-
 /* TIM1 init function */
 void MX_TIM1_Init(void)
 {
