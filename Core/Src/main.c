@@ -38,7 +38,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "stm32f4xx_flash.h"
+#include "n32h47x_48x_flash.h"
 #include "flash_writer.h"
 #include "position_sensor.h"
 #include "preference_writer.h"

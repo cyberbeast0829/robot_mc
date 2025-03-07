@@ -1,7 +1,7 @@
 /* USER CODE BEGIN Header */
 /**
   ******************************************************************************
-  * @file    stm32f4xx_it.h
+  * @file    n32h47x_48x_it.h
   * @brief   This file contains the headers of the interrupt handlers.
   ******************************************************************************
   * @attention
@@ -19,8 +19,8 @@
 /* USER CODE END Header */
 
 /* Define to prevent recursive inclusion -------------------------------------*/
-#ifndef __STM32F4xx_IT_H
-#define __STM32F4xx_IT_H
+#ifndef __N32H47X_48X_IT_H
+#define __N32H47X_48X_IT_H
 
 #ifdef __cplusplus
  extern "C" {
@@ -65,6 +65,6 @@ void can_tx_rx(void);
 }
 #endif
 
-#endif /* __STM32F4xx_IT_H */
+#endif /* __N32H47X_48X_IT_H */
 
 /************************ (C) COPYRIGHT STMicroelectronics *****END OF FILE****/
