@@ -100,22 +100,27 @@ void MX_CAN1_Init(void)
 /* USER CODE BEGIN 1 */
 
 void can_rx_init(CANRxMessage *msg){
-	msg->filter.FilterFIFOAssignment=CAN_FILTER_FIFO0; 	// set fifo assignment
-	msg->filter.FilterIdHigh=CAN_ID<<5; 				// CAN ID
-	msg->filter.FilterIdLow=0x0;
-	msg->filter.FilterMaskIdHigh=0xFFF;
-	msg->filter.FilterMaskIdLow=0;
-	msg->filter.FilterMode = CAN_FILTERMODE_IDMASK;
-	msg->filter.FilterScale=CAN_FILTERSCALE_32BIT;
-	msg->filter.FilterActivation=ENABLE;
-	HAL_CAN_ConfigFilter(&CAN_H, &msg->filter);
+  msg->filter.FilterIndex = 0;
+	msg->filter.FilterConfig=FDCAN_FILTER_TO_RXFIFO0; 	// set fifo assignment
+	msg->filter.FilterID1=CAN_ID<<5; 				// CAN ID
+	msg->filter.FilterID2=0xFFF;
+	msg->filter.FilterType = FDCAN_FILTER_MASK;
+	msg->filter.IdType = FDCAN_STANDARD_ID;
+	FDCAN_ConfigFilter(FDCAN2, &msg->filter);
+  FDCAN_ConfigGlobalFilter(FDCAN2, FDCAN_REJECT_STD, FDCAN_REJECT_EXT,
+    FDCAN_FILTER_STD_REMOTE, FDCAN_REJECT_EXT_REMOTE);
 }
 
 void can_tx_init(CANTxMessage *msg){
-	msg->tx_header.DLC = 7; 			// message size of 7 byte
-	msg->tx_header.IDE=CAN_ID_STD; 		// set identifier to standard
-	msg->tx_header.RTR=CAN_RTR_DATA; 	// set data type to remote transmission request?
-	msg->tx_header.StdId = CAN_MASTER;  // recipient CAN ID
+  msg->tx_header.IdType = FDCAN_STANDARD_ID;
+  msg->tx_header.ErrorState = FDCAN_ESI_PASSIVE;
+  msg->tx_header.BitRateSwitch = FDCAN_BRS_OFF;
+  msg->tx_header.FDFormat = FDCAN_CLASSIC_CAN;
+  msg->tx_header.TxEventFifo = FDCAN_NO_TX_EVENTS;
+  msg->tx_header.MsgMarker = 0x55;
+  msg->tx_header.TxFrameType = FDCAN_DATA_FRAME;
+	msg->tx_header.DataLength = 7 << FDCAN_ELEMENT_DLC_OFFSET; 			// message size of 7 byte
+	msg->tx_header.ID = CAN_MASTER;  // recipient CAN ID
 }
 
 /// CAN Reply Packet Structure ///

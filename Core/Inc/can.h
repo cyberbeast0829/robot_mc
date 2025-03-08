@@ -56,14 +56,14 @@ void MX_CAN1_Init(void);
 typedef struct{
 	uint8_t id;
 	uint8_t data[8];
-	CAN_RxHeaderTypeDef rx_header;
-	CAN_FilterTypeDef filter;
+	FDCAN_RxHeaderType rx_header;
+	FDCAN_FilterType filter;
 }CANRxMessage ;
 
 typedef struct{
 	uint8_t id;
 	uint8_t data[7];
-	CAN_TxHeaderTypeDef tx_header;
+	FDCAN_TxHeaderType tx_header;
 }CANTxMessage ;
 
 void can_rx_init(CANRxMessage *msg);

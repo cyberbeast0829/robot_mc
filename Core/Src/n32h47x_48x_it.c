@@ -217,25 +217,27 @@ void FDCAN2_INT0_IRQHandler(void)
 {
   /* USER CODE BEGIN CAN1_RX0_IRQn 0 */
 
-  HAL_CAN_GetRxMessage(&CAN_H, CAN_RX_FIFO0, &can_rx.rx_header, can_rx.data);	// Read CAN
-  uint32_t TxMailbox;
-  pack_reply(&can_tx, CAN_ID,  comm_encoder.angle_multiturn[0]/GR, comm_encoder.velocity/GR, controller.i_q_filt*KT*GR, controller.v_bus_filt);	// Pack response
-  HAL_CAN_AddTxMessage(&CAN_H, &can_tx.tx_header, can_tx.data, &TxMailbox);	// Send response
+  while (FDCAN_GetRxFifoFillLevel(FDCAN2, fifo) > 0) {
+    FDCAN_GetRxMsg(FDCAN2, FDCAN_RX_FIFO0, &can_rx.rx_header, can_rx.data);	// Read CAN
+    pack_reply(&can_tx, CAN_ID,  comm_encoder.angle_multiturn[0]/GR, comm_encoder.velocity/GR, controller.i_q_filt*KT*GR, controller.v_bus_filt);	// Pack response
+    FDCAN_AddMsgToTxFifoQ(FDCAN2, &can_tx.tx_header, can_tx.data);	// Send response
 
-  /* Check for special Commands */
-  if(((can_rx.data[0]==0xFF) & (can_rx.data[1]==0xFF) & (can_rx.data[2]==0xFF) & (can_rx.data[3]==0xFF) & (can_rx.data[4]==0xFF) & (can_rx.data[5]==0xFF) & (can_rx.data[6]==0xFF) & (can_rx.data[7]==0xFC))){
-	  update_fsm(&state, MOTOR_CMD);
-      }
-  else if(((can_rx.data[0]==0xFF) & (can_rx.data[1]==0xFF) & (can_rx.data[2]==0xFF) & (can_rx.data[3]==0xFF) * (can_rx.data[4]==0xFF) & (can_rx.data[5]==0xFF) & (can_rx.data[6]==0xFF) & (can_rx.data[7]==0xFD))){
-      update_fsm(&state, MENU_CMD);
-      }
-  else if(((can_rx.data[0]==0xFF) & (can_rx.data[1]==0xFF) & (can_rx.data[2]==0xFF) & (can_rx.data[3]==0xFF) * (can_rx.data[4]==0xFF) & (can_rx.data[5]==0xFF) & (can_rx.data[6]==0xFF) & (can_rx.data[7]==0xFE))){
-	  update_fsm(&state, ZERO_CMD);
-      }
-  else{
-	  unpack_cmd(can_rx, controller.commands);	// Unpack commands
-	  controller.timeout = 0;					// Reset timeout counter
+    /* Check for special Commands */
+    if(((can_rx.data[0]==0xFF) & (can_rx.data[1]==0xFF) & (can_rx.data[2]==0xFF) & (can_rx.data[3]==0xFF) & (can_rx.data[4]==0xFF) & (can_rx.data[5]==0xFF) & (can_rx.data[6]==0xFF) & (can_rx.data[7]==0xFC))){
+      update_fsm(&state, MOTOR_CMD);
+        }
+    else if(((can_rx.data[0]==0xFF) & (can_rx.data[1]==0xFF) & (can_rx.data[2]==0xFF) & (can_rx.data[3]==0xFF) * (can_rx.data[4]==0xFF) & (can_rx.data[5]==0xFF) & (can_rx.data[6]==0xFF) & (can_rx.data[7]==0xFD))){
+        update_fsm(&state, MENU_CMD);
+        }
+    else if(((can_rx.data[0]==0xFF) & (can_rx.data[1]==0xFF) & (can_rx.data[2]==0xFF) & (can_rx.data[3]==0xFF) * (can_rx.data[4]==0xFF) & (can_rx.data[5]==0xFF) & (can_rx.data[6]==0xFF) & (can_rx.data[7]==0xFE))){
+      update_fsm(&state, ZERO_CMD);
+        }
+    else{
+      unpack_cmd(can_rx, controller.commands);	// Unpack commands
+      controller.timeout = 0;					// Reset timeout counter
+    }
   }
+  FDCAN_ClearFlag(FDCAN2, FDCAN_FLAG_RX_FIFO0_NEW_MESSAGE);
 
   /* USER CODE END CAN1_RX0_IRQn 1 */
 }
@@ -284,11 +286,10 @@ void USART3_IRQHandler(void)
 
 void can_tx_rx(void){
 
-	int no_mesage = HAL_CAN_GetRxMessage(&CAN_H, CAN_RX_FIFO0, &can_rx.rx_header, can_rx.data);	// Read CAN
-	if(!no_mesage){
-		uint32_t TxMailbox;
-		pack_reply(&can_tx, CAN_ID,  comm_encoder.angle_multiturn[0]/GR, comm_encoder.velocity/GR, controller.i_mag_max*KT*GR, controller.v_max-controller.v_ref);	// Pack response
-		HAL_CAN_AddTxMessage(&CAN_H, &can_tx.tx_header, can_tx.data, &TxMailbox);	// Send response
+	if(FDCAN_GetRxFifoFillLevel(FDCAN2, fifo) > 0){
+		FDCAN_GetRxMsg(FDCAN2, FDCAN_RX_FIFO0, &can_rx.rx_header, can_rx.data);	// Read CAN
+    pack_reply(&can_tx, CAN_ID,  comm_encoder.angle_multiturn[0]/GR, comm_encoder.velocity/GR, controller.i_q_filt*KT*GR, controller.v_bus_filt);	// Pack response
+    FDCAN_AddMsgToTxFifoQ(FDCAN2, &can_tx.tx_header, can_tx.data);	// Send response
 
 		/* Check for special Commands */
 		if(((can_rx.data[0]==0xFF) & (can_rx.data[1]==0xFF) & (can_rx.data[2]==0xFF) & (can_rx.data[3]==0xFF) & (can_rx.data[4]==0xFF) & (can_rx.data[5]==0xFF) & (can_rx.data[6]==0xFF) & (can_rx.data[7]==0xFC))){
