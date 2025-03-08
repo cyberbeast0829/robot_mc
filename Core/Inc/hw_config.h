@@ -1,6 +1,88 @@
 #ifndef HW_CONFIG_H
 #define HW_CONFIG_H
 
+#define SPI_SCK_Pin                     GPIO_PIN_3
+#define SPI_SCK_GPIO_Port               GPIOB
+#define SPI_MISO_Pin                    GPIO_PIN_4
+#define SPI_MISO_GPIO_Port              GPIOB
+#define SPI_MOSI_Pin                    GPIO_PIN_5
+#define SPI_MOSI_GPIO_Port              GPIOB
+#define ENC_SPI_NSS_Pin                 GPIO_PIN_15
+#define ENC_SPI_NSS_GPIO_Port           GPIOA
+#define SEC_ENC_SPI_NSS_Pin             GPIO_PIN_10
+#define SEC_ENC_SPI_NSS_GPIO_Port       GPIOC
+
+#define USB_DM_Pin                      GPIO_PIN_11
+#define USB_DP_Pin                      GPIO_PIN_12
+#define USB_GPIO_Port                   GPIOA
+
+#define GHS_U_Pin                       GPIO_PIN_8
+#define GHS_V_Pin                       GPIO_PIN_9
+#define GHS_W_Pin                       GPIO_PIN_10
+#define GHS_GPIO_Port                   GPIOA
+#define GLS_U_Pin                       GPIO_PIN_7
+#define GLS_U_GPIO_Port                 GPIOA
+#define GLS_V_Pin                       GPIO_PIN_0
+#define GLS_W_Pin                       GPIO_PIN_1
+#define GLS_VW_GPIO_Port                GPIOB
+
+#define AUX_H_Pin                       GPIO_PIN_8
+#define AUX_L_Pin                       GPIO_PIN_9
+#define AUX_GPIO_Port                   GPIOB
+
+#define VBUS_AD_Pin                     GPIO_PIN_2
+#define VBUS_AD_GPIO_Port               GPIOB
+#define MOS_TEMP_Pin                    GPIO_PIN_6
+#define MOS_TEMP_GPIO_Port              GPIOA
+#define MOT_TEMP_Pin                    GPIO_PIN_5
+#define MOT_TEMP_GPIO_Port              GPIOA
+
+#define IU_OP1P_Pin                     GPIO_PIN_1
+#define IU_OP1N_Pin                     GPIO_PIN_2
+#define IU_OP1_GPIO_Port                GPIOA
+#define IV_OP2P_Pin                     GPIO_PIN_4
+#define IV_OP2N_Pin                     GPIO_PIN_3
+#define IV_OP2_GPIO_Port                GPIOA
+
+#define IV_OP3OUT_COMP_Pin              GPIO_PIN_11
+#define IV_OP3OUT_COMP_GPIO_Port        GPIOB
+
+#define CAN_TX_Pin                      GPIO_PIN_13
+#define CAN_TX_GPIO_Port                GPIOB
+#define CAN_RX_Pin                      GPIO_PIN_12
+#define CAN_RX_GPIO_Port                GPIOB
+
+#define USART_TX_Pin                    GPIO_PIN_10
+#define USART_TX_GPIO_Port              GPIOB
+#define USART_RX_Pin                    GPIO_PIN_11
+#define USART_RX_GPIO_Port              GPIOB
+#define USART_EN_Pin                    GPIO_PIN_11
+#define USART_EN_GPIO_Port              GPIOC
+
+#define EXT_SDA_RX_Pin                  GPIO_PIN_7
+#define EXT_SCL_TX_Pin                  GPIO_PIN_6
+#define EXT_I2C_USART_GPIO_Port         GPIOB
+
+#define DIR_IN_Pin                      GPIO_PIN_14
+#define DIR_IN_GPIO_Port                GPIOC
+#define RM_EN_Pin                       GPIO_PIN_14
+#define RM_EN_GPIO_Port                 GPIOB
+
+#define MUX1_Pin                        GPIO_PIN_15
+#define MUX1_GPIO_Port                  GPIOB
+#define MUX2_Pin                        GPIO_PIN_13
+#define MUX2_GPIO_Port                  GPIOC
+
+#define PWM_IN_OUT_Pin                  GPIO_PIN_0
+#define PWM_IN_OUT_GPIO_Port            GPIOA
+
+#define GPIO1_Pin                       GPIO_PIN_15
+#define GPIO1_GPIO_Port                 GPIOC
+#define GPIO2_Pin                       GPIO_PIN_14
+#define GPIO2_GPIO_Port                 GPIOC
+
+#define LED_Pin                         GPIO_PIN_6
+#define LED_GPIO_Port                   GPIOC
 
 /* Timer and PWM */
 #define TIM_PWM			ATIM1				// PWM/ISR timer handle
@@ -28,13 +110,13 @@
 
 /* SPI encoder */
 #define ENC_SPI			hspi3				// Encoder SPI handle
-#define ENC_CS			GPIOA, GPIO_PIN_15	// Encoder SPI CS pin
+#define ENC_CS			ENC_SPI_NSS_GPIO_Port, ENC_SPI_NSS_Pin	// Encoder SPI CS pin
 #define ENC_CPR			65536				// Encoder counts per revolution
 #define INV_CPR			1.0f/ENC_CPR
 #define ENC_READ_WORD	0x00				// Encoder read command
 
 /* Misc. GPIO */
-#define LED         	GPIOC, GPIO_PIN_5	// LED Pin
+#define LED         	LED_GPIO_Port, LED_Pin	// LED Pin
 
 /* CAN */
 #define CAN_H			hcan1				// CAN handle

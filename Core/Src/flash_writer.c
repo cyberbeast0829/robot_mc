@@ -17,7 +17,7 @@ bool flash_writer_ready(FlashWriter fw) {
 void flash_writer_open(FlashWriter * fw) {
     FLASH_Unlock();
     // FLASH_ClearFlag( FLASH_STS_CLRFLAG );
-    FLASH_EraseOnePage(w->base);
+    FLASH_EraseOnePage(fw->base);
     fw->ready = true;
 }
 

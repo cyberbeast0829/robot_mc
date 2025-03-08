@@ -31,7 +31,7 @@ extern "C" {
 
 /* USER CODE END Includes */
 
-extern CAN_HandleTypeDef hcan1;
+extern FDCAN_InitType hcan1;
 
 /* USER CODE BEGIN Private defines */
 //#define P_MIN -12.5f

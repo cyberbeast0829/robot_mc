@@ -1,0 +1,9 @@
+*.d
+*.o
+*.dep
+Keil/Objects/*.htm*
+Keil/*.uvoptx
+Keil/*.uvguix*
+*.map
+*.axf
+*.lnp

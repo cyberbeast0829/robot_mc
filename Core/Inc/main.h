@@ -28,8 +28,9 @@ extern "C" {
 #endif
 
 /* Includes ------------------------------------------------------------------*/
-// #include "stm32f4xx_hal.h"
-
+#include "n32h47x_48x.h"
+#include "n32h47x_48x_conf.h"
+#include "hw_config.h"
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 

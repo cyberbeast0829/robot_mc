@@ -31,7 +31,7 @@ extern "C" {
 
 /* USER CODE END Includes */
 
-extern UART_HandleTypeDef huart2;
+extern USART_InitType huart2;
 
 /* USER CODE BEGIN Private defines */
 extern uint8_t Serial2RxBuffer[1];
@@ -42,7 +42,7 @@ void MX_USART2_UART_Init(void);
 
 /* USER CODE BEGIN Prototypes */
 int __io_putchar(int ch);
-void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart);
+
 /* USER CODE END Prototypes */
 
 #ifdef __cplusplus

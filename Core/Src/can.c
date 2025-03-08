@@ -26,6 +26,9 @@
 #include "math_ops.h"
 /* USER CODE END 0 */
 
+uint32_t FDCAN_ram[512]; // 用于消息缓冲的RAM，总共128 words
+FDCAN_MsgRamType Node_msg;
+
 FDCAN_InitType hcan1 = {
   .FrameFormat = FDCAN_FRAME_CLASSIC,
   .Mode = FDCAN_MODE_NORMAL,

@@ -148,7 +148,7 @@ void calibrate_encoder(EncoderStruct *encoder, ControllerStruct *controller, Cal
 
 	int window = SAMPLES_PER_PPAIR;
 	int lut_offset = (ENC_CPR-cal->error_arr[0])*N_LUT/ENC_CPR;
-	for(int i = 0; i<N_LUT; i++){
+	for(i = 0; i<N_LUT; i++){
 			int moving_avg = 0;
 			for(int j = (-window)/2; j<(window)/2; j++){
 				int index = i*PPAIRS*SAMPLES_PER_PPAIR/N_LUT + j;

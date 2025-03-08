@@ -63,7 +63,7 @@ void analog_sample (ControllerStruct *controller){
 	ADC_EnableSoftwareStartInjectedConv(ADC1, ENABLE);
     ADC_EnableSoftwareStartInjectedConv(ADC2, ENABLE);
 
-	controller->adc_vbus_raw = ADC2->DAT1;
+	controller->adc_vbus_raw = ADC2->DAT;
 	controller->v_bus = (float)controller->adc_vbus_raw*V_SCALE;
 
     controller->i_a = controller->i_scale*(float)(controller->adc_a_raw - controller->adc_a_offset);    // Calculate phase currents from ADC readings
