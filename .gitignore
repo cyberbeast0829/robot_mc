@@ -1,9 +1,13 @@
 *.d
 *.o
 *.dep
-Keil/Objects/*.htm*
 Keil/*.uvoptx
 Keil/*.uvguix*
 *.map
 *.axf
 *.lnp
+Keil/Objects/*.*
+Keil/Listing/*.*
+Keil/*.scvd
+Keil/*.txt
+Keil/*.ini

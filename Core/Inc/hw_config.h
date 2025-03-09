@@ -113,7 +113,7 @@
 #define ENC_CS			ENC_SPI_NSS_GPIO_Port, ENC_SPI_NSS_Pin	// Encoder SPI CS pin
 #define ENC_CPR			65536				// Encoder counts per revolution
 #define INV_CPR			1.0f/ENC_CPR
-#define ENC_READ_WORD	0x00				// Encoder read command
+#define ENC_READ_WORD	0x2300				// Encoder read command
 
 /* Misc. GPIO */
 #define LED         	LED_GPIO_Port, LED_Pin	// LED Pin

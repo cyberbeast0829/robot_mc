@@ -223,7 +223,7 @@ int main(void)
   while (ADC_GetCalibrationStatus(ADC2, ADC_CALIBRATION_SINGLE_MODE));
 
   /* DRV8323 setup */
-  GPIO_WriteBits(DRV_CS, Bit_SET ); 	// CS high
+  // GPIO_WriteBits(DRV_CS, Bit_SET ); 	// CS high
   // GPIO_WriteBits(ENABLE_PIN, Bit_SET );
   // HAL_Delay(1);
   //drv_calibrate(drv);
