@@ -106,7 +106,17 @@ void SystemClock_Config(void);
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
+#include <stdint.h>
 
+int isnan(double x) {
+    union {
+        uint64_t u;
+        double f;
+    } ieee754;
+    ieee754.f = x;
+    return ((ieee754.u & 0x7FF0000000000000) == 0x7FF0000000000000) &&
+           ((ieee754.u & 0x000FFFFFFFFFFFFF) != 0);
+}
 
 
 /* USER CODE END 0 */
@@ -326,7 +336,7 @@ void SystemClock_Config(void)
     while (RCC_GetSysclkSrc() != RCC_CFG_SCLKSTS_PLL);
   }
   else {
-    _Error_Handler(__FILE__, __LINE__);
+    Error_Handler();
   }
 
   SysTick_CLKSourceConfig(SysTick_CLKSource_HCLK);
