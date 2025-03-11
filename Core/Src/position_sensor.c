@@ -11,15 +11,23 @@
 #include "hw_config.h"
 #include "user_config.h"
 
+uint16_t spi_tx_words[2], spi_rx_words[2];
+
 void ps_warmup(EncoderStruct * encoder, int n){
 	/* Hall position sensors noisy on startup.  Take a bunch of samples to clear this data */
+	spi_tx_words[0] = 0x2300;
+	spi_tx_words[1] = 0x0000;
 	for(int i = 0; i<n; i++){
-		encoder->spi_tx_word = 0x0000;
+		DMA_ClearFlag(DMA_FLAG_TC1, DMA2);
+		DMA_ClearFlag(DMA_FLAG_TC2, DMA2);
 		GPIO_WriteBits(ENC_CS, Bit_RESET); // CS low
-		SPI_I2S_TransmitData(SPI1, encoder->spi_tx_word);
-		while( SPI_I2S_GetStatus(SPI1, SPI_I2S_RNE_FLAG) == RESET );
-		encoder->spi_rx_word = SPI_I2S_ReceiveData(SPI1);
+		SPI_Transmit_DMA((uint8_t *)spi_tx_words, 2);
+		SPI_Receive_DMA((uint8_t *)spi_rx_words, 2);
+		while (DMA_GetFlagStatus(DMA_FLAG_TC2, DMA2) == RESET);
+		while (DMA_GetFlagStatus(DMA_FLAG_TC1, DMA2) == RESET);
 		GPIO_WriteBits(ENC_CS, Bit_SET); // CS high
+		SPI_StopTransmit_DMA();
+		SPI_StopReceive_DMA();
 	}
 }
 
@@ -34,13 +42,18 @@ void ps_sample(EncoderStruct * encoder, float dt){
 	//memmove(&encoder->angle_multiturn[1], &encoder->angle_multiturn[0], (N_POS_SAMPLES-1)*sizeof(float)); // this is much slower for some reason
 
 	/* SPI read/write */
-	encoder->spi_tx_word = ENC_READ_WORD;
+	// encoder->spi_tx_word = ENC_READ_WORD;
+	DMA_ClearFlag(DMA_FLAG_TC1, DMA2);
+	DMA_ClearFlag(DMA_FLAG_TC2, DMA2);
 	GPIO_WriteBits(ENC_CS, Bit_RESET); // CS low
-	SPI_I2S_TransmitData(SPI1, encoder->spi_tx_word);
-	while( SPI_I2S_GetStatus(SPI1, SPI_I2S_RNE_FLAG) == RESET );
-	encoder->spi_rx_word = SPI_I2S_ReceiveData(SPI1);
+	SPI_Transmit_DMA((uint8_t *)spi_tx_words, 1);
+	SPI_Receive_DMA((uint8_t *)spi_rx_words, 1);
+	while (DMA_GetFlagStatus(DMA_FLAG_TC2, DMA2) == RESET);
+	while (DMA_GetFlagStatus(DMA_FLAG_TC1, DMA2) == RESET);
 	GPIO_WriteBits(ENC_CS, Bit_SET); // CS high
-	encoder->raw = encoder ->spi_rx_word;
+	SPI_StopTransmit_DMA();
+	SPI_StopReceive_DMA();
+	encoder->raw = spi_rx_words[0];
 
 	/* Linearization */
 	int off_1 = encoder->offset_lut[(encoder->raw)>>9];				// lookup table lower entry

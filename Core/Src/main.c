@@ -108,15 +108,15 @@ void SystemClock_Config(void);
 
 #include <stdint.h>
 
-int isnan(double x) {
-    union {
-        uint64_t u;
-        double f;
-    } ieee754;
-    ieee754.f = x;
-    return ((ieee754.u & 0x7FF0000000000000) == 0x7FF0000000000000) &&
-           ((ieee754.u & 0x000FFFFFFFFFFFFF) != 0);
-}
+// int isnan(double x) {
+//     union {
+//         uint64_t u;
+//         double f;
+//     } ieee754;
+//     ieee754.f = x;
+//     return ((ieee754.u & 0x7FF0000000000000) == 0x7FF0000000000000) &&
+//            ((ieee754.u & 0x000FFFFFFFFFFFFF) != 0);
+// }
 
 
 /* USER CODE END 0 */
@@ -186,7 +186,7 @@ int main(void)
   if(isnan(V_MAX)){V_MAX = 65.0f;}
   if(isnan(V_MIN)){V_MIN = -65.0f;}
 
-  printf("\r\nFirmware Version Number: %.2f\r\n", VERSION_NUM);
+  // printf("\r\nFirmware Version Number: %.2f\r\n", VERSION_NUM);
 
   /* Controller Setup */
   if(PHASE_ORDER){							// Timer channel to phase mapping
@@ -244,7 +244,7 @@ int main(void)
   // drv_disable_gd(drv);
   // HAL_Delay(1);
   //drv_enable_gd(drv);   */
-  printf("ADC A OFFSET: %d     ADC B OFFSET: %d\r\n", controller.adc_a_offset, controller.adc_b_offset);
+  // printf("ADC A OFFSET: %d     ADC B OFFSET: %d\r\n", controller.adc_a_offset, controller.adc_b_offset);
 
   /* Turn on PWM */
   ATIM1->CCDAT1 = ATIM1->AR / 2;

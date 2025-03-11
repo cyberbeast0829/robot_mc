@@ -41,6 +41,11 @@ extern SPI_InitType hspi1;
 void MX_SPI1_Init(void);
 void MX_SPI3_Init(void);
 
+void SPI_Transmit_DMA(uint8_t *txBuf, uint16_t bufLen);
+void SPI_Receive_DMA(uint8_t *rxBuf, uint16_t bufLen);
+void SPI_StopTransmit_DMA();
+void SPI_StopReceive_DMA();
+
 /* USER CODE BEGIN Prototypes */
 
 /* USER CODE END Prototypes */

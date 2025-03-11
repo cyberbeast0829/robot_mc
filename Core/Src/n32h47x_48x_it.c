@@ -249,6 +249,7 @@ void ATIM1_UP_IRQHandler(void)
 {
   /* USER CODE BEGIN TIM1_UP_TIM10_IRQn 0 */
 	//HAL_GPIO_WritePin(LED, GPIO_PIN_SET );	// Useful for timing
+  TIM_ClrIntPendingBit(ATIM1, TIM_INT_UPDATE);
 
 	/* Sample ADCs */
 	analog_sample(&controller);
