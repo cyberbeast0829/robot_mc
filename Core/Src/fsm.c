@@ -106,7 +106,8 @@
 				GPIO_WriteBits(LED, Bit_SET );
 				reset_foc(&controller);
 				// drv_enable_gd(drv);
-				TIM_EnableCtrlPwmOutputs(ATIM1, ENABLE);
+				ATIM1->BKDT |= TIM_BKDT_AOEN;
+        ATIM1->BKDT |= TIM_BKDT_MOEN;
 				break;
 			case CALIBRATION_MODE:
 				//printf("Entering Calibration Mode\r\n");
@@ -118,7 +119,8 @@
 				comm_encoder.e_zero = 0;
 				memset(&comm_encoder.offset_lut, 0, sizeof(comm_encoder.offset_lut));
 				// drv_enable_gd(drv);
-				TIM_EnableCtrlPwmOutputs(ATIM1, ENABLE);
+				ATIM1->BKDT |= TIM_BKDT_AOEN;
+        ATIM1->BKDT |= TIM_BKDT_MOEN;
 				break;
 
 		}
@@ -145,7 +147,8 @@
 				/* Don't stop commutating if there are high currents or FW happening */
 				//if( (fabs(controller.i_q_filt)<1.0f) && (fabs(controller.i_d_filt)<1.0f) ){
 					fsmstate->ready = 1;
-					TIM_EnableCtrlPwmOutputs(ATIM1, DISABLE);
+					ATIM1->BKDT &= ~TIM_BKDT_AOEN;
+        	ATIM1->BKDT &= ~TIM_BKDT_MOEN;
 					// drv_disable_gd(drv);
 					reset_foc(&controller);
 					//printf("Leaving Motor Mode\r\n");
@@ -155,7 +158,8 @@
 				break;
 			case CALIBRATION_MODE:
 				//printf("Exiting Calibration Mode\r\n");
-				TIM_EnableCtrlPwmOutputs(ATIM1, DISABLE);
+				ATIM1->BKDT &= ~TIM_BKDT_AOEN;
+        ATIM1->BKDT &= ~TIM_BKDT_MOEN;
 				// drv_disable_gd(drv);
 				//free(error_array);
 				//free(lut_array);

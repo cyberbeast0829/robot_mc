@@ -77,7 +77,7 @@ void MX_TIM1_Init(void)
   TIM_OCInitStructure.OutputState  = TIM_OUTPUT_STATE_ENABLE;
   TIM_OCInitStructure.OutputNState = TIM_OUTPUT_NSTATE_ENABLE;
   TIM_OCInitStructure.Pulse        = 0;
-  TIM_OCInitStructure.OCPolarity   = TIM_OC_POLARITY_LOW;
+  TIM_OCInitStructure.OCPolarity   = TIM_OC_POLARITY_HIGH;
   TIM_OCInitStructure.OCNPolarity  = TIM_OCN_POLARITY_HIGH;
   TIM_OCInitStructure.OCIdleState  = TIM_OC_IDLE_STATE_RESET;
   TIM_OCInitStructure.OCNIdleState = TIM_OCN_IDLE_STATE_RESET;
