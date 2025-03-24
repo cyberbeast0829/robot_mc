@@ -52,9 +52,9 @@
 #define CAN_RX_Pin                      GPIO_PIN_12
 #define CAN_RX_GPIO_Port                GPIOB
 
-#define USART_TX_Pin                    GPIO_PIN_10
+#define USART_TX_Pin                    GPIO_PIN_6
 #define USART_TX_GPIO_Port              GPIOB
-#define USART_RX_Pin                    GPIO_PIN_11
+#define USART_RX_Pin                    GPIO_PIN_7
 #define USART_RX_GPIO_Port              GPIOB
 #define USART_EN_Pin                    GPIO_PIN_11
 #define USART_EN_GPIO_Port              GPIOC

@@ -67,12 +67,16 @@ void MX_USART2_UART_Init(void)
   NVIC_InitStructure.NVIC_IRQChannelSubPriority        = 0;
   NVIC_InitStructure.NVIC_IRQChannelCmd                = ENABLE;
   NVIC_Init(&NVIC_InitStructure);
+
+  USART_Enable(USART3, ENABLE);
 }
 
 /* USER CODE BEGIN 1 */
-int __io_putchar(int ch) {
-  USART_SendData(&huart2, ch);
-  return 0;
+#include <stdio.h>
+int fputc(int ch, FILE *stream) {
+  USART_SendData(USART3, ch);
+  while (USART_GetFlagStatus(USART3, USART_FLAG_TXC) == RESET);
+  return ch;
 }
 
 

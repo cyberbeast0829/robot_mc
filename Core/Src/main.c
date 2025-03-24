@@ -186,7 +186,7 @@ int main(void)
   if(isnan(V_MAX)){V_MAX = 65.0f;}
   if(isnan(V_MIN)){V_MIN = -65.0f;}
 
-  // printf("\r\nFirmware Version Number: %.2f\r\n", VERSION_NUM);
+  printf("\r\nFirmware Version Number: %.2f\r\n", VERSION_NUM);
 
   /* Controller Setup */
   if(PHASE_ORDER){							// Timer channel to phase mapping
@@ -244,7 +244,7 @@ int main(void)
   // drv_disable_gd(drv);
   // HAL_Delay(1);
   //drv_enable_gd(drv);   */
-  // printf("ADC A OFFSET: %d     ADC B OFFSET: %d\r\n", controller.adc_a_offset, controller.adc_b_offset);
+  printf("ADC A OFFSET: %d     ADC B OFFSET: %d\r\n", controller.adc_a_offset, controller.adc_b_offset);
 
   /* Turn on PWM */
   ATIM1->CCDAT1 = ATIM1->AR / 2;
@@ -276,7 +276,6 @@ int main(void)
 
   /* Turn on interrupts */
   USART_ConfigInt(USART3, USART_INT_RXDNE, ENABLE);
-  USART_Enable(USART3, ENABLE);
 
   TIM_ClearFlag(ATIM1, TIM_FLAG_UPDATE);
   TIM_ClrIntPendingBit(ATIM1, TIM_INT_UPDATE);
