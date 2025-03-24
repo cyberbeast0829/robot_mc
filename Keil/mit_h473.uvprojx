@@ -16,7 +16,7 @@
         <TargetCommonOption>
           <Device>N32H473CE</Device>
           <Vendor>Nationstech</Vendor>
-          <PackID>Nationstech.N32H47x_DFP.1.0.0</PackID>
+          <PackID>Nationstech.N32H47x_DFP.0.8.0</PackID>
           <PackURL>http://www.keil.com/pack/</PackURL>
           <Cpu>IRAM(0x20000000,0x30000) IROM(0x08000000,0x80000) CPUTYPE("Cortex-M4") FPU2 CLOCK(12000000) ELITTLE</Cpu>
           <FlashUtilSpec></FlashUtilSpec>
@@ -190,7 +190,7 @@
             <hadIRAM2>0</hadIRAM2>
             <hadIROM2>0</hadIROM2>
             <StupSel>8</StupSel>
-            <useUlib>0</useUlib>
+            <useUlib>1</useUlib>
             <EndSel>0</EndSel>
             <uLtcg>0</uLtcg>
             <nSecure>0</nSecure>
@@ -761,6 +761,21 @@
   </Targets>
 
   <RTE>
+    <packages>
+      <filter>
+        <targetInfos/>
+      </filter>
+      <package name="CMSIS" schemaVersion="1.7.36" url="https://www.keil.com/pack/" vendor="ARM" version="6.1.0">
+        <targetInfos>
+          <targetInfo name="mit_h473" versionMatchMode="fixed"/>
+        </targetInfos>
+      </package>
+      <package name="N32H47x_DFP" schemaVersion="1.4.0" url="http://www.keil.com/pack/" vendor="Nationstech" version="0.8.0">
+        <targetInfos>
+          <targetInfo name="mit_h473" versionMatchMode="fixed"/>
+        </targetInfos>
+      </package>
+    </packages>
     <apis/>
     <components>
       <component Cclass="CMSIS" Cgroup="CORE" Cvendor="ARM" Cversion="6.1.0" condition="ARMv6_7_8-M Device">
