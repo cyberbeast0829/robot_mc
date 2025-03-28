@@ -576,6 +576,11 @@
               <FileType>1</FileType>
               <FilePath>..\Core\Src\usart.c</FilePath>
             </File>
+            <File>
+              <FileName>pga.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Core\Src\pga.c</FilePath>
+            </File>
           </Files>
         </Group>
         <Group>

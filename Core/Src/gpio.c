@@ -41,40 +41,35 @@
 void MX_GPIO_Init(void)
 {
 
-  // GPIO_InitTypeDef GPIO_InitStruct = {0};
+  GPIO_InitType GPIO_InitStructure;
 
-  // /* GPIO Ports Clock Enable */
-  // __HAL_RCC_GPIOC_CLK_ENABLE();
-  // __HAL_RCC_GPIOH_CLK_ENABLE();
-  // __HAL_RCC_GPIOA_CLK_ENABLE();
-  // __HAL_RCC_GPIOB_CLK_ENABLE();
+  RCC_EnableAHB1PeriphClk(RCC_AHB_PERIPHEN_GPIOB | RCC_AHB_PERIPHEN_GPIOC, ENABLE);
+  RCC_EnableAPB2PeriphClk(RCC_APB2_PERIPH_AFIO, ENABLE);
 
-  // /*Configure GPIO pin Output Level */
-  // HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4|GPIO_PIN_11|GPIO_PIN_15, GPIO_PIN_RESET);
+  GPIO_InitStruct(&GPIO_InitStructure);
 
-  // /*Configure GPIO pin Output Level */
-  // HAL_GPIO_WritePin(GPIOC, GPIO_PIN_5, GPIO_PIN_RESET);
+  GPIO_InitStructure.Pin        = MUX1_Pin;
+  GPIO_InitStructure.GPIO_Mode  = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStructure.GPIO_Pull  = GPIO_NO_PULL;
+  GPIO_InitStructure.GPIO_Current = GPIO_DC_2mA;
+  GPIO_InitStructure.GPIO_Slew_Rate = GPIO_SR_SLOW_SLEW;
+  GPIO_InitPeripheral(MUX1_GPIO_Port, &GPIO_InitStructure);
 
-  // /*Configure GPIO pin : PtPin */
-  // GPIO_InitStruct.Pin = B1_Pin;
-  // GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
-  // GPIO_InitStruct.Pull = GPIO_NOPULL;
-  // HAL_GPIO_Init(B1_GPIO_Port, &GPIO_InitStruct);
+  GPIO_InitStructure.Pin        = MUX2_Pin;
+  GPIO_InitPeripheral(MUX2_GPIO_Port, &GPIO_InitStructure);
 
-  // /*Configure GPIO pins : PA4 PA11 PA15 */
-  // GPIO_InitStruct.Pin = GPIO_PIN_4|GPIO_PIN_11|GPIO_PIN_15;
-  // GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  // GPIO_InitStruct.Pull = GPIO_NOPULL;
-  // GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
-  // HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+  GPIO_ResetBits(MUX1_GPIO_Port, MUX1_Pin);
+  GPIO_SetBits(MUX2_GPIO_Port, MUX2_Pin);
 
-  // /*Configure GPIO pin : PC5 */
-  // GPIO_InitStruct.Pin = GPIO_PIN_5;
-  // GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  // GPIO_InitStruct.Pull = GPIO_NOPULL;
-  // GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
-  // HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+  GPIO_InitStructure.Pin        = LED_Pin;
+  GPIO_InitPeripheral(LED_GPIO_Port, &GPIO_InitStructure);
 
+  GPIO_ResetBits(LED_GPIO_Port, LED_Pin);
+
+  GPIO_InitStructure.Pin        = RM_EN_Pin;
+  GPIO_InitPeripheral(RM_EN_GPIO_Port, &GPIO_InitStructure);
+
+  GPIO_SetBits(RM_EN_GPIO_Port, RM_EN_Pin);
 }
 
 /* USER CODE BEGIN 2 */

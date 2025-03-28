@@ -100,8 +100,8 @@ void MX_TIM1_Init(void)
   TIM_BDTRInitStructure.OSSRState       = TIM_OSSR_STATE_DISABLE;
   TIM_BDTRInitStructure.OSSIState       = TIM_OSSI_STATE_DISABLE;
   TIM_BDTRInitStructure.LOCKLevel       = TIM_LOCK_LEVEL_OFF;
-  TIM_BDTRInitStructure.DeadTime        = 0;
-  TIM_BDTRInitStructure.Break           = TIM_BREAK_IN_DISABLE;
+  TIM_BDTRInitStructure.DeadTime        = 20;
+  TIM_BDTRInitStructure.Break           = TIM_BREAK_IN_ENABLE;
   TIM_BDTRInitStructure.BreakPolarity   = TIM_BREAK_POLARITY_HIGH;
   TIM_BDTRInitStructure.AutomaticOutput = TIM_AUTO_OUTPUT_DISABLE;
   TIM_BDTRInitStructure.Bidirection     = TIM_BREAK_BID_DISABLE;

@@ -218,6 +218,8 @@ void FDCAN2_INT0_IRQHandler(void)
   /* USER CODE BEGIN CAN1_RX0_IRQn 0 */
 
   while (FDCAN_GetRxFifoFillLevel(FDCAN2, FDCAN_RX_FIFO0) > 0) {
+    GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
+    
     FDCAN_GetRxMsg(FDCAN2, FDCAN_RX_FIFO0, &can_rx.rx_header, can_rx.data);	// Read CAN
     pack_reply(&can_tx, CAN_ID,  comm_encoder.angle_multiturn[0]/GR, comm_encoder.velocity/GR, controller.i_q_filt*KT*GR, controller.v_bus_filt);	// Pack response
     FDCAN_AddMsgToTxFifoQ(FDCAN2, &can_tx.tx_header, can_tx.data);	// Send response
@@ -288,6 +290,8 @@ void USART3_IRQHandler(void)
 void can_tx_rx(void){
 
 	if(FDCAN_GetRxFifoFillLevel(FDCAN2, FDCAN_RX_FIFO0) > 0){
+    GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
+
 		FDCAN_GetRxMsg(FDCAN2, FDCAN_RX_FIFO0, &can_rx.rx_header, can_rx.data);	// Read CAN
     pack_reply(&can_tx, CAN_ID,  comm_encoder.angle_multiturn[0]/GR, comm_encoder.velocity/GR, controller.i_q_filt*KT*GR, controller.v_bus_filt);	// Pack response
     FDCAN_AddMsgToTxFifoQ(FDCAN2, &can_tx.tx_header, can_tx.data);	// Send response

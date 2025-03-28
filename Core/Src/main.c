@@ -31,6 +31,7 @@
 #include "tim.h"
 #include "usart.h"
 #include "gpio.h"
+#include "pga.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -154,6 +155,7 @@ int main(void)
   MX_CAN1_Init();
   MX_SPI1_Init();
   // MX_SPI3_Init();
+  MX_PGA_Init();
   MX_ADC1_Init();
   MX_ADC2_Init();
   // MX_ADC3_Init();
@@ -257,6 +259,7 @@ int main(void)
   ATIM1->CCEN |= TIM_CCEN_CC3EN;
   ATIM1->CCEN |= TIM_CCEN_CC3NEN;
   // TIM_EnableCtrlPwmOutputs(ATIM1, ENABLE); // 打开PWM输出使能
+  DBG_ConfigPeriph(DBG_ATIM1_STOP, ENABLE);
 
   /* CAN setup */
   can_rx_init(&can_rx);

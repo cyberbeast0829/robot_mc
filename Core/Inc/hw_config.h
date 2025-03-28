@@ -126,8 +126,8 @@
 #define I_SCALE 			0.05035400390625f  // Amps per A/D Count at 40X amplifier gain
 // V_SCALE = (3.3 * VBUS_S_DIVIDER) / (2^12) 其中 VBUS_S_DIVIDER = 93.91 / 3.01
 #define V_SCALE 			0.02513618342504f    // Bus volts per A/D Count
-#define DTC_MAX 			0.94f          	// Max duty cycle
-#define DTC_MIN 			0.0f          	// Min duty cycle
+#define DTC_MAX 			0.55f          	// Max duty cycle
+#define DTC_MIN 			0.45f          	// Min duty cycle
 #define DTC_COMP 			0.000f          // deadtime compensation (100 ns / 25 us)
 #define DT					.000025f		// Loop period
 #define EN_ENC_LINEARIZATION 1				// Enable/disable encoder linearization

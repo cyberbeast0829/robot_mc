@@ -110,8 +110,8 @@ void can_rx_init(CANRxMessage *msg){
 	msg->filter.FilterType = FDCAN_FILTER_MASK;
 	msg->filter.IdType = FDCAN_STANDARD_ID;
 	FDCAN_ConfigFilter(FDCAN2, &msg->filter);
-  FDCAN_ConfigGlobalFilter(FDCAN2, FDCAN_REJECT_STD, FDCAN_REJECT_EXT,
-    FDCAN_FILTER_STD_REMOTE, FDCAN_REJECT_EXT_REMOTE);
+  // FDCAN_ConfigGlobalFilter(FDCAN2, FDCAN_REJECT_STD, FDCAN_REJECT_EXT,
+  //   FDCAN_FILTER_STD_REMOTE, FDCAN_REJECT_EXT_REMOTE);
 }
 
 void can_tx_init(CANTxMessage *msg){

@@ -86,12 +86,12 @@ void MX_ADC2_Init(void)
   ADC_InitStructure.ContinueConvEn = ENABLE;
   ADC_InitStructure.ExtTrigSelect  = ADC_EXT_TRIG_REG_CONV_SOFTWARE;
   ADC_InitStructure.DatAlign       = ADC_DAT_ALIGN_R;
-  ADC_InitStructure.ChsNumber      = 3;
+  ADC_InitStructure.ChsNumber      = 1;//3;
   ADC_Init(ADC2, &ADC_InitStructure);
 
   ADC_ConfigRegularChannel(ADC2, ADC_CH_12, 1, ADC_SAMP_TIME_CYCLES_71_5);
-  ADC_ConfigRegularChannel(ADC2, ADC_CH_0, 2, ADC_SAMP_TIME_CYCLES_71_5);
-  ADC_ConfigRegularChannel(ADC2, ADC_CH_13, 3, ADC_SAMP_TIME_CYCLES_71_5);
+  // ADC_ConfigRegularChannel(ADC2, ADC_CH_0, 2, ADC_SAMP_TIME_CYCLES_71_5);
+  // ADC_ConfigRegularChannel(ADC2, ADC_CH_13, 3, ADC_SAMP_TIME_CYCLES_71_5);
   ADC_EnableDiscMode(ADC2, DISABLE);
   ADC_SetRegularTriggerEdge(ADC2, ADC_REG_TRIG_EXT_FALLING);
   // ADC_SetDMATransferMode(ADC2, ADC_MULTI_REG_DMA_EACH_ADC);
