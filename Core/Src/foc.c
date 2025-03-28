@@ -29,8 +29,8 @@ void set_dtc(ControllerStruct *controller){
 	/* Handle phase order swapping so that voltage/current/torque match encoder direction */
 	if(!PHASE_ORDER){
         TIM_PWM->CCDAT1 = ((TIM_PWM->AR))*dtc_u;
-        TIM_PWM->CCDAT2 = ((TIM_PWM->AR))*dtc_v;
-        TIM_PWM->CCDAT3 = ((TIM_PWM->AR))*dtc_w;
+        TIM_PWM->CCDAT3 = ((TIM_PWM->AR))*dtc_v;
+        TIM_PWM->CCDAT2 = ((TIM_PWM->AR))*dtc_w;
 		// __HAL_TIM_SET_COMPARE(&TIM_PWM, TIM_CH_U, ((TIM_PWM->AR))*dtc_u);
 		// __HAL_TIM_SET_COMPARE(&TIM_PWM, TIM_CH_V, ((TIM_PWM->AR))*dtc_v);
 		// __HAL_TIM_SET_COMPARE(&TIM_PWM, TIM_CH_W, ((TIM_PWM->AR))*dtc_w);
