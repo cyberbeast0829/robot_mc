@@ -26,9 +26,10 @@ extern "C" {
 #define MENU_CMD			27
 #define MOTOR_CMD			'm'
 #define CAL_CMD				'c'
-#define ENCODER_CMD			'e'
+#define ENCODER_CMD		'e'
 #define SETUP_CMD			's'
 #define ZERO_CMD			'z'
+#define DFU_CMD       'd'
 #define ENTER_CMD			13
 
 

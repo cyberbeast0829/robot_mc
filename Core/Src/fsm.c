@@ -17,6 +17,8 @@
 #include "math_ops.h"
 #include "position_sensor.h"
 
+extern uint32_t _reboot_cookie;
+
  void run_fsm(FSMStruct * fsmstate){
 	 /* run_fsm is run every commutation interrupt cycle */
 
@@ -178,6 +180,11 @@
 		fsmstate->next_state = MENU_MODE;
 		fsmstate->ready = 0;
 		return;
+	}
+	else if (fsm_input == DFU_CMD) {
+		__asm volatile ("CPSID I\n\t":::"memory"); // disable interrupts
+		_reboot_cookie = 0xDEADBEEF;
+		NVIC_SystemReset();
 	}
 	switch(fsmstate->state){
 		case MENU_MODE:

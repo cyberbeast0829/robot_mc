@@ -70,6 +70,7 @@
 /* External variables --------------------------------------------------------*/
 extern FDCAN_InitType hcan1;
 extern USART_InitType huart2;
+extern uint32_t _reboot_cookie;
 /* USER CODE BEGIN EV */
 
 /* USER CODE END EV */
@@ -234,6 +235,12 @@ void FDCAN2_INT0_IRQHandler(void)
     else if(((can_rx.data[0]==0xFF) & (can_rx.data[1]==0xFF) & (can_rx.data[2]==0xFF) & (can_rx.data[3]==0xFF) * (can_rx.data[4]==0xFF) & (can_rx.data[5]==0xFF) & (can_rx.data[6]==0xFF) & (can_rx.data[7]==0xFE))){
       update_fsm(&state, ZERO_CMD);
         }
+    else if(((can_rx.data[0]==0xFF) & (can_rx.data[1]==0xFF) & (can_rx.data[2]==0xFF) & (can_rx.data[3]==0xFF) * (can_rx.data[4]==0xFF) & (can_rx.data[5]==0xFF) & (can_rx.data[6]==0xFF) & (can_rx.data[7]==0xFF))){
+      __asm volatile ("CPSID I\n\t":::"memory"); // disable interrupts
+      _reboot_cookie = 0xDEADBEEF;
+      NVIC_SystemReset();
+        }
+        
     else{
       unpack_cmd(can_rx, controller.commands);	// Unpack commands
       controller.timeout = 0;					// Reset timeout counter
@@ -306,6 +313,12 @@ void can_tx_rx(void){
 		else if(((can_rx.data[0]==0xFF) & (can_rx.data[1]==0xFF) & (can_rx.data[2]==0xFF) & (can_rx.data[3]==0xFF) * (can_rx.data[4]==0xFF) & (can_rx.data[5]==0xFF) & (can_rx.data[6]==0xFF) & (can_rx.data[7]==0xFE))){
 			  update_fsm(&state, ZERO_CMD);
 			}
+    else if(((can_rx.data[0]==0xFF) & (can_rx.data[1]==0xFF) & (can_rx.data[2]==0xFF) & (can_rx.data[3]==0xFF) * (can_rx.data[4]==0xFF) & (can_rx.data[5]==0xFF) & (can_rx.data[6]==0xFF) & (can_rx.data[7]==0xFF))){
+      __asm volatile ("CPSID I\n\t":::"memory"); // disable interrupts
+      _reboot_cookie = 0xDEADBEEF;
+      NVIC_SystemReset();
+      }
+
 		else{
 			  unpack_cmd(can_rx, controller.commands);	// Unpack commands
 			  controller.timeout = 0;					// Reset timeout counter

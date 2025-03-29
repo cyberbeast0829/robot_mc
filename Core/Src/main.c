@@ -96,6 +96,10 @@ int *lut_array = NULL;
 
 uint8_t Serial2RxBuffer[1];
 
+// 参见https://www.eet-china.com/mp/a269236.html “Keil、IAR、CubeIDE中变量不被初始化方法”
+// 下述方法仅限于用Keil+AC6
+uint32_t _reboot_cookie __attribute__ ((section(".bss.NO_INIT")));
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -119,6 +123,183 @@ void SystemClock_Config(void);
 //            ((ieee754.u & 0x000FFFFFFFFFFFFF) != 0);
 // }
 
+/* Internal SRAM config fo MCU */
+#define SRAM_BASE_ADDR          (0x20000000)
+#define SRAM_SIZE               (0x24000)
+
+/* Constant for BOOT */
+#define SRAM_VECTOR_WORD_SIZE   (128)
+#define SRAM_VECTOR_ADDR        (SRAM_BASE_ADDR+SRAM_SIZE-0x200)
+uint32_t BootAddr = 0x1FFF01a1,
+         SPAddr = 0x200024a8,
+         _mainAddr = 0x1FFF0189;   // BOOT V1.0 Version
+
+typedef enum
+{
+    CMD_CR_SUCCESS  = 0x00,
+    CMD_CR_FAILED   = 0x01,
+}CMD_RETURN_CR;
+
+CMD_RETURN_CR     (*Get_NVR)(uint32_t addr, uint8_t* data, uint32_t len) = (CMD_RETURN_CR (*)(uint32_t ,uint8_t*,uint32_t))0x1FFF02A5;
+
+/* The pointer of function */
+typedef void (*pFunction)(void);
+
+static ErrorStatus SetSysClockToHSI(void)
+{
+    uint32_t timeout_value = 0xFFFFFFFF; 
+    ErrorStatus ClockStatus;
+
+    /* It is necessary to initialize the RCC peripheral to the reset state.*/
+    RCC_DeInit();
+    
+    /* Enable HSI   */
+    RCC_EnableHsi(ENABLE);
+    /* Wait till HSI is ready */
+    ClockStatus = RCC_WaitHsiStable();
+
+    if (ClockStatus == SUCCESS)
+    {
+        /* Enable Prefetch Buffer */
+        FLASH_PrefetchBufSet(FLASH_PrefetchBuf_EN);
+
+        /* Flash 0 wait state */
+        FLASH_SetLatency(FLASH_LATENCY_0);
+
+        /* HCLK = SYSCLK */
+        RCC_ConfigHclk(RCC_SYSCLK_DIV1);
+
+        /* PCLK2 = HCLK */
+        RCC_ConfigPclk2(RCC_HCLK_DIV1);
+
+        /* PCLK1 = HCLK */
+        RCC_ConfigPclk1(RCC_HCLK_DIV1);
+        
+        /* Restore HSI to PLL frequency division as default value */
+        RCC->PLLCTRL |= 0x00040000;
+
+        /* Select HSI as system clock source */
+        RCC_ConfigSysclk(RCC_SYSCLK_SRC_HSI);
+           
+        /* Wait till HSI is used as system clock source */
+        while (RCC_GetSysclkSrc() != RCC_CFG_SCLKSTS_HSI)
+        {
+            if ((timeout_value--) == 0)
+            {
+                return ERROR;
+            }
+        }
+    }
+    else
+    {
+        /* HSI fails  */
+        return ERROR;
+    }
+    return SUCCESS;
+}
+
+static void Jump_To_BOOT(void)
+{
+    uint8_t value1[8] = {0x00},value2 = 8;
+    uint32_t i,*pVec;
+    
+    /* Init vector */
+    pVec = (uint32_t *)SRAM_VECTOR_ADDR;
+    for(i=0;i<SRAM_VECTOR_WORD_SIZE;i++)
+        pVec[i] = 0;
+    
+    /* clean up ICache*/
+    FLASH_iCacheCmd(DISABLE);
+    FLASH_iCacheRST();
+    
+    /* Get BOOT Version */
+    Get_NVR(0x1FFF37A8,value1,value2);
+    
+    if((value1[0] & 0xFF) == 0x11)    //BOOT V1.1 Version
+    {
+        SPAddr = 0x200024C0;
+        pVec[SysTick_IRQn+16]           = 0x1FFF2F15;
+        pVec[USART3_IRQn+16]            = 0x1FFF2F95;
+        pVec[USB_FS_LP_IRQn+16]         = 0x1FFF3095;
+    }
+    else                           //BOOT V1.0 Version
+    {
+        pVec[SysTick_IRQn+16]           = 0x1FFF2d31;
+        pVec[USART3_IRQn+16]            = 0x1FFF2db1;
+        pVec[USB_FS_LP_IRQn+16]         = 0x1FFF2eb1;
+    }
+    /* Disable all interrupt */
+    __disable_irq();
+    
+    /* Config IWDG */
+    IWDG_ReloadKey();
+    IWDG_WriteConfig(IWDG_WRITE_DISABLE);
+    IWDG_SetPrescalerDiv(IWDG_PRESCALER_DIV256);
+       
+    /* Config system clock with HSI */ 
+    SetSysClockToHSI();
+    
+    /* Set JumpBoot addr */
+    pFunction JumpBoot = (pFunction)BootAddr;
+    
+    /* Initalize Stack Pointer */
+    __set_MSP(SPAddr);
+    
+    /* Enable interrupt */
+    __enable_irq();
+    
+    /* Initialize vector table */
+    SCB->VTOR = SRAM_VECTOR_ADDR;
+
+    /* Jump to BOOT */
+    JumpBoot();
+}
+
+/**
+ * @brief Carries out early startup tasks that need to run before any static
+ * initializers.
+ * This function gets called from the startup assembly code.
+ */
+void early_start_checks(void) {
+  if(_reboot_cookie == 0xDEADFE75) {
+      /* The STM DFU bootloader enables internal pull-up resistors on PB10 (AUX_H)
+      * and PB11 (AUX_L), thereby causing shoot-through on the brake resistor
+      * FETs and obliterating them unless external 3.3k pull-down resistors are
+      * present. Pull-downs are only present on ODrive 3.5 or newer.
+      * On older boards we disable DFU by default but if the user insists
+      * there's only one thing left that might save it: time.
+      * The brake resistor gate driver needs a certain 10V supply (GVDD) to
+      * make it work. This voltage is supplied by the motor gate drivers which get
+      * disabled at system reset. So over time GVDD voltage _should_ below
+      * dangerous levels. This is completely handwavy and should not be relied on
+      * so you are on your own on if you ignore this warning.
+      *
+      * This loop takes 5 cycles per iteration and at this point the system runs
+      * on the internal 16MHz RC oscillator so the delay is about 2 seconds.
+      */
+      for (size_t i = 0; i < (16000000UL / 5UL * 2UL); ++i) {
+          __NOP();
+      }
+      _reboot_cookie = 0xDEADBEEF;
+  }
+
+  /* We could jump to the bootloader directly on demand without rebooting
+  but that requires us to reset several peripherals and interrupts for it
+  to function correctly. Therefore it's easier to just reset the entire chip. */
+  if(_reboot_cookie == 0xDEADBEEF) {
+      _reboot_cookie = 0xCAFEFEED;  //Reset bootloader trigger
+      Jump_To_BOOT();
+  }
+
+  /* The bootloader might fail to properly clean up after itself,
+  so if we're not sure that the system is in a clean state we
+  just reset it again */
+  if(_reboot_cookie != 42) {
+      _reboot_cookie = 42;
+      NVIC_SystemReset();
+  }
+}
+
 
 /* USER CODE END 0 */
 
@@ -135,7 +316,7 @@ int main(void)
   /* MCU Configuration--------------------------------------------------------*/
 
   /* USER CODE BEGIN Init */
-
+  early_start_checks(); // check dfu status
   /* USER CODE END Init */
 
   /* Configure the system clock */
