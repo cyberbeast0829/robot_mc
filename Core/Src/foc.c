@@ -29,8 +29,8 @@ void set_dtc(ControllerStruct *controller){
 	/* Handle phase order swapping so that voltage/current/torque match encoder direction */
 	if(!PHASE_ORDER){
         TIM_PWM->CCDAT1 = ((TIM_PWM->AR))*dtc_u;
-        TIM_PWM->CCDAT3 = ((TIM_PWM->AR))*dtc_v;
-        TIM_PWM->CCDAT2 = ((TIM_PWM->AR))*dtc_w;
+        TIM_PWM->CCDAT2 = ((TIM_PWM->AR))*dtc_v;
+        TIM_PWM->CCDAT3 = ((TIM_PWM->AR))*dtc_w;
 		// __HAL_TIM_SET_COMPARE(&TIM_PWM, TIM_CH_U, ((TIM_PWM->AR))*dtc_u);
 		// __HAL_TIM_SET_COMPARE(&TIM_PWM, TIM_CH_V, ((TIM_PWM->AR))*dtc_v);
 		// __HAL_TIM_SET_COMPARE(&TIM_PWM, TIM_CH_W, ((TIM_PWM->AR))*dtc_w);
@@ -118,7 +118,7 @@ void zero_current(ControllerStruct *controller){
 
     int adc_a_offset = 0;
     int adc_b_offset = 0;
-    int n = 1000;
+    int n = 60000;
     controller->dtc_u = 0.f;
     controller->dtc_v = 0.f;
     controller->dtc_w = 0.f;
@@ -293,7 +293,45 @@ void commutate(ControllerStruct *controller, EncoderStruct *encoder)
        set_dtc(controller);
 
     }
+float angle_est = 0; 
 
+void commutate_open_loop(ControllerStruct *controller, EncoderStruct *encoder)
+{
+    	/* Do Field Oriented Control */
+
+		controller->theta_elec = encoder->elec_angle;
+        angle_est = fmodf(controller->theta_elec, TWO_PI_F);
+		controller->dtheta_elec = encoder->elec_velocity;
+		controller->dtheta_mech = encoder->velocity/GR;
+		controller->theta_mech = encoder->angle_multiturn[0]/GR;
+
+       /// Commutation  ///
+       dq0(controller->theta_elec, controller->i_a, controller->i_b, controller->i_c, &controller->i_d, &controller->i_q);    //dq0 transform on currents - 3.8 us
+
+       controller->i_q_filt = (1.0f-CURRENT_FILT_ALPHA)*controller->i_q_filt + CURRENT_FILT_ALPHA*controller->i_q;	// these aren't used for control but are sometimes nice for debugging
+       controller->i_d_filt = (1.0f-CURRENT_FILT_ALPHA)*controller->i_d_filt + CURRENT_FILT_ALPHA*controller->i_d;
+       controller->v_bus_filt = (1.0f-VBUS_FILT_ALPHA)*controller->v_bus_filt + VBUS_FILT_ALPHA*controller->v_bus;	// used for voltage saturation
+
+       controller->v_max = OVERMODULATION*controller->v_bus_filt*(DTC_MAX-DTC_MIN)*SQRT1_3;
+       controller->v_margin = controller->v_max - controller->v_ref;
+       controller->i_max = I_MAX; //I_MAX*(!controller->otw_flag) + I_MAX_CONT*controller->otw_flag;
+
+
+       if(controller->i_q > controller->i_mag_max){
+    	   controller->i_mag_max = controller->i_q;
+       }
+
+        controller->v_d =  controller->i_d_des/6.0f;    //开环转       
+        controller->v_q = controller->i_q_des/6.0f;
+
+       limit_norm(&controller->v_d, &controller->v_q, controller->v_max);
+
+       abc(controller->theta_elec + 1.5f*DT*controller->dtheta_elec, controller->v_d, controller->v_q, &controller->v_u, &controller->v_v, &controller->v_w); //inverse dq0 transform on voltages
+       svm(controller->v_max, controller->v_u, controller->v_v, controller->v_w, &controller->dtc_u, &controller->dtc_v, &controller->dtc_w); //space vector modulation
+
+       set_dtc(controller);
+
+    }
 
 void torque_control(ControllerStruct *controller){
 	controller->t_ff_filt = 0.9f*controller->t_ff_filt + 0.1f*controller->t_ff;

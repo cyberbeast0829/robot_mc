@@ -126,18 +126,18 @@
 #define I_SCALE 			0.05035400390625f  // Amps per A/D Count at 40X amplifier gain
 // V_SCALE = (3.3 * VBUS_S_DIVIDER) / (2^12) 其中 VBUS_S_DIVIDER = 93.91 / 3.01
 #define V_SCALE 			0.02513618342504f    // Bus volts per A/D Count
-#define DTC_MAX 			0.55f          	// Max duty cycle
-#define DTC_MIN 			0.45f          	// Min duty cycle
+#define DTC_MAX 			0.7f          	// Max duty cycle
+#define DTC_MIN 			0.0f          	// Min duty cycle
 #define DTC_COMP 			0.000f          // deadtime compensation (100 ns / 25 us)
 #define DT					.000025f		// Loop period
 #define EN_ENC_LINEARIZATION 1				// Enable/disable encoder linearization
-#define V_BUS_MAX			40.0f			// max drive voltage (faults above this)
+#define V_BUS_MAX			60.0f			// max drive voltage (faults above this)
 
 /* Current controller */
-#define L_D .00004f				// D axis inductance
-#define L_Q .00004f				// Q axis inductance
-#define K_D .1f                    // Loop gain,  Volts/Amp
-#define K_Q .1f                    // Loop gain,  Volts/Amp
+#define L_D     95e-6f				// D axis inductance
+#define L_Q     124e-6f				// Q axis inductance
+#define K_D     .1f                    // Loop gain,  Volts/Amp
+#define K_Q     .1f                    // Loop gain,  Volts/Amp
 #define K_SCALE 0.00012f             // K_loop/Loop BW (Hz) 0.0042
 #define KI_D 0.045f                // PI zero, in radians per sample
 #define KI_Q 0.045f                // PI zero, in radians per sample

@@ -33,7 +33,7 @@ void order_phases(EncoderStruct *encoder, ControllerStruct *controller, CalStruc
         cal->cal_position.elec_velocity = 0;
         controller->i_d_des = I_CAL;
         controller->i_q_des = 0.0f;
-        commutate(controller, &cal->cal_position);
+        commutate_open_loop(controller, &cal->cal_position);
     	cal->theta_start = encoder->angle_multiturn[0];
     	return;
     }
@@ -42,7 +42,7 @@ void order_phases(EncoderStruct *encoder, ControllerStruct *controller, CalStruc
     	// rotate voltage vector through one electrical cycle
     	cal->theta_ref = W_CAL*(cal->time-T1);
     	cal->cal_position.elec_angle = cal->theta_ref;
-		commutate(controller, &cal->cal_position);
+		commutate_open_loop(controller, &cal->cal_position);
     	return;
     }
 
@@ -86,17 +86,19 @@ void calibrate_encoder(EncoderStruct *encoder, ControllerStruct *controller, Cal
         cal->cal_position.elec_angle = cal->theta_ref;
         controller->i_d_des = I_CAL;
         controller->i_q_des = 0.0f;
-        commutate(controller, &cal->cal_position);
+        commutate_open_loop(controller, &cal->cal_position);
 
     	cal->theta_start = encoder->angle_multiturn[0];
     	cal->next_sample_time = cal->time;
     	return;
-    }
+
+	}
+		// 正转一个机械角度
     else if (cal->time < T1+2.0f*PI_F*PPAIRS/W_CAL){
     	// rotate voltage vector through one mechanical rotation in the positive direction
 		cal->theta_ref += W_CAL*DT;//(cal->time-T1);
 		cal->cal_position.elec_angle = cal->theta_ref;
-		commutate(controller, &cal->cal_position);
+		commutate_open_loop(controller, &cal->cal_position);
 
 		// sample SAMPLES_PER_PPAIR times per pole-pair
 		if(cal->time > cal->next_sample_time){
@@ -113,13 +115,14 @@ void calibrate_encoder(EncoderStruct *encoder, ControllerStruct *controller, Cal
 		}
 		return;
     }
+	// 反转一个机械角度
 	else if (cal->time < T1+4.0f*PI_F*PPAIRS/W_CAL){
 		// rotate voltage vector through one mechanical rotation in the negative direction
 		cal->theta_ref -= W_CAL*DT;//(cal->time-T1);
 		controller->i_d_des = I_CAL;
 		controller->i_q_des = 0.0f;
 		cal->cal_position.elec_angle = cal->theta_ref;
-		commutate(controller, &cal->cal_position);
+		commutate_open_loop(controller, &cal->cal_position);
 
 		// sample SAMPLES_PER_PPAIR times per pole-pair
 		if((cal->time > cal->next_sample_time)&&(cal->sample_count>0)){
