@@ -35,6 +35,7 @@
 #include "position_sensor.h"
 #include "hw_config.h"
 #include "user_config.h"
+#include "usb_istr.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -289,6 +290,19 @@ void USART3_IRQHandler(void)
     update_fsm(&state, c);
   }
 	
+}
+
+void USB_FS_LP_IRQHandler(void)
+{
+  USB_Istr();
+}
+
+/**
+ * @brief  This function handles USB WakeUp interrupt request.
+ */
+void USB_FS_WKUP_IRQHandler(void)
+{
+  EXTI_ClrITPendBit(EXTI_LINE18);
 }
 
 

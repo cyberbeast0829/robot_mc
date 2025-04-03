@@ -465,6 +465,8 @@ int main(void)
   TIM_ClrIntPendingBit(ATIM1, TIM_INT_UPDATE);
   TIM_ConfigInt(ATIM1, TIM_INT_UPDATE, ENABLE);
 
+  MX_USB_Init();
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -482,6 +484,16 @@ int main(void)
     /* USER CODE BEGIN 3 */
   }
   /* USER CODE END 3 */
+}
+
+static uint8_t usb_rx_buffer[64];
+// USB接收数据处理函数
+void usb_rx_process_packet(uint16_t bufaddr, uint32_t len, uint8_t endpoint_pair) {
+
+  USB_CopyPMAToUserBuf(usb_rx_buffer, bufaddr, len);
+  for (uint8_t i = 0; i < len; i++) {
+    update_fsm(&state, (char)usb_rx_buffer[i]);
+  }
 }
 
 /**

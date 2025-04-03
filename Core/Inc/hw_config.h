@@ -84,6 +84,10 @@
 #define LED_Pin                         GPIO_PIN_6
 #define LED_GPIO_Port                   GPIOC
 
+#define USB_DM_Pin                      GPIO_PIN_11
+#define USB_DP_Pin                      GPIO_PIN_12
+#define USB_GPIO_Port                   GPIOA
+
 /* Timer and PWM */
 #define TIM_PWM			ATIM1				// PWM/ISR timer handle
 #define TIM_CH_U		TIM_CHANNEL_1		// Terminal U timer channel
