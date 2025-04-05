@@ -49,6 +49,8 @@
 #include "foc.h"
 #include "math_ops.h"
 #include "calibration.h"
+#include "usb.h"
+#include "usb_pwr.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -340,6 +342,7 @@ int main(void)
   MX_ADC1_Init();
   MX_ADC2_Init();
   // MX_ADC3_Init();
+  MX_USB_Init();
   /* USER CODE BEGIN 2 */
 
   /* Load settings from flash */
@@ -465,8 +468,6 @@ int main(void)
   TIM_ClrIntPendingBit(ATIM1, TIM_INT_UPDATE);
   TIM_ConfigInt(ATIM1, TIM_INT_UPDATE, ENABLE);
 
-  MX_USB_Init();
-
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -489,11 +490,23 @@ int main(void)
 static uint8_t usb_rx_buffer[64];
 // USB接收数据处理函数
 void usb_rx_process_packet(uint16_t bufaddr, uint32_t len, uint8_t endpoint_pair) {
-
   USB_CopyPMAToUserBuf(usb_rx_buffer, bufaddr, len);
   for (uint8_t i = 0; i < len; i++) {
     update_fsm(&state, (char)usb_rx_buffer[i]);
   }
+  USB_Receive_DATA(endpoint_pair);
+}
+
+// 映射printf到串口
+int fputc(int ch, FILE *stream) {
+  if (bDeviceState == CONFIGURED) {
+    uint8_t dat = (uint8_t)ch;
+    USB_Send_DATA((uint8_t *)&dat, 1, ENDP1);
+  } else { 
+    USART_SendData(USART3, ch);
+    while (USART_GetFlagStatus(USART3, USART_FLAG_TXC) == RESET);
+  }
+  return ch;
 }
 
 /**

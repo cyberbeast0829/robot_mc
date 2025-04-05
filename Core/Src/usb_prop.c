@@ -200,10 +200,10 @@ void Virtual_Com_Port_Reset(void)
 
     bDeviceState = ATTACHED;
 
-    uint8_t test_buf[2];
-    test_buf[0] = 'o';test_buf[1] = 'n';
-    USB_Send_DATA(test_buf, 2, ENDP1);
-    USB_Send_DATA(test_buf, 2, ENDP3);
+    // uint8_t test_buf[2];
+    // test_buf[0] = 'o';test_buf[1] = 'n';
+    // USB_Send_DATA(test_buf, 2, ENDP1);
+    // USB_Send_DATA(test_buf, 2, ENDP3);
     printf("USB connected!\r\n");
 }
 

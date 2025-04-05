@@ -72,12 +72,6 @@ void MX_USART2_UART_Init(void)
 }
 
 /* USER CODE BEGIN 1 */
-#include <stdio.h>
-int fputc(int ch, FILE *stream) {
-  USART_SendData(USART3, ch);
-  while (USART_GetFlagStatus(USART3, USART_FLAG_TXC) == RESET);
-  return ch;
-}
 
 
 /************************ (C) COPYRIGHT STMicroelectronics *****END OF FILE****/
