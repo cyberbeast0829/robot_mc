@@ -109,7 +109,7 @@ void MX_TIM1_Init(void)
   TIM_ConfigBkdt(ATIM1, &TIM_BDTRInitStructure);
 
   NVIC_InitStructure.NVIC_IRQChannel                   = ATIM1_UP_IRQn;
-  NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 0;
+  NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 1;
   NVIC_InitStructure.NVIC_IRQChannelSubPriority        = 0;
   NVIC_InitStructure.NVIC_IRQChannelCmd                = ENABLE;
   NVIC_Init(&NVIC_InitStructure);

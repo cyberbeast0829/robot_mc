@@ -102,7 +102,7 @@ uint8_t Serial2RxBuffer[1];
 // 参见https://www.eet-china.com/mp/a269236.html “Keil、IAR、CubeIDE中变量不被初始化方法”
 // 下述方法仅限于用Keil+AC6
 uint32_t _reboot_cookie __attribute__ ((section(".bss.NO_INIT")));
-
+extern bool packet_sent;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -446,15 +446,18 @@ int main(void)
   // TIM_EnableCtrlPwmOutputs(ATIM1, ENABLE); // 打开PWM输出使能
   DBG_ConfigPeriph(DBG_ATIM1_STOP, ENABLE);
 
+  /* Set Interrupt Priorities */
+  NVIC_SetPriority(PWM_ISR, 1); // commutation > communication
+  NVIC_SetPriority(CAN_ISR, 2);
+  NVIC_SetPriority(USB_ISR, 0);
+  NVIC_SetPriority(USB_WKUP_ISR, 0);
+  NVIC_SetPriority(USART_ISR, 3);
+
   /* CAN setup */
   can_rx_init(&can_rx);
   can_tx_init(&can_tx);
   FDCAN_Start(FDCAN2); //start CAN
   //__HAL_CAN_ENABLE_IT(&CAN_H, CAN_IT_RX_FIFO0_MSG_PENDING); // Start can interrupt
-
-  /* Set Interrupt Priorities */
-  NVIC_SetPriority(PWM_ISR, 0x0); // commutation > communication
-  NVIC_SetPriority(CAN_ISR, 0x01);
 
   /* Start the FSM */
   state.state = MENU_MODE;
@@ -515,9 +518,27 @@ void myprintf(const char *fmt, ...)
 {
   va_list args;
   va_start(args, fmt);
-  sprintf(printf_buf, fmt, args);
+  vsnprintf(printf_buf, sizeof(printf_buf), fmt, args);
   if (bDeviceState == CONFIGURED) {
-    USB_Send_DATA((uint8_t *)printf_buf, strlen(printf_buf), ENDP1);
+    int bytes_to_be_sent = strlen(printf_buf);
+    uint8_t *send_ptr = (uint8_t *)printf_buf;
+    while (bytes_to_be_sent > 0) {
+      int bytes_to_send = (bytes_to_be_sent > 32) ? 32 : bytes_to_be_sent; // 每次发送32字节
+      packet_sent = false;
+      USB_Send_DATA(send_ptr, bytes_to_send, ENDP1);
+      int timeout_cnt = 0;
+      while (!packet_sent) {
+        for (int i = 0; i < 1000; i++) {
+          __NOP();
+        }
+        if (timeout_cnt++ > 10000) {
+          break; // 超时退出
+        }
+      }
+      bytes_to_be_sent -= bytes_to_send;
+      send_ptr += bytes_to_send;
+    }
+    packet_sent = false;
   } else {
     for (int i = 0; i < strlen(printf_buf); i++) {
       USART_SendData(USART3, printf_buf[i]);

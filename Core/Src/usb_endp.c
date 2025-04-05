@@ -49,7 +49,7 @@
 
 /* Private macro -------------------------------------------------------------*/
 /* Private variables ---------------------------------------------------------*/
-
+bool packet_sent = false;
 /* Private function prototypes -----------------------------------------------*/
 /* Private functions ---------------------------------------------------------*/
 extern void usb_rx_process_packet(uint16_t bufaddr, uint32_t len, uint8_t endpoint_pair);
@@ -59,6 +59,7 @@ extern void usb_rx_process_packet(uint16_t bufaddr, uint32_t len, uint8_t endpoi
 void EP1_IN_Callback (void)
 {
     SetEPTxStatus(ENDP1, EP_TX_NAK);
+    packet_sent = true;
 }
 
 /**

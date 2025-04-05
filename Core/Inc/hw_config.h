@@ -98,6 +98,9 @@
 /* ISRs */
 #define PWM_ISR			ATIM1_UP_IRQn	// PWM Timer ISR
 #define CAN_ISR			FDCAN2_INT0_IRQn		// CAN Receive ISR
+#define USB_ISR			USB_FS_LP_IRQn	// USB ISR
+#define USB_WKUP_ISR	USB_FS_WKUP_IRQn	// USB Wakeup ISR
+#define USART_ISR		USART3_IRQn		// USART ISR
 
 /* ADC */
 

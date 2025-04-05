@@ -223,6 +223,9 @@ extern uint32_t _reboot_cookie;
 				process_user_input(fsmstate);
 				break;
 			}
+			else if (fsm_input == 0x0A) { // 上述把0x0D定义成了ENTER_CMD，所以这里0x0A就不需要了，直接忽略
+				break;
+			}
 			if(fsmstate->bytecount == 0){fsmstate->cmd_id = fsm_input;}
 			else{
 				fsmstate->cmd_buff[fsmstate->bytecount-1] = fsm_input;

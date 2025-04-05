@@ -137,7 +137,7 @@ void USB_Send_DATA(uint8_t *ptrBuffer, uint8_t Send_length, uint8_t endpoint_num
 {
     /* send  packet to PMA*/
     USB_CopyUserToPMABuf((unsigned char*)ptrBuffer, endpoint_num == ENDP1 ? ENDP1_TXADDR : ENDP3_TXADDR,
-                        Send_length > VIRTUAL_COM_PORT_DATA_SIZE ? VIRTUAL_COM_PORT_DATA_SIZE : Send_length);
+                        Send_length >= VIRTUAL_COM_PORT_DATA_SIZE ? VIRTUAL_COM_PORT_DATA_SIZE - 1 : Send_length);
     USB_SetEpTxCnt(endpoint_num, Send_length);
     USB_SetEpTxValid(endpoint_num);
 }
