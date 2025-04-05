@@ -206,7 +206,7 @@ void update_observer(ControllerStruct *controller, ObserverStruct *observer)
     float e = (float)observer->temperature - observer->temp_measured;
     observer->trust = (1.0f - .004f*fminf(abs(controller->dtheta_elec), 250.0f)) * (.01f*(fminf(i_sq, 100.0f)));
     observer->temperature -= observer->trust*.0001f*e;
-    //printf("%.3f\n\r", e);
+    //myprintf("%.3f\n\r", e);
 
     if(observer->temperature > TEMP_MAX){controller->otw_flag = 1;}
     else{controller->otw_flag = 0;}

@@ -204,7 +204,7 @@ void Virtual_Com_Port_Reset(void)
     // test_buf[0] = 'o';test_buf[1] = 'n';
     // USB_Send_DATA(test_buf, 2, ENDP1);
     // USB_Send_DATA(test_buf, 2, ENDP3);
-    printf("USB connected!\r\n");
+    myprintf("USB connected!\r\n");
 }
 
 /**

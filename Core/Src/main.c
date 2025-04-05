@@ -38,6 +38,7 @@
 #include "structs.h"
 #include <stdio.h>
 #include <string.h>
+#include <stdarg.h>
 
 #include "n32h47x_48x_flash.h"
 #include "flash_writer.h"
@@ -372,7 +373,7 @@ int main(void)
   if(isnan(V_MAX)){V_MAX = 65.0f;}
   if(isnan(V_MIN)){V_MIN = -65.0f;}
 
-  printf("\r\nFirmware Version Number: %.2f\r\n", VERSION_NUM);
+  myprintf("\r\nFirmware Version Number: %.2f\r\n", VERSION_NUM);
 
   /* Controller Setup */
   if(PHASE_ORDER){							// Timer channel to phase mapping
@@ -396,7 +397,7 @@ int main(void)
   else{memset(&comm_encoder.offset_lut, 0, sizeof(comm_encoder.offset_lut));}
   ps_warmup(&comm_encoder, 100);			// clear the noisy data when the encoder first turns on
 
-  //for(int i = 0; i<128; i++){printf("%d\r\n", comm_encoder.offset_lut[i]);}
+  //for(int i = 0; i<128; i++){myprintf("%d\r\n", comm_encoder.offset_lut[i]);}
 
   /* Turn on ADCs */
   ADC_Enable(ADC1, ENABLE);
@@ -430,7 +431,7 @@ int main(void)
   // drv_disable_gd(drv);
   // HAL_Delay(1);
   //drv_enable_gd(drv);   */
-  printf("ADC A OFFSET: %d     ADC B OFFSET: %d\r\n", controller.adc_a_offset, controller.adc_b_offset);
+  myprintf("ADC A OFFSET: %d     ADC B OFFSET: %d\r\n", controller.adc_a_offset, controller.adc_b_offset);
 
   /* Turn on PWM */
   ATIM1->CCDAT1 = ATIM1->AR / 2;
@@ -478,7 +479,7 @@ int main(void)
 	  // HAL_Delay(100);
 	  // drv_print_faults(drv);
 	 // if(state.state==MOTOR_MODE){
-	  	  //printf("%.2f %.2f %.2f %.2f %.2f\r\n", controller.p_des, controller.v_des, controller.kp, controller.kd, controller.t_ff);
+	  	  //myprintf("%.2f %.2f %.2f %.2f %.2f\r\n", controller.p_des, controller.v_des, controller.kp, controller.kd, controller.t_ff);
 	  //}
     /* USER CODE END WHILE */
 
@@ -498,15 +499,32 @@ void usb_rx_process_packet(uint16_t bufaddr, uint32_t len, uint8_t endpoint_pair
 }
 
 // 映射printf到串口
-int fputc(int ch, FILE *stream) {
+// int fputc(int ch, FILE *stream) {
+//   if (bDeviceState == CONFIGURED) {
+//     uint8_t dat = (uint8_t)ch;
+//     USB_Send_DATA((uint8_t *)&dat, 1, ENDP1);
+//   } else { 
+//     USART_SendData(USART3, ch);
+//     while (USART_GetFlagStatus(USART3, USART_FLAG_TXC) == RESET);
+//   }
+//   return ch;
+// }
+
+char printf_buf[256];
+void myprintf(const char *fmt, ...)
+{
+  va_list args;
+  va_start(args, fmt);
+  sprintf(printf_buf, fmt, args);
   if (bDeviceState == CONFIGURED) {
-    uint8_t dat = (uint8_t)ch;
-    USB_Send_DATA((uint8_t *)&dat, 1, ENDP1);
-  } else { 
-    USART_SendData(USART3, ch);
-    while (USART_GetFlagStatus(USART3, USART_FLAG_TXC) == RESET);
+    USB_Send_DATA((uint8_t *)printf_buf, strlen(printf_buf), ENDP1);
+  } else {
+    for (int i = 0; i < strlen(printf_buf); i++) {
+      USART_SendData(USART3, printf_buf[i]);
+      while (USART_GetFlagStatus(USART3, USART_FLAG_TXC) == RESET);
+    }
   }
-  return ch;
+  va_end(args);
 }
 
 /**
@@ -580,7 +598,7 @@ void assert_failed(uint8_t *file, uint32_t line)
 {
   /* USER CODE BEGIN 6 */
   /* User can add his own implementation to report the file name and line number,
-     tex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
+     tex: myprintf("Wrong parameters value: file %s on line %d\r\n", file, line) */
   /* USER CODE END 6 */
 }
 #endif /* USE_FULL_ASSERT */

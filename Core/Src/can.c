@@ -179,9 +179,9 @@ void unpack_cmd(CANRxMessage msg, float *commands){// ControllerStruct * control
         commands[2] = uint_to_float(kp_int, KP_MIN, KP_MAX, 12);
         commands[3] = uint_to_float(kd_int, KD_MIN, KD_MAX, 12);
         commands[4] = uint_to_float(t_int, -I_MAX*KT*GR, I_MAX*KT*GR, 12);
-    //printf("Received   ");
-    //printf("%.3f  %.3f  %.3f  %.3f  %.3f   %.3f", controller->p_des, controller->v_des, controller->kp, controller->kd, controller->t_ff, controller->i_q_ref);
-    //printf("\n\r");
+    //myprintf("Received   ");
+    //myprintf("%.3f  %.3f  %.3f  %.3f  %.3f   %.3f", controller->p_des, controller->v_des, controller->kp, controller->kd, controller->t_ff, controller->i_q_ref);
+    //myprintf("\n\r");
     }
 
 /* USER CODE END 1 */

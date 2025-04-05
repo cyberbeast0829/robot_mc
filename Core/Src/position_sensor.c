@@ -112,11 +112,11 @@ void ps_sample(EncoderStruct * encoder, float dt){
 }
 
 void ps_print(EncoderStruct * encoder, int dt_ms){
-	printf("Raw: %d", encoder->raw);
-	printf("   Linearized Count: %d", encoder->count);
-	printf("   Single Turn: %f", encoder->angle_singleturn);
-	printf("   Multiturn: %f", encoder->angle_multiturn[0]);
-	printf("   Electrical: %f", encoder->elec_angle);
-	printf("   Turns:  %d\r\n", encoder->turns);
+	myprintf("Raw: %d", encoder->raw);
+	myprintf("   Linearized Count: %d", encoder->count);
+	myprintf("   Single Turn: %f", encoder->angle_singleturn);
+	myprintf("   Multiturn: %f", encoder->angle_multiturn[0]);
+	myprintf("   Electrical: %f", encoder->elec_angle);
+	myprintf("   Turns:  %d\r\n", encoder->turns);
 	//HAL_Delay(dt_ms);
 }
