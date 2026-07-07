@@ -56,7 +56,7 @@ void myprintf(const char *fmt, ...);
 void Error_Handler(void);
 
 /* USER CODE BEGIN EFP */
-
+void fault_shutdown(void);		// gate drive off + PWM outputs off, register writes only
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/

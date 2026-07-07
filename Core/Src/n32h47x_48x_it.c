@@ -66,6 +66,17 @@
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
+void fault_shutdown(void){
+	/* Called from fault handlers and Error_Handler: get the power stage into a
+	 * safe state using only register writes.  The DRV8323 enable pin is pulled
+	 * low by GPIO (not SPI - the SPI bus may be wedged or the fault may have
+	 * happened mid-transaction), which puts it to sleep and turns off all six
+	 * FETs.  PWM outputs are also disabled at the timer.  The watchdog will
+	 * eventually reset the chip. */
+	HAL_GPIO_WritePin(ENABLE_PIN, GPIO_PIN_RESET);
+	TIM1->BDTR &= ~TIM_BDTR_MOE;
+}
+
 /* USER CODE END 0 */
 
 /* External variables --------------------------------------------------------*/
@@ -85,7 +96,7 @@ extern uint32_t _reboot_cookie;
 void NMI_Handler(void)
 {
   /* USER CODE BEGIN NonMaskableInt_IRQn 0 */
-
+  fault_shutdown();
   /* USER CODE END NonMaskableInt_IRQn 0 */
   /* USER CODE BEGIN NonMaskableInt_IRQn 1 */
 
@@ -98,7 +109,7 @@ void NMI_Handler(void)
 void HardFault_Handler(void)
 {
   /* USER CODE BEGIN HardFault_IRQn 0 */
-
+  fault_shutdown();
   /* USER CODE END HardFault_IRQn 0 */
   while (1)
   {
@@ -113,7 +124,7 @@ void HardFault_Handler(void)
 void MemManage_Handler(void)
 {
   /* USER CODE BEGIN MemoryManagement_IRQn 0 */
-
+  fault_shutdown();
   /* USER CODE END MemoryManagement_IRQn 0 */
   while (1)
   {
@@ -128,7 +139,7 @@ void MemManage_Handler(void)
 void BusFault_Handler(void)
 {
   /* USER CODE BEGIN BusFault_IRQn 0 */
-
+  fault_shutdown();
   /* USER CODE END BusFault_IRQn 0 */
   while (1)
   {
@@ -143,7 +154,7 @@ void BusFault_Handler(void)
 void UsageFault_Handler(void)
 {
   /* USER CODE BEGIN UsageFault_IRQn 0 */
-
+  fault_shutdown();
   /* USER CODE END UsageFault_IRQn 0 */
   while (1)
   {
@@ -221,6 +232,9 @@ void ATIM1_UP_IRQHandler(void)
 	//HAL_GPIO_WritePin(LED, GPIO_PIN_SET );	// Useful for timing
   TIM_ClrIntPendingBit(ATIM1, TIM_INT_UPDATE);
 
+	/* Kick the watchdog - if this loop ever stops running, the chip resets */
+	IWDG->KR = 0xAAAA;
+
 	/* Sample ADCs */
 	analog_sample(&controller);
 
@@ -274,29 +288,46 @@ void can_tx_rx(void){
     GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
 
 		FDCAN_GetRxMsg(FDCAN2, FDCAN_RX_FIFO0, &can_rx.rx_header, can_rx.data);	// Read CAN
-    pack_reply(&can_tx, CAN_ID,  comm_encoder.angle_multiturn[0]/GR, comm_encoder.velocity/GR, controller.i_q_filt*KT*GR, controller.v_bus_filt);	// Pack response
-    FDCAN_AddMsgToTxFifoQ(FDCAN2, &can_tx.tx_header, can_tx.data);	// Send response
 
-		/* Check for special Commands: bytes 0-6 all 0xFF, command in byte 7 */
-		int special = (can_rx.data[0] & can_rx.data[1] & can_rx.data[2] & can_rx.data[3] & can_rx.data[4] & can_rx.data[5] & can_rx.data[6]) == 0xFF;
-		if(special && (can_rx.data[7] == 0xFC)){
-			update_fsm(&state, MOTOR_CMD);
+		if(can_rx.rx_header.DLC == 8){
+			/* Legacy protocol: all 8-byte frames.  Reply with the standard packed telemetry */
+			pack_reply(&can_tx, CAN_ID,  comm_encoder.angle_multiturn[0]/GR, comm_encoder.velocity/GR, controller.i_q_filt*KT*GR, controller.v_bus_filt);	// Pack response
+      FDCAN_AddMsgToTxFifoQ(FDCAN2, &can_tx.tx_header, can_tx.data);	// Send response
+
+			/* Check for special Commands: bytes 0-6 all 0xFF, command in byte 7 */
+			int special = (can_rx.data[0] & can_rx.data[1] & can_rx.data[2] & can_rx.data[3] & can_rx.data[4] & can_rx.data[5] & can_rx.data[6]) == 0xFF;
+			if(special && (can_rx.data[7] == 0xFC)){
+				update_fsm(&state, MOTOR_CMD);
+			}
+			else if(special && (can_rx.data[7] == 0xFD)){
+				update_fsm(&state, MENU_CMD);
+			}
+			else if(special && (can_rx.data[7] == 0xFE)){
+				update_fsm(&state, ZERO_CMD);
+			}
+      else if (special && (can_rx.data[7] == 0xFF)){
+        __asm volatile ("CPSID I\n\t":::"memory"); // disable interrupts
+        _reboot_cookie = 0xDEADBEEF;
+        NVIC_SystemReset();
+      }
+			else{
+				unpack_cmd(can_rx, controller.commands);	// Unpack commands
+				controller.timeout = 0;						// Reset timeout counter
+			}
 		}
-		else if(special && (can_rx.data[7] == 0xFD)){
-			update_fsm(&state, MENU_CMD);
+		else if((can_rx.rx_header.DLC == 2) && (can_rx.data[0] == CAN_OP_READ_VAR)){
+			/* Extended protocol: float variable read.  Replies with the requested
+			 * variable as a real float32.  Deliberately does NOT reset the command
+			 * timeout - telemetry polling shouldn't keep a stale command alive */
+			pack_float_reply(&can_tx, can_rx.data[1], can_read_variable(can_rx.data[1]));
+      FDCAN_AddMsgToTxFifoQ(FDCAN2, &can_tx.tx_header, can_tx.data);
 		}
-		else if(special && (can_rx.data[7] == 0xFE)){
-			update_fsm(&state, ZERO_CMD);
+		else if((can_rx.rx_header.DLC == 3) && (can_rx.data[0] == CAN_OP_READ_VAR)){
+			/* Float variable pair read: two variables in one 8-byte reply */
+			pack_float_pair_reply(&can_tx, can_read_variable(can_rx.data[1]), can_read_variable(can_rx.data[2]));
+      FDCAN_AddMsgToTxFifoQ(FDCAN2, &can_tx.tx_header, can_tx.data);
 		}
-    else if (special && (can_rx.data[7] == 0xFF)){
-      __asm volatile ("CPSID I\n\t":::"memory"); // disable interrupts
-      _reboot_cookie = 0xDEADBEEF;
-      NVIC_SystemReset();
-    }
-		else{
-			unpack_cmd(can_rx, controller.commands);	// Unpack commands
-			controller.timeout = 0;						// Reset timeout counter
-		}
+		/* Frames with any other length/opcode are ignored */
 	}
 
 }

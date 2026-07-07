@@ -53,7 +53,7 @@ void MX_ADC1_Init(void)
 	ADC_SetChannelSingleDiff(ADC1, ADC_CH_1, ADC_DIFFERENTIAL_ENDED);
   
   ADC_ConfigInjectedSequencerLength(ADC1, 1);
-  ADC_ConfigExternalTrigInjectedConv(ADC1, ADC_EXT_TRIG_INJ_CONV_SOFTWARE);
+  ADC_ConfigExternalTrigInjectedConv(ADC1, ADC_EXT_TRIG_INJ_CONV_ATIM1_TRGO);
   ADC_EnableAutoInjectedConv(ADC1, DISABLE);
   ADC_EnableInjectedDiscMode(ADC1, DISABLE);
 
@@ -105,7 +105,7 @@ void MX_ADC2_Init(void)
 	ADC_SetChannelSingleDiff(ADC2, ADC_CH_1, ADC_DIFFERENTIAL_ENDED);
 
   ADC_ConfigInjectedSequencerLength(ADC2, 1);
-  ADC_ConfigExternalTrigInjectedConv(ADC2, ADC_EXT_TRIG_INJ_CONV_SOFTWARE);
+  ADC_ConfigExternalTrigInjectedConv(ADC2, ADC_EXT_TRIG_INJ_CONV_ATIM1_TRGO);
   ADC_EnableAutoInjectedConv(ADC2, DISABLE);
   ADC_EnableInjectedDiscMode(ADC2, DISABLE);
 

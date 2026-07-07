@@ -93,7 +93,7 @@ void MX_TIM1_Init(void)
   TIM_ConfigOc3Preload(ATIM1, TIM_OC_PRE_LOAD_ENABLE);
 
   // No master slave mode
-  TIM_SelectOutputTrig(ATIM1, TIM_TRGO_SRC_RESET);
+  TIM_SelectOutputTrig(ATIM1, TIM_TRGO_SRC_UPDATE);
   TIM_SelectMasterSlaveMode(ATIM1, TIM_MASTER_SLAVE_MODE_DISABLE);
 
   TIM_InitBkdtStruct(&TIM_BDTRInitStructure);
