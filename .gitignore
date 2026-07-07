@@ -11,3 +11,4 @@ Keil/Listing/*.*
 Keil/*.scvd
 Keil/*.txt
 Keil/*.ini
+build/

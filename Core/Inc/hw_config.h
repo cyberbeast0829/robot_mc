@@ -152,8 +152,5 @@
 #define CURRENT_FILT_ALPHA	.1f	// 1st order d/q current filter (not used in control)
 #define VBUS_FILT_ALPHA		.1f		// 1st order bus voltage filter
 
-#define D_INT_LIM V_BUS/(K_D*KI_D)  // Amps*samples
-#define Q_INT_LIM V_BUS/(K_Q*KI_Q)  // Amps*samples
-
 
 #endif

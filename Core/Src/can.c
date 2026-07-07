@@ -95,8 +95,10 @@ void MX_CAN1_Init(void)
   NVIC_InitStructure.NVIC_IRQChannelCmd                = ENABLE;
   NVIC_Init(&NVIC_InitStructure);
 
-  FDCAN_ConfigIntLine(FDCAN2, FDCAN_INT_RX_FIFO0_NEW_MESSAGE, FDCAN_INTERRUPT_LINE0);
-  FDCAN_ActivateInt(FDCAN2, FDCAN_INT_RX_FIFO0_NEW_MESSAGE, FDCAN_TX_BUFFER0);
+  /* CAN RX is polled from the commutation interrupt (can_tx_rx), not interrupt-driven,
+     * so the CAN1_RX0 interrupt is left disabled */
+  // FDCAN_ConfigIntLine(FDCAN2, FDCAN_INT_RX_FIFO0_NEW_MESSAGE, FDCAN_INTERRUPT_LINE0);
+  // FDCAN_ActivateInt(FDCAN2, FDCAN_INT_RX_FIFO0_NEW_MESSAGE, FDCAN_TX_BUFFER0);
 
 }
 
@@ -105,8 +107,8 @@ void MX_CAN1_Init(void)
 void can_rx_init(CANRxMessage *msg){
   msg->filter.FilterIndex = 0;
 	msg->filter.FilterConfig=FDCAN_FILTER_TO_RXFIFO0; 	// set fifo assignment
-	msg->filter.FilterID1=CAN_ID<<5; 				// CAN ID
-	msg->filter.FilterID2=0xFFF;
+	msg->filter.FilterID1=CAN_ID<<5; 				// standard CAN ID, in FxR1[15:5]
+	msg->filter.FilterID2=(0x7FF<<5) | 0x6;				// match the full 11-bit ID, match the IDE and RTR bits
 	msg->filter.FilterType = FDCAN_FILTER_MASK;
 	msg->filter.IdType = FDCAN_STANDARD_ID;
 	FDCAN_ConfigFilter(FDCAN2, &msg->filter);

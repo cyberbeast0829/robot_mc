@@ -213,46 +213,6 @@ void SysTick_Handler(void)
 /******************************************************************************/
 
 /**
-  * @brief This function handles CAN1 RX0 interrupt.
-  */
-void FDCAN2_INT0_IRQHandler(void)
-{
-  /* USER CODE BEGIN CAN1_RX0_IRQn 0 */
-
-  while (FDCAN_GetRxFifoFillLevel(FDCAN2, FDCAN_RX_FIFO0) > 0) {
-    GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
-    
-    FDCAN_GetRxMsg(FDCAN2, FDCAN_RX_FIFO0, &can_rx.rx_header, can_rx.data);	// Read CAN
-    pack_reply(&can_tx, CAN_ID,  comm_encoder.angle_multiturn[0]/GR, comm_encoder.velocity/GR, controller.i_q_filt*KT*GR, controller.v_bus_filt);	// Pack response
-    FDCAN_AddMsgToTxFifoQ(FDCAN2, &can_tx.tx_header, can_tx.data);	// Send response
-
-    /* Check for special Commands */
-    if(((can_rx.data[0]==0xFF) & (can_rx.data[1]==0xFF) & (can_rx.data[2]==0xFF) & (can_rx.data[3]==0xFF) & (can_rx.data[4]==0xFF) & (can_rx.data[5]==0xFF) & (can_rx.data[6]==0xFF) & (can_rx.data[7]==0xFC))){
-      update_fsm(&state, MOTOR_CMD);
-        }
-    else if(((can_rx.data[0]==0xFF) & (can_rx.data[1]==0xFF) & (can_rx.data[2]==0xFF) & (can_rx.data[3]==0xFF) * (can_rx.data[4]==0xFF) & (can_rx.data[5]==0xFF) & (can_rx.data[6]==0xFF) & (can_rx.data[7]==0xFD))){
-        update_fsm(&state, MENU_CMD);
-        }
-    else if(((can_rx.data[0]==0xFF) & (can_rx.data[1]==0xFF) & (can_rx.data[2]==0xFF) & (can_rx.data[3]==0xFF) * (can_rx.data[4]==0xFF) & (can_rx.data[5]==0xFF) & (can_rx.data[6]==0xFF) & (can_rx.data[7]==0xFE))){
-      update_fsm(&state, ZERO_CMD);
-        }
-    else if(((can_rx.data[0]==0xFF) & (can_rx.data[1]==0xFF) & (can_rx.data[2]==0xFF) & (can_rx.data[3]==0xFF) * (can_rx.data[4]==0xFF) & (can_rx.data[5]==0xFF) & (can_rx.data[6]==0xFF) & (can_rx.data[7]==0xFF))){
-      __asm volatile ("CPSID I\n\t":::"memory"); // disable interrupts
-      _reboot_cookie = 0xDEADBEEF;
-      NVIC_SystemReset();
-        }
-        
-    else{
-      unpack_cmd(can_rx, controller.commands);	// Unpack commands
-      controller.timeout = 0;					// Reset timeout counter
-    }
-  }
-  FDCAN_ClearFlag(FDCAN2, FDCAN_FLAG_RX_FIFO0_NEW_MESSAGE);
-
-  /* USER CODE END CAN1_RX0_IRQn 1 */
-}
-
-/**
   * @brief This function handles TIM1 update interrupt and TIM10 global interrupt.
   */
 void ATIM1_UP_IRQHandler(void)
@@ -317,26 +277,25 @@ void can_tx_rx(void){
     pack_reply(&can_tx, CAN_ID,  comm_encoder.angle_multiturn[0]/GR, comm_encoder.velocity/GR, controller.i_q_filt*KT*GR, controller.v_bus_filt);	// Pack response
     FDCAN_AddMsgToTxFifoQ(FDCAN2, &can_tx.tx_header, can_tx.data);	// Send response
 
-		/* Check for special Commands */
-		if(((can_rx.data[0]==0xFF) & (can_rx.data[1]==0xFF) & (can_rx.data[2]==0xFF) & (can_rx.data[3]==0xFF) & (can_rx.data[4]==0xFF) & (can_rx.data[5]==0xFF) & (can_rx.data[6]==0xFF) & (can_rx.data[7]==0xFC))){
-			  update_fsm(&state, MOTOR_CMD);
-			}
-		else if(((can_rx.data[0]==0xFF) & (can_rx.data[1]==0xFF) & (can_rx.data[2]==0xFF) & (can_rx.data[3]==0xFF) * (can_rx.data[4]==0xFF) & (can_rx.data[5]==0xFF) & (can_rx.data[6]==0xFF) & (can_rx.data[7]==0xFD))){
+		/* Check for special Commands: bytes 0-6 all 0xFF, command in byte 7 */
+		int special = (can_rx.data[0] & can_rx.data[1] & can_rx.data[2] & can_rx.data[3] & can_rx.data[4] & can_rx.data[5] & can_rx.data[6]) == 0xFF;
+		if(special && (can_rx.data[7] == 0xFC)){
+			update_fsm(&state, MOTOR_CMD);
+		}
+		else if(special && (can_rx.data[7] == 0xFD)){
 			update_fsm(&state, MENU_CMD);
-			}
-		else if(((can_rx.data[0]==0xFF) & (can_rx.data[1]==0xFF) & (can_rx.data[2]==0xFF) & (can_rx.data[3]==0xFF) * (can_rx.data[4]==0xFF) & (can_rx.data[5]==0xFF) & (can_rx.data[6]==0xFF) & (can_rx.data[7]==0xFE))){
-			  update_fsm(&state, ZERO_CMD);
-			}
-    else if(((can_rx.data[0]==0xFF) & (can_rx.data[1]==0xFF) & (can_rx.data[2]==0xFF) & (can_rx.data[3]==0xFF) * (can_rx.data[4]==0xFF) & (can_rx.data[5]==0xFF) & (can_rx.data[6]==0xFF) & (can_rx.data[7]==0xFF))){
+		}
+		else if(special && (can_rx.data[7] == 0xFE)){
+			update_fsm(&state, ZERO_CMD);
+		}
+    else if (special && (can_rx.data[7] == 0xFF)){
       __asm volatile ("CPSID I\n\t":::"memory"); // disable interrupts
       _reboot_cookie = 0xDEADBEEF;
       NVIC_SystemReset();
-      }
-
+    }
 		else{
-			  unpack_cmd(can_rx, controller.commands);	// Unpack commands
-			  controller.timeout = 0;					// Reset timeout counter
-		controller.i_mag_max = controller.i_q;
+			unpack_cmd(can_rx, controller.commands);	// Unpack commands
+			controller.timeout = 0;						// Reset timeout counter
 		}
 	}
 

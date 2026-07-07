@@ -86,16 +86,11 @@ int count = 0;
 
 ControllerStruct controller;
 ObserverStruct observer;
-COMStruct com;
 FSMStruct state;
 EncoderStruct comm_encoder;
 CalStruct comm_encoder_cal;
 CANTxMessage can_tx;
 CANRxMessage can_rx;
-
-/* init but don't allocate calibration arrays */
-int *error_array = NULL;
-int *lut_array = NULL;
 
 uint8_t Serial2RxBuffer[1];
 
@@ -376,13 +371,6 @@ int main(void)
   myprintf("\r\nFirmware Version Number: %.2f\r\n", VERSION_NUM);
 
   /* Controller Setup */
-  if(PHASE_ORDER){							// Timer channel to phase mapping
-
-  }
-  else{
-
-  }
-
   init_controller_params(&controller);
 
   /* calibration "encoder" zeroing */
@@ -456,7 +444,7 @@ int main(void)
   /* CAN setup */
   can_rx_init(&can_rx);
   can_tx_init(&can_tx);
-  FDCAN_Start(FDCAN2); //start CAN
+  FDCAN_Start(FDCAN2); //start CAN.  RX is polled from the commutation interrupt
   //__HAL_CAN_ENABLE_IT(&CAN_H, CAN_IT_RX_FIFO0_MSG_PENDING); // Start can interrupt
 
   /* Start the FSM */
