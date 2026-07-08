@@ -24,7 +24,9 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include <stdio.h>
+#include <string.h>
 #include "structs.h"
+#include "math_ops.h"
 #include "usart.h"
 #include "fsm.h"
 #include "spi.h"
@@ -40,6 +42,8 @@
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN TD */
+/* Get bytes of data according to the DLC value */
+static const uint8_t DLCtoBytes[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 12, 16, 20, 24, 32, 48, 64};
 
 /* USER CODE END TD */
 
@@ -284,50 +288,131 @@ void USB_FS_WKUP_IRQHandler(void)
 
 void can_tx_rx(void){
 
-	if(FDCAN_GetRxFifoFillLevel(FDCAN2, FDCAN_RX_FIFO0) > 0){
-    GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
+	if(FDCAN_GetRxFifoFillLevel(FDCAN2, FDCAN_RX_FIFO0) <= 0){
+		return;		// no message pending
+	}
 
-		FDCAN_GetRxMsg(FDCAN2, FDCAN_RX_FIFO0, &can_rx.rx_header, can_rx.data);	// Read CAN
+  GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
 
-		if(can_rx.rx_header.DLC == 8){
-			/* Legacy protocol: all 8-byte frames.  Reply with the standard packed telemetry */
-			pack_reply(&can_tx, CAN_ID,  comm_encoder.angle_multiturn[0]/GR, comm_encoder.velocity/GR, controller.i_q_filt*KT*GR, controller.v_bus_filt);	// Pack response
-      FDCAN_AddMsgToTxFifoQ(FDCAN2, &can_tx.tx_header, can_tx.data);	// Send response
+	FDCAN_GetRxMsg(FDCAN2, FDCAN_RX_FIFO0, &can_rx.rx_header, can_rx.data);	// Read CAN
 
-			/* Check for special Commands: bytes 0-6 all 0xFF, command in byte 7 */
-			int special = (can_rx.data[0] & can_rx.data[1] & can_rx.data[2] & can_rx.data[3] & can_rx.data[4] & can_rx.data[5] & can_rx.data[6]) == 0xFF;
-			if(special && (can_rx.data[7] == 0xFC)){
-				update_fsm(&state, MOTOR_CMD);
+	/* The 11-bit CAN ID is (opcode << 7) | node_id - see the table in can.h.
+	 * The hardware filter only accepts this node's ID, so just dispatch on
+	 * the opcode.  Malformed frames (wrong length, NaN floats) are ignored */
+	uint32_t opcode = CAN_OPCODE(can_rx.rx_header.ID);
+	uint32_t dlc = DLCtoBytes[can_rx.rx_header.DataLength >> FDCAN_ELEMENT_DLC_OFFSET];
+	int send_telemetry_reply = 0;
+	float f_a, f_b;
+
+	switch(opcode){
+
+		case CAN_OP_LEGACY:
+			if(dlc == 8){
+				/* Legacy protocol: all 8-byte frames.  Reply with the packed telemetry */
+				pack_reply(&can_tx, CAN_ID,  comm_encoder.angle_multiturn[0]/GR, comm_encoder.velocity/GR, controller.i_q_filt*KT*GR, controller.v_bus_filt);	// Pack response
+        FDCAN_AddMsgToTxFifoQ(FDCAN2, &can_tx.tx_header, can_tx.data);	// Send response
+
+				/* Check for special Commands: bytes 0-6 all 0xFF, command in byte 7 */
+				int special = (can_rx.data[0] & can_rx.data[1] & can_rx.data[2] & can_rx.data[3] & can_rx.data[4] & can_rx.data[5] & can_rx.data[6]) == 0xFF;
+				if(special && (can_rx.data[7] == 0xFC)){
+					update_fsm(&state, MOTOR_CMD);
+				}
+				else if(special && (can_rx.data[7] == 0xFD)){
+					update_fsm(&state, MENU_CMD);
+				}
+				else if(special && (can_rx.data[7] == 0xFE)){
+					update_fsm(&state, ZERO_CMD);
+				}
+        else if (special && (can_rx.data[7] == 0xFF)){
+          __asm volatile ("CPSID I\n\t":::"memory"); // disable interrupts
+          _reboot_cookie = 0xDEADBEEF;
+          NVIC_SystemReset();
+        }
+				else{
+					unpack_cmd(can_rx, controller.commands);	// Unpack commands
+					controller.timeout = 0;						// Reset timeout counter
+				}
 			}
-			else if(special && (can_rx.data[7] == 0xFD)){
-				update_fsm(&state, MENU_CMD);
+			else if((dlc == 2) && (can_rx.data[0] == CAN_LEGACY_READ_VAR)){
+				/* Legacy single float read */
+				pack_float_reply(&can_tx, can_rx.data[1], can_read_variable(can_rx.data[1]));
+				HAL_CAN_AddTxMessage(&CAN_H, &can_tx.tx_header, can_tx.data, &TxMailbox);
 			}
-			else if(special && (can_rx.data[7] == 0xFE)){
-				update_fsm(&state, ZERO_CMD);
+			else if((dlc == 3) && (can_rx.data[0] == CAN_LEGACY_READ_VAR)){
+				/* Legacy float pair read */
+				pack_float_pair_reply(&can_tx, can_read_variable(can_rx.data[1]), can_read_variable(can_rx.data[2]));
+				HAL_CAN_AddTxMessage(&CAN_H, &can_tx.tx_header, can_tx.data, &TxMailbox);
 			}
-      else if (special && (can_rx.data[7] == 0xFF)){
-        __asm volatile ("CPSID I\n\t":::"memory"); // disable interrupts
-        _reboot_cookie = 0xDEADBEEF;
-        NVIC_SystemReset();
-      }
-			else{
-				unpack_cmd(can_rx, controller.commands);	// Unpack commands
-				controller.timeout = 0;						// Reset timeout counter
+			break;
+
+		case CAN_OP_SET_PV:
+			if((dlc == 8) && can_unpack_two_floats(&can_rx, &f_a, &f_b)){
+				controller.p_des = fast_fmaxf(fast_fminf(f_a, P_MAX), P_MIN);
+				controller.v_des = fast_fmaxf(fast_fminf(f_b, V_MAX), V_MIN);
+				controller.timeout = 0;
+				send_telemetry_reply = 1;
 			}
-		}
-		else if((can_rx.rx_header.DLC == 2) && (can_rx.data[0] == CAN_OP_READ_VAR)){
-			/* Extended protocol: float variable read.  Replies with the requested
-			 * variable as a real float32.  Deliberately does NOT reset the command
-			 * timeout - telemetry polling shouldn't keep a stale command alive */
-			pack_float_reply(&can_tx, can_rx.data[1], can_read_variable(can_rx.data[1]));
-      FDCAN_AddMsgToTxFifoQ(FDCAN2, &can_tx.tx_header, can_tx.data);
-		}
-		else if((can_rx.rx_header.DLC == 3) && (can_rx.data[0] == CAN_OP_READ_VAR)){
-			/* Float variable pair read: two variables in one 8-byte reply */
-			pack_float_pair_reply(&can_tx, can_read_variable(can_rx.data[1]), can_read_variable(can_rx.data[2]));
-      FDCAN_AddMsgToTxFifoQ(FDCAN2, &can_tx.tx_header, can_tx.data);
-		}
-		/* Frames with any other length/opcode are ignored */
+			break;
+
+		case CAN_OP_SET_GAINS:
+			if((dlc == 8) && can_unpack_two_floats(&can_rx, &f_a, &f_b)){
+				controller.kp = fast_fmaxf(fast_fminf(f_a, KP_MAX), KP_MIN);
+				controller.kd = fast_fmaxf(fast_fminf(f_b, KD_MAX), KD_MIN);
+				controller.timeout = 0;
+				send_telemetry_reply = 1;
+			}
+			break;
+
+		case CAN_OP_SET_TFF:
+			if(dlc == 4){
+				memcpy(&f_a, &can_rx.data[0], sizeof(float));
+				if(!isnan(f_a)){
+					controller.t_ff = fast_fmaxf(fast_fminf(f_a, I_MAX*KT*GR), -I_MAX*KT*GR);
+					controller.timeout = 0;
+					send_telemetry_reply = 1;
+				}
+			}
+			break;
+
+		case CAN_OP_SET_REPLY_FORMAT:
+			/* Select which two variables come back in telemetry replies.
+			 * Stored in RAM - re-send after a power cycle.  Doesn't reset the
+			 * command timeout.  The reply acts as an ack, in the new format */
+			if(dlc == 2){
+				can_tx.reply_var_a = can_rx.data[0];
+				can_tx.reply_var_b = can_rx.data[1];
+				send_telemetry_reply = 1;
+			}
+			break;
+
+		case CAN_OP_READ_VARS:
+			/* One-shot read of one or two variables.  Doesn't change the
+			 * configured reply format, and doesn't reset the command timeout -
+			 * telemetry polling shouldn't keep a stale command alive */
+			if(dlc == 2){
+				pack_telemetry_reply(&can_tx, can_rx.data[0], can_rx.data[1]);
+				FDCAN_AddMsgToTxFifoQ(FDCAN2, &can_tx.tx_header, can_tx.data);
+			}
+			else if(dlc == 1){
+				pack_telemetry_reply(&can_tx, can_rx.data[0], 0xFF);	// second slot reads back NaN
+        FDCAN_AddMsgToTxFifoQ(FDCAN2, &can_tx.tx_header, can_tx.data);
+			}
+			break;
+
+		case CAN_OP_CONTROL:
+			if(dlc == 1){
+				if(can_rx.data[0] == CAN_CTRL_MOTOR_MODE){update_fsm(&state, MOTOR_CMD);}
+				else if(can_rx.data[0] == CAN_CTRL_MENU_MODE){update_fsm(&state, MENU_CMD);}
+				else if(can_rx.data[0] == CAN_CTRL_ZERO){update_fsm(&state, ZERO_CMD);}
+			}
+			break;
+
+		/* Unknown opcodes are ignored */
+	}
+
+	if(send_telemetry_reply){
+		pack_telemetry_reply(&can_tx, can_tx.reply_var_a, can_tx.reply_var_b);
+		FDCAN_AddMsgToTxFifoQ(FDCAN2, &can_tx.tx_header, can_tx.data);
 	}
 
 }

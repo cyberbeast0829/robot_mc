@@ -110,7 +110,7 @@ void can_rx_init(CANRxMessage *msg){
   msg->filter.FilterIndex = 0;
 	msg->filter.FilterConfig=FDCAN_FILTER_TO_RXFIFO0; 	// set fifo assignment
 	msg->filter.FilterID1=CAN_ID<<5; 				// standard CAN ID, in FxR1[15:5]
-	msg->filter.FilterID2=(0x7FF<<5) | 0x6;				// match the full 11-bit ID, match the IDE and RTR bits
+	msg->filter.FilterID2=(0x7F<<5) | 0x6;				// match the 7 node ID bits, accept any of the 16 opcode blocks, match the IDE and RTR bits
 	msg->filter.FilterType = FDCAN_FILTER_MASK;
 	msg->filter.IdType = FDCAN_STANDARD_ID;
 	FDCAN_ConfigFilter(FDCAN2, &msg->filter);
@@ -128,6 +128,8 @@ void can_tx_init(CANTxMessage *msg){
   msg->tx_header.TxFrameType = FDCAN_DATA_FRAME;
 	msg->tx_header.DataLength = 7 << FDCAN_ELEMENT_DLC_OFFSET; 			// message size of 7 byte
 	msg->tx_header.ID = CAN_MASTER;  // recipient CAN ID
+  msg->reply_var_a = CAN_VAR_POSITION;	// default telemetry reply until CAN_OP_SET_REPLY_FORMAT changes it
+	msg->reply_var_b = CAN_VAR_VELOCITY;
 }
 
 /// CAN Reply Packet Structure ///
@@ -146,6 +148,7 @@ void pack_reply(CANTxMessage *msg, uint8_t id, float p, float v, float t, float 
     int v_int = float_to_uint(v, V_MIN, V_MAX, 12);
     int t_int = float_to_uint(t, -(I_MAX+SENSE_BUFFER)*KT*GR, (I_MAX+SENSE_BUFFER)*KT*GR, 12);
     int vb_int = float_to_uint(vb, VB_MIN, VB_MAX, 8);
+    msg->tx_header.StdId = CAN_MASTER;
     msg->tx_header.DLC = 7;
     msg->data[0] = id;
     msg->data[1] = p_int>>8;
@@ -195,6 +198,7 @@ void unpack_cmd(CANRxMessage msg, float *commands){// ControllerStruct * control
 /// 1:   [variable ID]
 /// 2-5: [float32, little-endian]
 void pack_float_reply(CANTxMessage *msg, uint8_t var_id, float value){
+    msg->tx_header.StdId = CAN_MASTER;
     msg->tx_header.DLC = 6;
     msg->data[0] = CAN_ID;
     msg->data[1] = var_id;
@@ -207,9 +211,34 @@ void pack_float_reply(CANTxMessage *msg, uint8_t var_id, float value){
 /// 4-7: [float32_b, little-endian]
 /// No room for the CAN_ID/var_id echo - the master matches replies to requests by order
 void pack_float_pair_reply(CANTxMessage *msg, float value_a, float value_b){
+    msg->tx_header.StdId = CAN_MASTER;
     msg->tx_header.DLC = 8;
     memcpy(&msg->data[0], &value_a, sizeof(float));
     memcpy(&msg->data[4], &value_b, sizeof(float));
+    }
+
+/// Telemetry Reply ///
+/// Reply to the ID-opcode protocol (opcodes 1-5): two variables as float32.
+/// Sent with ID = (CAN_OP_TELEMETRY<<7) | CAN_ID, so the master identifies
+/// the sender from the ID bits and the full payload carries data.
+/// 0-3: [float32 var_a, little-endian]
+/// 4-7: [float32 var_b, little-endian]
+void pack_telemetry_reply(CANTxMessage *msg, uint8_t var_a, uint8_t var_b){
+    float value_a = can_read_variable(var_a);
+    float value_b = can_read_variable(var_b);
+    msg->tx_header.StdId = (CAN_OP_TELEMETRY<<7) | CAN_ID;
+    msg->tx_header.DLC = 8;
+    memcpy(&msg->data[0], &value_a, sizeof(float));
+    memcpy(&msg->data[4], &value_b, sizeof(float));
+    }
+
+/// Unpack two float32s from a command frame ///
+/// Returns 0 (and leaves the outputs unusable) if either is NaN,
+/// so garbage frames can't inject NaN into the control loop
+int can_unpack_two_floats(CANRxMessage *msg, float *a, float *b){
+    memcpy(a, &msg->data[0], sizeof(float));
+    memcpy(b, &msg->data[4], sizeof(float));
+    return !(isnan(*a) || isnan(*b));
     }
 
 /// Look up a variable by ID for the float read protocol ///

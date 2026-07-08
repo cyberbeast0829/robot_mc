@@ -306,10 +306,14 @@ extern uint32_t _reboot_cookie;
 			 break;
 		 case 'i':
 			 CAN_ID = atoi(fsmstate->cmd_buff);
+			 if(CAN_ID < 0){CAN_ID = 0;}
+			 if(CAN_ID > 127){CAN_ID = 127;}	// only 7 bits of node ID - the upper 4 ID bits are the opcode
 			 myprintf("CAN_ID set to %d\r\n", CAN_ID);
 			 break;
 		 case 'm':
 			 CAN_MASTER = atoi(fsmstate->cmd_buff);
+			 if(CAN_MASTER < 0){CAN_MASTER = 0;}
+			 if(CAN_MASTER > 127){CAN_MASTER = 127;}
 			 myprintf("CAN_TX_ID set to %d\r\n", CAN_MASTER);
 			 break;
 		 case 'l':
