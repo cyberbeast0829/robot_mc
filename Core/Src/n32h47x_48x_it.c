@@ -245,6 +245,9 @@ void ATIM1_UP_IRQHandler(void)
 	/* Sample position sensor */
 	ps_sample(&comm_encoder, DT);
 
+	/* Check for latched faults (overvoltage, overcurrent) */
+	check_faults(&controller);
+
 	/* Run Finite State Machine */
 	run_fsm(&state);
 

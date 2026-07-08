@@ -24,6 +24,13 @@ extern uint32_t _reboot_cookie;
  void run_fsm(FSMStruct * fsmstate){
 	 /* run_fsm is run every commutation interrupt cycle */
 
+	 /* A latched fault forces the fault state, from any state.  Clearing it
+	  * requires explicitly exiting to the menu (esc or the CAN menu command) */
+	 if((controller.fault != 0) && (fsmstate->state != FAULT_MODE) && (fsmstate->next_state != FAULT_MODE)){
+		 fsmstate->next_state = FAULT_MODE;
+		 fsmstate->ready = 0;
+	 }
+
 	 /* state transition management */
 	 if(fsmstate->next_state != fsmstate->state){
 		 fsm_exit_state(fsmstate);		// safely exit the old state
@@ -77,7 +84,9 @@ extern uint32_t _reboot_cookie;
 			 field_weaken(&controller);
 			 commutate(&controller, &comm_encoder);
 
-			 controller.timeout ++;
+			 /* Stop counting once past the threshold so the counter can't
+			  * overflow during long sessions with the CAN watchdog disabled */
+			 if(controller.timeout <= CAN_TIMEOUT){controller.timeout++;}
 			 break;
 
 		 case SETUP_MODE:
@@ -85,6 +94,9 @@ extern uint32_t _reboot_cookie;
 
 		 case ENCODER_MODE:
 			 break;		// encoder data is printed by the main loop
+
+		 case FAULT_MODE:
+			 break;		// gates off, wait for the user to clear the fault
 
 		 case INIT_TEMP_MODE:
 			 break;
@@ -114,6 +126,15 @@ extern uint32_t _reboot_cookie;
 				// drv_enable_gd(drv);
 				ATIM1->BKDT |= TIM_BKDT_AOEN;
         ATIM1->BKDT |= TIM_BKDT_MOEN;
+				break;
+			case FAULT_MODE:
+				/* Make sure the gate drive is off no matter what state we
+				 * faulted out of, and report through the main loop */
+				drv_disable_gd(drv);
+				reset_foc(&controller);
+				zero_commands(&controller);
+				HAL_GPIO_WritePin(LED, GPIO_PIN_RESET );
+				fsmstate->print_pending = 1;
 				break;
 			case CALIBRATION_MODE:
 				//myprintf("Entering Calibration Mode\r\n");
@@ -172,6 +193,10 @@ extern uint32_t _reboot_cookie;
 				//free(error_array);
 				//free(lut_array);
 
+				fsmstate->ready = 1;
+				break;
+			case FAULT_MODE:
+				controller.fault = 0;	// leaving the fault state is what clears the fault
 				fsmstate->ready = 1;
 				break;
 		}
@@ -250,8 +275,9 @@ extern uint32_t _reboot_cookie;
 			break;
 		case MOTOR_MODE:
 			break;
+		case FAULT_MODE:
+			break;		// only the escape-to-menu above is accepted while faulted
 	}
-	//myprintf("FSM State: %d  %d\r\n", fsmstate.state, fsmstate.state_change);
  }
 
 
@@ -383,15 +409,14 @@ extern uint32_t _reboot_cookie;
  }
 
  static void save_preferences(void){
-	 /* Write settings to flash.  Erasing the preference sector stalls the whole
+	 /* Write settings to flash.  Erasing a config sector stalls the whole
 	  * CPU (including the commutation interrupt) for up to ~2 seconds, so this
 	  * must only be called from the main loop, in states where the gate drive
 	  * is off.  Kick the watchdog first so the stall can't trip it. */
 	 IWDG->KR = 0xAAAA;
-	 if (!preference_writer_ready(prefs)){ preference_writer_open(&prefs);}
-	 preference_writer_flush(&prefs);
-	 preference_writer_close(&prefs);
-	 preference_writer_load(prefs);
+	 if(!preference_writer_save(&prefs)){
+		 printf("\n\r!!! Preference save failed - config unchanged in flash !!!\r\n");
+	 }
 	 IWDG->KR = 0xAAAA;
  }
 
@@ -408,6 +433,12 @@ extern uint32_t _reboot_cookie;
 		 fsmstate->print_pending = 0;
 		 if(fsmstate->state == MENU_MODE){enter_menu_state();}
 		 else if(fsmstate->state == SETUP_MODE){enter_setup_state();}
+		 else if(fsmstate->state == FAULT_MODE){
+			 printf("\n\r!!! FAULT - gate drive disabled !!!\r\n");
+			 if(controller.fault & FAULT_OV){printf("  Overvoltage: bus hit %.2f V (limit %.1f V)\r\n", controller.fault_vbus, V_BUS_FAULT);}
+			 if(controller.fault & FAULT_OC){printf("  Overcurrent: phase current hit %.1f A (limit %.1f A)\r\n", controller.fault_iabs, controller.i_oc_limit);}
+			 printf("  esc (or the CAN menu command) to clear\r\n");
+		 }
 	 }
 
 	 /* Process a completed setup command */

@@ -363,8 +363,7 @@ int main(void)
   // watchdog_init();
 
   /* Load settings from flash */
-  preference_writer_init(&prefs, 6);
-  preference_writer_load(prefs);
+  preference_writer_load(&prefs);
 
   /* Sanitize configs in case flash is empty*/
   if(E_ZERO==-1){E_ZERO = 0;}

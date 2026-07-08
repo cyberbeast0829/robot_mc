@@ -138,7 +138,8 @@
 #define DTC_COMP 			0.000f          // deadtime compensation (100 ns / 25 us)
 #define DT					.000025f		// Loop period
 #define EN_ENC_LINEARIZATION 1				// Enable/disable encoder linearization
-#define V_BUS_MAX			60.0f			// max drive voltage (faults above this)
+#define V_BUS_MAX			60.0f			// max drive voltage - torque command is cut above this (soft limit)
+#define V_BUS_FAULT			67.0f			// hard overvoltage limit - latches a fault and disables the gate drive
 
 /* Current controller */
 #define L_D     95e-6f				// D axis inductance
