@@ -126,11 +126,13 @@ extern uint32_t _reboot_cookie;
 				// drv_enable_gd(drv);
 				ATIM1->BKDT |= TIM_BKDT_AOEN;
         ATIM1->BKDT |= TIM_BKDT_MOEN;
+				controller.gate_drive_enabled = 1;
 				break;
 			case FAULT_MODE:
 				/* Make sure the gate drive is off no matter what state we
 				 * faulted out of, and report through the main loop */
 				drv_disable_gd(drv);
+				controller.gate_drive_enabled = 0;
 				reset_foc(&controller);
 				zero_commands(&controller);
 				HAL_GPIO_WritePin(LED, GPIO_PIN_RESET );
@@ -150,6 +152,7 @@ extern uint32_t _reboot_cookie;
 				// drv_enable_gd(drv);
 				ATIM1->BKDT |= TIM_BKDT_AOEN;
         ATIM1->BKDT |= TIM_BKDT_MOEN;
+				controller.gate_drive_enabled = 1;
 				break;
 
 		}
@@ -178,7 +181,7 @@ extern uint32_t _reboot_cookie;
 					fsmstate->ready = 1;
 					ATIM1->BKDT &= ~TIM_BKDT_AOEN;
         	ATIM1->BKDT &= ~TIM_BKDT_MOEN;
-					// drv_disable_gd(drv);
+					controller.gate_drive_enabled = 0;
 					reset_foc(&controller);
 					//myprintf("Leaving Motor Mode\r\n");
 					GPIO_WriteBits(LED, Bit_RESET );
@@ -192,7 +195,7 @@ extern uint32_t _reboot_cookie;
 				// drv_disable_gd(drv);
 				//free(error_array);
 				//free(lut_array);
-
+				controller.gate_drive_enabled = 0;
 				fsmstate->ready = 1;
 				break;
 			case FAULT_MODE:
