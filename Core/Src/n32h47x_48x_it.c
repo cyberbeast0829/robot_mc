@@ -72,13 +72,11 @@ static const uint8_t DLCtoBytes[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 12, 16, 20, 24, 
 
 void fault_shutdown(void){
 	/* Called from fault handlers and Error_Handler: get the power stage into a
-	 * safe state using only register writes.  The DRV8323 enable pin is pulled
-	 * low by GPIO (not SPI - the SPI bus may be wedged or the fault may have
-	 * happened mid-transaction), which puts it to sleep and turns off all six
-	 * FETs.  PWM outputs are also disabled at the timer.  The watchdog will
-	 * eventually reset the chip. */
-	HAL_GPIO_WritePin(ENABLE_PIN, GPIO_PIN_RESET);
-	TIM1->BDTR &= ~TIM_BDTR_MOE;
+	 * safe state using only register writes.  The gate drive is disabled at the
+	 * ATIM1 break / main-output-enable bits (never SPI - the bus may be wedged or
+	 * the fault may have happened mid-transaction), which turns off all six FETs.
+	 * The watchdog will eventually reset the chip. */
+	ATIM1->BKDT &= ~(TIM_BKDT_AOEN | TIM_BKDT_MOEN);
 }
 
 /* USER CODE END 0 */
@@ -237,7 +235,7 @@ void ATIM1_UP_IRQHandler(void)
   TIM_ClrIntPendingBit(ATIM1, TIM_INT_UPDATE);
 
 	/* Kick the watchdog - if this loop ever stops running, the chip resets */
-	IWDG->KR = 0xAAAA;
+	IWDG_ReloadKey();
 
 	/* Sample ADCs */
 	analog_sample(&controller);
@@ -265,12 +263,22 @@ void ATIM1_UP_IRQHandler(void)
   */
 void USART3_IRQHandler(void)
 {
+  /* Overrun first.  The receive register is overwritten (and ORE latches,
+   * blocking all further reception) whenever this handler is late - which
+   * happens routinely while flash is erased, because the CPU stalls for the
+   * whole page erase.  Without clearing ORE the serial console would die for
+   * good the first time the user types during a preference save.
+   * Reading STS above then DAT clears it; the byte itself is dropped because
+   * its position in the stream is no longer known. */
+  if (SET == USART_GetFlagStatus(USART3, USART_FLAG_OREF)) {
+    (void)USART_ReceiveData(USART3);
+    USART_ClrFlag(USART3, USART_FLAG_OREF);
+  }
   if (SET == USART_GetIntStatus(USART3, USART_INT_RXDNE)) {
     USART_ClrFlag(USART3, USART_FLAG_RXDNE);
     char c = USART_ReceiveData(USART3);
     update_fsm(&state, c);
   }
-	
 }
 
 void USB_FS_LP_IRQHandler(void)
@@ -312,7 +320,7 @@ void can_tx_rx(void){
 		case CAN_OP_LEGACY:
 			if(dlc == 8){
 				/* Legacy protocol: all 8-byte frames.  Reply with the packed telemetry */
-				pack_reply(&can_tx, CAN_ID,  comm_encoder.angle_multiturn[0]/GR, comm_encoder.velocity/GR, controller.i_q_filt*KT*GR, controller.v_bus_filt);	// Pack response
+				pack_reply(&can_tx, CAN_ID,  comm_encoder.angle_multiturn/GR, comm_encoder.velocity/GR, controller.i_q_filt*KT*GR, controller.v_bus_filt);	// Pack response
         FDCAN_AddMsgToTxFifoQ(FDCAN2, &can_tx.tx_header, can_tx.data);	// Send response
 
 				/* Check for special Commands: bytes 0-6 all 0xFF, command in byte 7 */
@@ -339,12 +347,12 @@ void can_tx_rx(void){
 			else if((dlc == 2) && (can_rx.data[0] == CAN_LEGACY_READ_VAR)){
 				/* Legacy single float read */
 				pack_float_reply(&can_tx, can_rx.data[1], can_read_variable(can_rx.data[1]));
-				HAL_CAN_AddTxMessage(&CAN_H, &can_tx.tx_header, can_tx.data, &TxMailbox);
+				FDCAN_AddMsgToTxFifoQ(FDCAN2, &can_tx.tx_header, can_tx.data);
 			}
 			else if((dlc == 3) && (can_rx.data[0] == CAN_LEGACY_READ_VAR)){
 				/* Legacy float pair read */
 				pack_float_pair_reply(&can_tx, can_read_variable(can_rx.data[1]), can_read_variable(can_rx.data[2]));
-				HAL_CAN_AddTxMessage(&CAN_H, &can_tx.tx_header, can_tx.data, &TxMailbox);
+				FDCAN_AddMsgToTxFifoQ(FDCAN2, &can_tx.tx_header, can_tx.data);
 			}
 			break;
 

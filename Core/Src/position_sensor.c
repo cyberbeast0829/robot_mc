@@ -15,7 +15,7 @@ uint16_t spi_tx_words[2], spi_rx_words[2];
 
 void ps_warmup(EncoderStruct * encoder, int n){
 	/* Hall position sensors noisy on startup.  Take a bunch of samples to clear this data */
-	spi_tx_words[0] = 0x2300;
+	spi_tx_words[0] = ENC_READ_WORD;
 	spi_tx_words[1] = 0x0000;
 	for(int i = 0; i<n; i++){
 		DMA_ClearFlag(DMA_FLAG_TC1, DMA2);

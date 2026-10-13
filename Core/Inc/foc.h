@@ -18,7 +18,7 @@
 
 
 typedef struct{
-    int adc_a_raw, adc_b_raw, adc_vbus_raw;                 // Raw ADC Values
+    int adc_a_raw, adc_b_raw, adc_c_raw, adc_vbus_raw;      // Raw ADC Values
     float i_a, i_b, i_c;                                    // Phase currents
     float v_bus, v_bus_filt;                                // DC link voltage
     float theta_mech, theta_elec;                           // Rotor mechanical and electrical angle
@@ -30,7 +30,7 @@ typedef struct{
     float i_scale, k_d, k_q, ki_d, ki_q, ki_fw;             // Current loop gains
     float flux_linkage;
     float d_int, q_int;                                     // Current error integrals
-    int adc_a_offset, adc_b_offset;                         // ADC offsets
+    int adc_a_offset, adc_b_offset, adc_c_offset;           // ADC offsets
     float i_d_des, i_q_des, t_ff_filt;                      // Current references
     int loop_count;                                         // Degubbing counter
     int timeout;                                            // Watchdog counter
@@ -40,12 +40,12 @@ typedef struct{
     		float p_des, v_des, kp, kd, t_ff;                   // Desired position, velocity, gains, torque
     	};
     };
-    float v_max, v_ref, fw_int;                             // output voltage magnitude, field-weakening integral
+    float v_max, v_ref, fw_int, v_margin;                             // output voltage magnitude, field-weakening integral
     int otw_flag;                                           // Over-temp warning
-    float i_max;											// Maximum current
+    float i_max, i_mag_max;											// Maximum current
     uint32_t fault;                                         // Latched fault bits (FAULT_x)
     float i_oc_limit;                                       // Overcurrent fault threshold
-    uint8_t gate_drive_enabled;                             // Set alongside drv_enable_gd/drv_disable_gd.
+    uint8_t gate_drive_enabled;                             // Set alongside the ATIM1 gate-drive enable/disable.
                                                             // Overcurrent is only meaningful while driving
     float fault_vbus, fault_iabs;                           // Values captured when a fault first latched
     } ControllerStruct;

@@ -28,8 +28,12 @@ SPI_InitType hspi1 = {
   .DataDirection         = SPI_DIR_DOUBLELINE_FULLDUPLEX,
   .SpiMode               = SPI_MODE_MASTER,
   .DataLen               = SPI_DATA_SIZE_16BITS,
-  .CLKPOL                = SPI_CLKPOL_LOW,
-  .CLKPHA                = SPI_CLKPHA_FIRST_EDGE,
+  /* KTH7823 SPI 手册第 5 节：通信模式为 mode3（CPOL = 1，CPHA = 1）。
+   * 之前是 mode0（SCK 空闲低、第一个边沿采样），编码器的 MISO 是在 SCK 下降沿
+   * 更新的，用 mode0 会在"采样沿 = 数据更新沿"上抢跑，抓到的 16 位帧会随机
+   * 整体移一位（表现为高位跳变）。改成 mode3 后采样沿（上升沿）落在数据位中间 */
+  .CLKPOL                = SPI_CLKPOL_HIGH,
+  .CLKPHA                = SPI_CLKPHA_SECOND_EDGE,
   .NSS                   = SPI_NSS_SOFT,
   .BaudRatePres          = SPI_BR_PRESCALER_16,
   .FirstBit              = SPI_FB_MSB,
@@ -42,7 +46,7 @@ void MX_SPI1_Init(void)
 
   GPIO_InitType GPIO_InitStructure;
   DMA_InitType DMA_InitStructure;
-  NVIC_InitType NVIC_InitStructure;  
+  // NVIC_InitType NVIC_InitStructure;   // CAN RX is polled from the commutation ISR, no SPI interrupt is used
 
   // Enable peripheral clocks
   RCC_EnableAHBPeriphClk(RCC_AHB_PERIPHEN_DMA2, ENABLE);

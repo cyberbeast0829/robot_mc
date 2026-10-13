@@ -129,14 +129,14 @@ extern FDCAN_InitType hcan1;
 #define CAN_VAR_VERSION		22		// firmware version (VERSION_NUM)
 #define CAN_VAR_MODE		23		// current FSM state (the *_MODE values in fsm.h)
 
-/* bxCAN error counters, straight out of CAN_ESR.  A host seeing dropped frames
- * cannot otherwise tell a noisy bus from its own adapter losing them: frames
- * corrupted on the wire fail CRC and simply never arrive.  These count the
- * controller's own view of bus health, so a rising TEC/REC while a motor runs
- * points at electrical noise or termination rather than at anything on the host */
+/* FDCAN error counters, straight out of the ECR / PSR registers.  A host seeing
+ * dropped frames cannot otherwise tell a noisy bus from its own adapter losing
+ * them: frames corrupted on the wire fail CRC and simply never arrive.  These
+ * count the controller's own view of bus health, so a rising TEC/REC while a
+ * motor runs points at electrical noise or termination rather than at the host */
 #define CAN_VAR_CAN_TEC		24		// transmit error counter (0-255)
 #define CAN_VAR_CAN_REC		25		// receive error counter (0-255)
-#define CAN_VAR_CAN_LEC		26		// last error code (CAN_ESR LEC field, 0 = none)
+#define CAN_VAR_CAN_LEC		26		// last error code (PSR LEC field, 0 = none)
 
 /* USER CODE END Private defines */
 

@@ -34,15 +34,18 @@ extern "C" {
 extern USART_InitType huart2;
 
 /* USER CODE BEGIN Private defines */
-extern uint8_t Serial2RxBuffer[1];
 
 /* USER CODE END Private defines */
 
 void MX_USART2_UART_Init(void);
 
 /* USER CODE BEGIN Prototypes */
-void serial_rx_keepalive(void);	// re-arm serial RX if it ever stops
-int __io_putchar(int ch);
+
+/* NOTE: the printf() retarget (__io_putchar) was removed - it was never defined,
+ * so printf() output was silently discarded (GNU ld relaxes the call to a NOP).
+ * All firmware output goes through myprintf() (main.h), which chooses USB CDC
+ * or USART3.  Declaring __io_putchar() here again without defining it would
+ * silently re-break every printf() in the project. */
 
 /* USER CODE END Prototypes */
 

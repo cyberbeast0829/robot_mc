@@ -14,13 +14,48 @@
 #include "usart.h"
 #include "math_ops.h"
 
+/* Queue a calibration milestone message for the main loop.
+ * Called from the commutation interrupt - must not block, so it only stores a
+ * fixed-size record; run_fsm_slow() prints it with cal_print_flush() */
+static void cal_msg_push(CalStruct *cal, uint8_t id, int i0, int i1, float f0, float f1){
+	uint8_t next = (uint8_t)((cal->msg_head + 1) % CAL_MSG_QUEUE_LEN);
+	if(next == cal->msg_tail){return;}		// queue full: drop (main loop flushes every iteration, so this cannot happen in practice)
+	CalMsg *m = &cal->msg_q[cal->msg_head];
+	m->id = id;
+	m->i0 = i0;
+	m->i1 = i1;
+	m->f0 = f0;
+	m->f1 = f1;
+	/* Publish the entry only after it is fully written (compiler barrier - the
+	 * entry fields are plain memory, msg_head is the volatile flag) */
+	__asm volatile ("" ::: "memory");
+	cal->msg_head = next;
+}
+
+/* Print queued calibration messages.  Main loop only (myprintf can block) */
+void cal_print_flush(CalStruct *cal){
+	while(cal->msg_tail != cal->msg_head){
+		CalMsg *m = &cal->msg_q[cal->msg_tail];
+		switch(m->id){
+			case CAL_MSG_CHECK_PHASE:	myprintf("Checking phase sign, pole pairs\r\n"); break;
+			case CAL_MSG_PHASE_ORDER:	myprintf(m->i0 ? "Swapping phase sign\r\n" : "Phase order correct\r\n"); break;
+			case CAL_MSG_PPAIRS:		myprintf("Pole Pairs: %d\r\n", m->i0); break;
+			case CAL_MSG_START_END:		myprintf("Start: %.3f   End: %.3f\r\n", m->f0, m->f1); break;
+			case CAL_MSG_FAILED:		myprintf("Calibration failed: measured %d pole pairs (max %d).  Check the encoder and I_CAL\r\n", m->i0, m->i1); break;
+			case CAL_MSG_START_LIN:		myprintf("Starting offset cal and linearization\r\n"); break;
+			default:					break;
+		}
+		cal->msg_tail = (uint8_t)((cal->msg_tail + 1) % CAL_MSG_QUEUE_LEN);
+	}
+}
+
 void order_phases(EncoderStruct *encoder, ControllerStruct *controller, CalStruct * cal, int loop_count){
 	/* Checks phase order, to ensure that positive Q current produces
 	   torque in the positive direction wrt the position sensor */
 	PHASE_ORDER = 0;
 
 	if(!cal->started){
-		myprintf("Checking phase sign, pole pairs\r\n");
+		cal_msg_push(cal, CAL_MSG_CHECK_PHASE, 0, 0, 0.0f, 0.0f);
 		cal->started = 1;
 		cal->start_count = loop_count;
 	}
@@ -55,7 +90,7 @@ void order_phases(EncoderStruct *encoder, ControllerStruct *controller, CalStruc
 		/* Rotor barely moved, or moved a non-physical amount - stalled rotor,
 		 * a bad encoder, or I_CAL too low.  Bail out before the pole-pair count
 		 * can run calibration sampling off the end of its arrays */
-		printf("Calibration failed: measured %d pole pairs (max %d).  Check the encoder and I_CAL\r\n", ppairs, PPAIRS_MAX);
+		cal_msg_push(cal, CAL_MSG_FAILED, ppairs, PPAIRS_MAX, 0.0f, 0.0f);
 		cal->failed = 1;
 		return;
 	}
@@ -63,14 +98,13 @@ void order_phases(EncoderStruct *encoder, ControllerStruct *controller, CalStruc
 
 	if(cal->theta_start < theta_end){
 		cal->phase_order = 0;
-		myprintf("Phase order correct\r\n");
 	}
 	else{
 		cal->phase_order = 1;
-		myprintf("Swapping phase sign\r\n");
 	}
-    myprintf("Pole Pairs: %d\r\n", cal->ppairs);
-    myprintf("Start: %.3f   End: %.3f\r\n", cal->theta_start, theta_end);
+    cal_msg_push(cal, CAL_MSG_PHASE_ORDER, cal->phase_order, 0, 0.0f, 0.0f);
+    cal_msg_push(cal, CAL_MSG_PPAIRS, cal->ppairs, 0, 0.0f, 0.0f);
+    cal_msg_push(cal, CAL_MSG_START_END, 0, 0, cal->theta_start, theta_end);
     PHASE_ORDER = cal->phase_order;
     PPAIRS = (float)cal->ppairs;
     cal->started = 0;
@@ -81,7 +115,7 @@ void calibrate_encoder(EncoderStruct *encoder, ControllerStruct *controller, Cal
 	/* Calibrates e-zero and encoder nonliearity */
 
 	if(!cal->started){
-			myprintf("Starting offset cal and linearization\r\n");
+			cal_msg_push(cal, CAL_MSG_START_LIN, 0, 0, 0.0f, 0.0f);
 			cal->started = 1;
 			cal->start_count = loop_count;
 			cal->next_sample_time = T1;

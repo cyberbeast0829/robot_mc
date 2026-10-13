@@ -32,10 +32,10 @@
 
 #define VBUS_AD_Pin                     GPIO_PIN_2
 #define VBUS_AD_GPIO_Port               GPIOB
-#define MOS_TEMP_Pin                    GPIO_PIN_6
-#define MOS_TEMP_GPIO_Port              GPIOA
-#define MOT_TEMP_Pin                    GPIO_PIN_5
-#define MOT_TEMP_GPIO_Port              GPIOA
+#define MOS_TEMP_Pin                    GPIO_PIN_15
+#define MOS_TEMP_GPIO_Port              GPIOB
+#define MOT_TEMP_Pin                    GPIO_PIN_4
+#define MOT_TEMP_GPIO_Port              GPIOC
 
 #define IU_OP1P_Pin                     GPIO_PIN_1
 #define IU_OP1N_Pin                     GPIO_PIN_2
@@ -43,6 +43,9 @@
 #define IV_OP2P_Pin                     GPIO_PIN_4
 #define IV_OP2N_Pin                     GPIO_PIN_3
 #define IV_OP2_GPIO_Port                GPIOA
+#define IW_OP3P_Pin                     GPIO_PIN_6
+#define IW_OP3N_Pin                     GPIO_PIN_5
+#define IW_OP3_GPIO_Port                GPIOA
 
 #define IV_OP3OUT_COMP_Pin              GPIO_PIN_11
 #define IV_OP3OUT_COMP_GPIO_Port        GPIOB
@@ -84,10 +87,6 @@
 #define LED_Pin                         GPIO_PIN_6
 #define LED_GPIO_Port                   GPIOC
 
-#define USB_DM_Pin                      GPIO_PIN_11
-#define USB_DP_Pin                      GPIO_PIN_12
-#define USB_GPIO_Port                   GPIOA
-
 /* Timer and PWM */
 #define TIM_PWM			ATIM1				// PWM/ISR timer handle
 #define TIM_CH_U		TIM_CHANNEL_1		// Terminal U timer channel
@@ -102,35 +101,38 @@
 #define USB_WKUP_ISR	USB_FS_WKUP_IRQn	// USB Wakeup ISR
 #define USART_ISR		USART3_IRQn		// USART ISR
 
-/* ADC */
+/* ADC
+ *
+ * NOTE: the old ST/DRV8323 handle macros (ADC_CH_IA = hadc1, ...) were removed -
+ * they resolved to symbols that do not exist on this port and were never used.
+ * The ADC instances are hard-coded in adc.c / foc.c (ADC1 = phase A, ADC2 =
+ * phase B + VBUS). */
 
-#define ADC_CH_MAIN		hadc1				// ADC channel handle which drives simultaneous mode
-#define ADC_CH_IA		hadc1					// Phase A current sense ADC channel handle.  0 = unused
-#define ADC_CH_IB		hadc2				// Phase B current sense ADC channel handle.  0 = unused
-#define ADC_CH_IC		0				// Phase C current sense ADC channel handle.  0 = unused
-#define ADC_CH_VBUS		hadc3				// Bus voltage ADC channel handle.  0 = unused
+/* Gate drive
+ *
+ * NOTE: this hardware has no DRV8323.  There is no enable pin, no DRV SPI and
+ * no CS (the old ENABLE_PIN/DRV_SPI/DRV_CS macros were removed).  The power
+ * stage is enabled/disabled with the ATIM1 break/MOE bits - see
+ * fsm_enter_state()/fsm_exit_state()/fault_shutdown(). */
 
-/* DRV Gate drive */
-#define ENABLE_PIN 		GPIOA, GPIO_PIN_11  // Enable gate drive pin.
-#define DRV_SPI			hspi1				// DRV SPI handle
-#define DRV_CS			GPIOA, GPIO_PIN_4	// DRV CS pin
-
-/* SPI encoder */
-#define ENC_SPI			hspi3				// Encoder SPI handle
+/* SPI encoder (the commutation encoder is on SPI1 + DMA2, see spi.c/position_sensor.c) */
 #define ENC_CS			ENC_SPI_NSS_GPIO_Port, ENC_SPI_NSS_Pin	// Encoder SPI CS pin
 #define ENC_CPR			65536				// Encoder counts per revolution
 #define INV_CPR			1.0f/ENC_CPR
-#define ENC_READ_WORD	0x2300				// Encoder read command
+#define ENC_READ_WORD	0x0000				// Encoder read command
 
 /* Misc. GPIO */
 #define LED         	LED_GPIO_Port, LED_Pin	// LED Pin
 
-/* CAN */
-#define CAN_H			hcan1				// CAN handle
+/* CAN (the FDCAN2_InitType is defined in can.c; the old CAN_H = hcan1 alias was
+ * removed - it was an ST-hal leftover and was never used) */
 
 /* Other hardware-related constants */
-// I_SCALE = ((3.3 / (2^12)) / OPA_GAIN) / RSHUNT
-#define I_SCALE 			0.05035400390625f  // Amps per A/D Count at 40X amplifier gain
+// I_SCALE = (3.3 / (2^12)) / (PGA_GAIN * RSHUNT)
+// This board senses current through the on-chip PGA (pga.c) at a fixed
+// DIFFERENTIAL gain of 32 - there is no gain switching.  The value below is
+// (3.3/4096) / 0.016, i.e. it assumes a sense chain of 0.016 V/A (32 x 0.5 mOhm).
+#define I_SCALE 			0.05035400390625f    // Amps per A/D count at PGA differential gain 32
 // V_SCALE = (3.3 * VBUS_S_DIVIDER) / (2^12) 其中 VBUS_S_DIVIDER = 93.91 / 3.01
 #define V_SCALE 			0.02513618342504f    // Bus volts per A/D Count
 #define DTC_MAX 			0.7f          	// Max duty cycle
@@ -140,6 +142,17 @@
 #define EN_ENC_LINEARIZATION 1				// Enable/disable encoder linearization
 #define V_BUS_MAX			60.0f			// max drive voltage - torque command is cut above this (soft limit)
 #define V_BUS_FAULT			67.0f			// hard overvoltage limit - latches a fault and disables the gate drive
+
+/* Current limit
+ *
+ * The sense chain is characterised for up to ~40 A; above that the CSA/PGA
+ * output saturates, which silently masks the overcurrent fault (a saturated
+ * reading can never exceed the threshold), so I_MAX is hard-capped here.  The
+ * old firmware doubled i_scale for I_MAX > 40 A to follow a DRV8323 CSA gain
+ * change; that driver does not exist on this board, so that branch was removed.
+ * Raise I_MAX_LIMIT only after re-characterising the sense chain. */
+#define I_MAX_LIMIT			40.0f			// Hard upper bound for I_MAX (A)
+#define I_OC_FAULT_FACTOR	1.5f			// Overcurrent latch threshold = factor * I_MAX
 
 /* Current controller */
 #define L_D     95e-6f				// D axis inductance

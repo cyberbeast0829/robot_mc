@@ -8,13 +8,13 @@
 #include <string.h>
 #include "preference_writer.h"
 #include "user_config.h"
-#include "stm32f4xx_hal.h"
-#include "stm32f4xx_flash.h"
+#include "n32h47x_48x_flash.h"
 
-/* The two 128 KB sectors at the top of the STM32F446RE's 512 KB flash */
+/* The two 8 KB flash pages at the top of the N32H473CE's 512 KB flash (same page
+ * layout as flash_writer.h).  The stored block is ~1.3 KB, so one page each is
+ * plenty and the ping-pong swap only costs a single page erase. */
 #define N_SECTORS			2
-static const uint32_t sector_addr[N_SECTORS] = {0x08040000, 0x08060000};	// sectors 6 and 7
-static const uint16_t sector_id[N_SECTORS]   = {FLASH_Sector_6, FLASH_Sector_7};
+static const uint32_t sector_addr[N_SECTORS] = {0x0807C000, 0x0807E000};	// top two 8 KB pages
 
 #define CONFIG_MAGIC		0x434F4E46	// 'CONF'
 #define CONFIG_VERSION		1
@@ -29,10 +29,20 @@ static const uint16_t sector_id[N_SECTORS]   = {FLASH_Sector_6, FLASH_Sector_7};
 #define OFFS_PAYLOAD		4
 #define N_PAYLOAD_WORDS		(N_INT_REG + N_FLOAT_REG)
 
-/* Hardware CRC unit (fixed CRC-32 polynomial, word-wise) */
+/* Software CRC-32, the same algorithm the hardware CRC unit implements
+ * (CRC-32/MPEG-2: poly 0x04C11DB7, init 0xFFFFFFFF, no bit reflection, no final
+ * XOR).  Kept in software so it needs no peripheral clock. */
+static uint32_t crc_state;
+
 static void crc_begin(void){
-	RCC->AHB1ENR |= RCC_AHB1ENR_CRCEN;
-	CRC->CR = CRC_CR_RESET;
+	crc_state = 0xFFFFFFFFu;
+}
+
+static void crc_feed(uint32_t word){
+	crc_state ^= word;
+	for(int b = 0; b < 32; b++){
+		crc_state = (crc_state & 0x80000000u) ? ((crc_state << 1) ^ 0x04C11DB7u) : (crc_state << 1);
+	}
 }
 
 static uint32_t float_bits(float f){
@@ -43,10 +53,10 @@ static uint32_t float_bits(float f){
 
 static uint32_t crc_of_ram_config(uint32_t sequence){
 	crc_begin();
-	CRC->DR = sequence;
-	for(int i = 0; i < N_INT_REG; i++){CRC->DR = (uint32_t)__int_reg[i];}
-	for(int i = 0; i < N_FLOAT_REG; i++){CRC->DR = float_bits(__float_reg[i]);}
-	return CRC->DR;
+	crc_feed(sequence);
+	for(int i = 0; i < N_INT_REG; i++){crc_feed((uint32_t)__int_reg[i]);}
+	for(int i = 0; i < N_FLOAT_REG; i++){crc_feed(float_bits(__float_reg[i]));}
+	return crc_state;
 }
 
 static int block_valid(int sector, uint32_t *sequence){
@@ -54,9 +64,9 @@ static int block_valid(int sector, uint32_t *sequence){
 	if(b[OFFS_MAGIC] != CONFIG_MAGIC){return 0;}
 	if(b[OFFS_VERSION] != CONFIG_VERSION){return 0;}
 	crc_begin();
-	CRC->DR = b[OFFS_SEQUENCE];
-	for(int i = 0; i < N_PAYLOAD_WORDS; i++){CRC->DR = b[OFFS_PAYLOAD + i];}
-	if(CRC->DR != b[OFFS_CRC]){return 0;}
+	crc_feed(b[OFFS_SEQUENCE]);
+	for(int i = 0; i < N_PAYLOAD_WORDS; i++){crc_feed(b[OFFS_PAYLOAD + i]);}
+	if(crc_state != b[OFFS_CRC]){return 0;}
 	*sequence = b[OFFS_SEQUENCE];
 	return 1;
 }
@@ -87,8 +97,19 @@ void preference_writer_load(PreferenceWriter *pr){
 	 * firmware upgrade.  It isn't re-saved here; the first save writes the
 	 * new format to the OTHER sector, so the legacy data stays intact as a
 	 * fallback until the save after that. */
+	/* Only treat sector 0 as legacy data if it actually looks like it.  A block
+	 * that carries the current magic but failed its CRC is a corrupt block of the
+	 * CURRENT format, not legacy data - importing it would load its header words
+	 * (magic / version / sequence / CRC) as config registers, including a garbage
+	 * PHASE_ORDER and ENCODER_LUT.  A couple of range checks on the well-known
+	 * legacy registers catch random flash as well. */
 	const uint32_t *legacy = (const uint32_t *)sector_addr[0];
-	pr->loaded = (legacy[0] != 0xFFFFFFFF);
+	int legacy_ok = 1;
+	if(legacy[OFFS_MAGIC] == CONFIG_MAGIC){legacy_ok = 0;}			// corrupt block of the current format
+	else if(legacy[0] == 0xFFFFFFFFu){legacy_ok = 0;}				// erased
+	else if((legacy[0] & ~1u) != 0u){legacy_ok = 0;}				// PHASE_ORDER must be 0 or 1
+	else if((legacy[1] > 127u) || (legacy[2] > 127u)){legacy_ok = 0;}	// CAN_ID / CAN_MASTER must fit 7 bits
+	pr->loaded = legacy_ok;
 	if(pr->loaded){
 		for(int i = 0; i < N_INT_REG; i++){__int_reg[i] = (int)legacy[i];}
 		memcpy(__float_reg, (const void *)&legacy[N_INT_REG], N_FLOAT_REG*sizeof(float));
@@ -100,26 +121,30 @@ void preference_writer_load(PreferenceWriter *pr){
 }
 
 int preference_writer_save(PreferenceWriter *pr){
-	/* Write the RAM config to the sector NOT holding the newest valid block.
-	 * The sector erase stalls the whole CPU for up to ~2 s - the caller
-	 * (save_preferences in fsm.c) kicks the watchdog first and only runs
-	 * from the main loop, in states where the gate drive is off. */
+	/* Write the RAM config to the page NOT holding the newest valid block.
+	 * Erasing the page stalls the CPU (the caller - save_preferences in fsm.c -
+	 * kicks the watchdog first and only runs from the main loop, with the gate
+	 * drive off).  The N32 flash programs in 64-bit double-words. */
 	int target = !pr->active_sector;
 	uint32_t base = sector_addr[target];
 	uint32_t sequence = pr->sequence + 1;
 
 	FLASH_Unlock();
-	FLASH_ClearFlag(FLASH_FLAG_EOP | FLASH_FLAG_WRPERR | FLASH_FLAG_PGAERR | FLASH_FLAG_PGPERR | FLASH_FLAG_PGSERR);
-	if(FLASH_EraseSector(sector_id[target], VoltageRange_3) != FLASH_COMPLETE2){
+	FLASH_ClearFlag(FLASH_STS_CLRFLAG);
+	if(FLASH_EraseOnePage(base) != FLASH_EOP){
 		FLASH_Lock();
 		return 0;
 	}
-	FLASH_ProgramWord(base + 4*OFFS_MAGIC, CONFIG_MAGIC);
-	FLASH_ProgramWord(base + 4*OFFS_VERSION, CONFIG_VERSION);
-	FLASH_ProgramWord(base + 4*OFFS_SEQUENCE, sequence);
-	FLASH_ProgramWord(base + 4*OFFS_CRC, crc_of_ram_config(sequence));
-	for(int i = 0; i < N_INT_REG; i++){FLASH_ProgramWord(base + 4*(OFFS_PAYLOAD + i), (uint32_t)__int_reg[i]);}
-	for(int i = 0; i < N_FLOAT_REG; i++){FLASH_ProgramWord(base + 4*(OFFS_PAYLOAD + N_INT_REG + i), float_bits(__float_reg[i]));}
+	/* Header: magic, version, sequence, CRC - two 64-bit programs */
+	FLASH_ProgramdoubleWord(base + 4*OFFS_MAGIC,    CONFIG_MAGIC, CONFIG_VERSION);
+	FLASH_ProgramdoubleWord(base + 4*OFFS_SEQUENCE, sequence, crc_of_ram_config(sequence));
+	/* Payload: 256 ints then 64 floats, two 32-bit words per program */
+	for(int i = 0; i < N_INT_REG; i += 2){
+		FLASH_ProgramdoubleWord(base + 4*OFFS_PAYLOAD + 4*i, (uint32_t)__int_reg[i], (uint32_t)__int_reg[i+1]);
+	}
+	for(int i = 0; i < N_FLOAT_REG; i += 2){
+		FLASH_ProgramdoubleWord(base + 4*(OFFS_PAYLOAD + N_INT_REG) + 4*i, float_bits(__float_reg[i]), float_bits(__float_reg[i+1]));
+	}
 	FLASH_Lock();
 
 	/* Verify what actually landed in flash before pointing at it */

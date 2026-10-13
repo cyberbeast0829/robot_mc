@@ -113,6 +113,13 @@ extern uint32_t _reboot_cookie;
 				fsmstate->print_pending = 1;	// main loop prints the menu
 				break;
 			case SETUP_MODE:
+				/* Start with a clean command buffer, so fragments typed before an
+				 * escape-to-menu can't be appended to the first command of the
+				 * next setup session */
+				fsmstate->bytecount = 0;
+				fsmstate->cmd_id = 0;
+				fsmstate->cmd_pending = 0;
+				memset(&fsmstate->cmd_buff, 0, sizeof(fsmstate->cmd_buff));
 				fsmstate->print_pending = 1;	// main loop prints the setup screen
 				break;
 			case ENCODER_MODE:
@@ -124,18 +131,20 @@ extern uint32_t _reboot_cookie;
 				GPIO_WriteBits(LED, Bit_SET );
 				reset_foc(&controller);
 				// drv_enable_gd(drv);
-				ATIM1->BKDT |= TIM_BKDT_AOEN;
-        ATIM1->BKDT |= TIM_BKDT_MOEN;
+				/* Enable the six outputs.  AutomaticOutput is disabled in tim.c, so
+				 * MOE is software-only and AOE must stay 0 - with AOE set, a break
+				 * event would re-enable the gate drive on its own */
+				ATIM1->BKDT |= TIM_BKDT_MOEN;
 				controller.gate_drive_enabled = 1;
 				break;
 			case FAULT_MODE:
 				/* Make sure the gate drive is off no matter what state we
 				 * faulted out of, and report through the main loop */
-				drv_disable_gd(drv);
+				ATIM1->BKDT &= ~(TIM_BKDT_AOEN | TIM_BKDT_MOEN);
 				controller.gate_drive_enabled = 0;
 				reset_foc(&controller);
 				zero_commands(&controller);
-				HAL_GPIO_WritePin(LED, GPIO_PIN_RESET );
+				GPIO_WriteBits(LED, Bit_RESET );
 				fsmstate->print_pending = 1;
 				break;
 			case CALIBRATION_MODE:
@@ -147,11 +156,12 @@ extern uint32_t _reboot_cookie;
 				comm_encoder_cal.started = 0;
 				comm_encoder_cal.failed = 0;
 				comm_encoder_cal.sample_count = 0;	// so the main loop doesn't stream samples left over from a previous calibration
+				comm_encoder_cal.msg_head = 0;		// drop milestone messages left unprinted by a previous run
+				comm_encoder_cal.msg_tail = 0;
 				comm_encoder.e_zero = 0;
 				memset(&comm_encoder.offset_lut, 0, sizeof(comm_encoder.offset_lut));
 				// drv_enable_gd(drv);
-				ATIM1->BKDT |= TIM_BKDT_AOEN;
-        ATIM1->BKDT |= TIM_BKDT_MOEN;
+				ATIM1->BKDT |= TIM_BKDT_MOEN;		// see the note in enter MOTOR_MODE
 				controller.gate_drive_enabled = 1;
 				break;
 
@@ -179,8 +189,7 @@ extern uint32_t _reboot_cookie;
 				/* Don't stop commutating if there are high currents or FW happening */
 				//if( (fabs(controller.i_q_filt)<1.0f) && (fabs(controller.i_d_filt)<1.0f) ){
 					fsmstate->ready = 1;
-					ATIM1->BKDT &= ~TIM_BKDT_AOEN;
-        	ATIM1->BKDT &= ~TIM_BKDT_MOEN;
+					ATIM1->BKDT &= ~TIM_BKDT_MOEN;
 					controller.gate_drive_enabled = 0;
 					reset_foc(&controller);
 					//myprintf("Leaving Motor Mode\r\n");
@@ -190,8 +199,7 @@ extern uint32_t _reboot_cookie;
 				break;
 			case CALIBRATION_MODE:
 				//myprintf("Exiting Calibration Mode\r\n");
-				ATIM1->BKDT &= ~TIM_BKDT_AOEN;
-        ATIM1->BKDT &= ~TIM_BKDT_MOEN;
+				ATIM1->BKDT &= ~TIM_BKDT_MOEN;
 				// drv_disable_gd(drv);
 				//free(error_array);
 				//free(lut_array);
@@ -215,14 +223,19 @@ extern uint32_t _reboot_cookie;
 		fsmstate->ready = 0;
 		return;
 	}
-	else if (fsm_input == DFU_CMD) {
-		__asm volatile ("CPSID I\n\t":::"memory"); // disable interrupts
-		_reboot_cookie = 0xDEADBEEF;
-		NVIC_SystemReset();
-	}
 	switch(fsmstate->state){
 		case MENU_MODE:
 			switch (fsm_input){
+				case DFU_CMD:
+					/* Enter the ROM bootloader.
+					 * Deliberately only reachable from the menu: 'd' is also the
+					 * setup prefix for KD_MAX, so a global 'd' handler made that
+					 * setting impossible to enter and turned any stray 'd' on the
+					 * serial line into a reboot */
+					__asm volatile ("CPSID I\n\t":::"memory"); // disable interrupts
+					_reboot_cookie = 0xDEADBEEF;
+					NVIC_SystemReset();
+					break;
 				case CAL_CMD:
 					fsmstate->next_state = CALIBRATION_MODE;
 					fsmstate->ready = 0;
@@ -295,6 +308,7 @@ extern uint32_t _reboot_cookie;
 	    myprintf(" s - Setup\n\r");
 	    myprintf(" e - Display Encoder\n\r");
 	    myprintf(" z - Set Zero Position\n\r");
+	    myprintf(" d - Enter DFU/Bootloader\n\r");
 	    myprintf(" esc - Exit to Menu\n\r");
 
 	    //gpio.led->write(0);
@@ -308,7 +322,7 @@ extern uint32_t _reboot_cookie;
 	    myprintf(" %-4s %-31s %-5s %-6s %.5f\n\r", "k", "Torque Constant (N-m/A)", "0", "-", KT);
 	    myprintf("\r\n Control:\r\n");
 	    myprintf(" %-4s %-31s %-5s %-6s %.3f\n\r", "b", "Current Bandwidth (Hz)", "100", "2000", I_BW);
-	    myprintf(" %-4s %-31s %-5s %-6s %.3f\n\r", "l", "Current Limit (A)", "0.0", "75.0", I_MAX);
+	    myprintf(" %-4s %-31s %-5s %-6s %.3f\n\r", "l", "Current Limit (A)", "0.0", "40.0", I_MAX);	// upper bound = I_MAX_LIMIT (hw_config.h)
 	    myprintf(" %-4s %-31s %-5s %-6s %.3f\n\r", "p", "Max Position Setpoint (rad)", "-", "-", P_MAX);
 	    myprintf(" %-4s %-31s %-5s %-6s %.3f\n\r", "v", "Max Velocity Setpoint (rad)/s", "-", "-", V_MAX);
 	    myprintf(" %-4s %-31s %-5s %-6s %.3f\n\r", "x", "Max Position Gain (N-m/rad)", "0.0", "1000.0", KP_MAX);
@@ -346,7 +360,9 @@ extern uint32_t _reboot_cookie;
 			 myprintf("CAN_TX_ID set to %d\r\n", CAN_MASTER);
 			 break;
 		 case 'l':
-			 I_MAX = fmaxf(fminf(atof(fsmstate->cmd_buff), 75.0f), 0.0f);
+			 /* Capped at I_MAX_LIMIT: the sense chain saturates above ~40 A,
+			  * which would mask the overcurrent fault */
+			 I_MAX = fmaxf(fminf(atof(fsmstate->cmd_buff), I_MAX_LIMIT), 0.0f);
 			 myprintf("I_MAX set to %f\r\n", I_MAX);
 			 break;
 		 case 'f':
@@ -404,11 +420,9 @@ extern uint32_t _reboot_cookie;
 	 /* Write new settings to flash */
 	 save_preferences();
 
+	 /* cmd_id / cmd_buff belong to the caller's snapshot, so the ISR-side buffer
+	  * is cleared by run_fsm_slow() (before this runs) rather than here */
 	 enter_setup_state();
-
-	 fsmstate->bytecount = 0;
-	 fsmstate->cmd_id = 0;
-	 memset(&fsmstate->cmd_buff, 0, sizeof(fsmstate->cmd_buff));
  }
 
  static void save_preferences(void){
@@ -416,11 +430,11 @@ extern uint32_t _reboot_cookie;
 	  * CPU (including the commutation interrupt) for up to ~2 seconds, so this
 	  * must only be called from the main loop, in states where the gate drive
 	  * is off.  Kick the watchdog first so the stall can't trip it. */
-	 IWDG->KR = 0xAAAA;
+	 IWDG_ReloadKey();
 	 if(!preference_writer_save(&prefs)){
-		 printf("\n\r!!! Preference save failed - config unchanged in flash !!!\r\n");
+		 myprintf("\n\r!!! Preference save failed - config unchanged in flash !!!\r\n");
 	 }
-	 IWDG->KR = 0xAAAA;
+	 IWDG_ReloadKey();
  }
 
  void run_fsm_slow(FSMStruct * fsmstate){
@@ -431,23 +445,39 @@ extern uint32_t _reboot_cookie;
 	 static int cal_samples_printed = 0;
 	 static int encoder_print_count = 0;
 
+	 /* Print any calibration milestone messages queued by the ISR (calibration
+	  * runs in the control interrupt and must not print there) */
+	 cal_print_flush(&comm_encoder_cal);
+
 	 /* Print the menu/setup screen after a state change */
 	 if(fsmstate->print_pending){
 		 fsmstate->print_pending = 0;
 		 if(fsmstate->state == MENU_MODE){enter_menu_state();}
 		 else if(fsmstate->state == SETUP_MODE){enter_setup_state();}
 		 else if(fsmstate->state == FAULT_MODE){
-			 printf("\n\r!!! FAULT - gate drive disabled !!!\r\n");
-			 if(controller.fault & FAULT_OV){printf("  Overvoltage: bus hit %.2f V (limit %.1f V)\r\n", controller.fault_vbus, V_BUS_FAULT);}
-			 if(controller.fault & FAULT_OC){printf("  Overcurrent: phase current hit %.1f A (limit %.1f A)\r\n", controller.fault_iabs, controller.i_oc_limit);}
-			 printf("  esc (or the CAN menu command) to clear\r\n");
+			 myprintf("\n\r!!! FAULT - gate drive disabled !!!\r\n");
+			 if(controller.fault & FAULT_OV){myprintf("  Overvoltage: bus hit %.2f V (limit %.1f V)\r\n", controller.fault_vbus, V_BUS_FAULT);}
+			 if(controller.fault & FAULT_OC){myprintf("  Overcurrent: phase current hit %.1f A (limit %.1f A)\r\n", controller.fault_iabs, controller.i_oc_limit);}
+			 myprintf("  esc (or the CAN menu command) to clear\r\n");
 		 }
 	 }
 
-	 /* Process a completed setup command */
+	 /* Process a completed setup command.
+	  * Take the command out of the ISR-shared buffer - under a very short critical
+	  * section - and hand process_user_input() a private copy.  That releases the
+	  * interrupt to receive immediately, instead of dropping everything typed
+	  * while process_user_input() blocks for tens of ms in save_preferences() */
 	 if(fsmstate->cmd_pending){
-		 if(fsmstate->state == SETUP_MODE){process_user_input(fsmstate);}
+		 FSMStruct cmd_snapshot;			// only cmd_id / cmd_buff are used
+		 __disable_irq();
+		 cmd_snapshot.cmd_id = fsmstate->cmd_id;
+		 memcpy(cmd_snapshot.cmd_buff, fsmstate->cmd_buff, sizeof(cmd_snapshot.cmd_buff));
+		 fsmstate->bytecount = 0;
+		 fsmstate->cmd_id = 0;
+		 memset(&fsmstate->cmd_buff, 0, sizeof(fsmstate->cmd_buff));
 		 fsmstate->cmd_pending = 0;
+		 __enable_irq();
+		 if(fsmstate->state == SETUP_MODE){process_user_input(&cmd_snapshot);}
 	 }
 
 	 /* Zero the mechanical position and save it */
@@ -456,7 +486,7 @@ extern uint32_t _reboot_cookie;
 		 if(fsmstate->state == MENU_MODE){	// only with the gate drive off
 			 M_ZERO = comm_encoder.count;
 			 save_preferences();
-			 printf("\n\r  Saved new zero position:  %d\n\r\n\r", M_ZERO);
+			 myprintf("\n\r  Saved new zero position:  %d\n\r\n\r", M_ZERO);
 		 }
 	 }
 
@@ -464,7 +494,7 @@ extern uint32_t _reboot_cookie;
 		 /* Stream out new calibration samples as they're taken (forward pass only -
 		  * sample_count counts back down during the reverse pass) */
 		 while(cal_samples_printed < comm_encoder_cal.sample_count){
-			 printf("%d %d\r\n", cal_samples_printed, comm_encoder_cal.error_arr[cal_samples_printed]);
+			 myprintf("%d %d\r\n", cal_samples_printed, comm_encoder_cal.error_arr[cal_samples_printed]);
 			 cal_samples_printed++;
 		 }
 
@@ -472,13 +502,23 @@ extern uint32_t _reboot_cookie;
 		  * in the ISR disables the gate drive), then save the results to flash */
 		 if(comm_encoder_cal.done_ordering && comm_encoder_cal.done_cal){
 			 update_fsm(fsmstate, MENU_CMD);
-			 HAL_Delay(1);		// a few commutation cycles, so the transition has happened
+			 /* Wait for the commutation ISR to run the transition out of
+			  * calibration mode (a couple of 25 us cycles) before saving the
+			  * results; bounded so a stuck transition can't hang the main loop */
+			 volatile uint8_t *pstate = &fsmstate->state;
+			 for(int i = 0; (i < 100000) && (*pstate == CALIBRATION_MODE); i++){__NOP();}
 			 E_ZERO = comm_encoder_cal.ezero;
+			 /* Apply the result to the running encoder now.  ps_sample() reads its
+			  * own ppairs/e_zero copy for the electrical angle, so without this the
+			  * freshly measured pole pairs only took effect after a reboot */
+			 comm_encoder.ppairs = PPAIRS;
+			 comm_encoder.e_zero = E_ZERO;
+			 comm_encoder.m_zero = M_ZERO;
 			 memcpy(&comm_encoder.offset_lut, comm_encoder_cal.lut_arr, sizeof(comm_encoder.offset_lut));
 			 memcpy(&ENCODER_LUT, comm_encoder_cal.lut_arr, sizeof(comm_encoder_cal.lut_arr));
 			 save_preferences();
-			 printf("E_ZERO: %d  %f\r\n", E_ZERO, TWO_PI_F*fmodf((comm_encoder.ppairs*(float)(-E_ZERO))/((float)ENC_CPR), 1.0f));
-			 for(int i = 0; i<N_LUT; i++){printf("%d %d\r\n", i, comm_encoder_cal.lut_arr[i]);}
+			 myprintf("E_ZERO: %d  %f\r\n", E_ZERO, TWO_PI_F*fmodf((comm_encoder.ppairs*(float)(-E_ZERO))/((float)ENC_CPR), 1.0f));
+			 for(int i = 0; i<N_LUT; i++){myprintf("%d %d\r\n", i, comm_encoder_cal.lut_arr[i]);}
 			 comm_encoder_cal.done_cal = 0;		// consume, so this only runs once
 			 comm_encoder_cal.done_ordering = 0;
 		 }

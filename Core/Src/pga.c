@@ -17,6 +17,10 @@ void MX_PGA_Init(void)
   GPIO_InitStructure.Pin       = IV_OP2N_Pin;
   GPIO_InitPeripheral(IV_OP2_GPIO_Port, &GPIO_InitStructure);
 
+  GPIO_InitStructure.Pin       = IW_OP3P_Pin | IW_OP3N_Pin;
+  GPIO_InitStructure.GPIO_Mode  = GPIO_MODE_ANALOG;
+  GPIO_InitPeripheral(IW_OP3_GPIO_Port, &GPIO_InitStructure);
+
   PGA_StructInit(&PGA_Initial);
   PGA_Initial.DiffModeEn = ENABLE;
   PGA_Initial.Gain1 = PGA_CTRL_CH1GAIN_32_DIFF_64;
@@ -35,6 +39,12 @@ void MX_PGA_Init(void)
   PGA_SetVmSel(PGA2, PGA2_CTRL_VMSEL_PA3);
   PGA_Enable(PGA2, PGA_Channel1, ENABLE);
   PGA_Enable(PGA2, PGA_Channel2, ENABLE);
+
+  PGA_Init(PGA3, &PGA_Initial);
+  PGA_SetVpSel(PGA3, PGA3_CTRL_VPSEL_PA6);
+  PGA_SetVmSel(PGA3, PGA3_CTRL_VMSEL_PA5);
+  PGA_Enable(PGA3, PGA_Channel1, ENABLE);
+  PGA_Enable(PGA3, PGA_Channel2, ENABLE);
 }
 
 

@@ -80,8 +80,6 @@ float __float_reg[64];
 int __int_reg[256];
 PreferenceWriter prefs;
 
-int count = 0;
-
 /* Structs for control, etc */
 
 ControllerStruct controller;
@@ -92,7 +90,10 @@ CalStruct comm_encoder_cal;
 CANTxMessage can_tx;
 CANRxMessage can_rx;
 
-uint8_t Serial2RxBuffer[1];
+/* Latched in early_start_checks() (before RCC_DeInit could touch the flags) and
+ * reported once myprintf() works - tells the user the previous run was killed
+ * by the watchdog, i.e. the control loop had stopped running */
+static uint8_t watchdog_reset_flag = 0;
 
 // 参见https://www.eet-china.com/mp/a269236.html “Keil、IAR、CubeIDE中变量不被初始化方法”
 // 下述方法仅限于用Keil+AC6
@@ -254,11 +255,19 @@ static void Jump_To_BOOT(void)
 }
 
 /**
- * @brief Carries out early startup tasks that need to run before any static
- * initializers.
- * This function gets called from the startup assembly code.
+ * @brief Carries out early startup tasks that need to run before the clocks are
+ * reconfigured.
+ * NOTE: unlike upstream (where the startup assembly called it), this is called
+ * from main() right after the C runtime has initialised .data/.bss and before
+ * SystemClock_Config() - keep it there, the reset-cause latch below depends on
+ * running before RCC_DeInit().
  */
 void early_start_checks(void) {
+  /* Latch (and clear) the reset cause here: this runs before SystemClock_Config
+   * calls RCC_DeInit(), and the flags are sticky until they are cleared */
+  watchdog_reset_flag = (RCC_GetFlagStatus(RCC_FLAG_IWDGRSTF) == SET);
+  RCC_ClearResetFlag();
+
   if(_reboot_cookie == 0xDEADFE75) {
       /* The STM DFU bootloader enables internal pull-up resistors on PB10 (AUX_H)
       * and PB11 (AUX_L), thereby causing shoot-through on the brake resistor
@@ -298,22 +307,32 @@ void early_start_checks(void) {
   }
 }
 
-// static void watchdog_init(void){
-// 	/* Independent watchdog, kicked by the commutation interrupt.  If the control
-// 	 * loop ever stops running (wedged SPI, stuck ADC poll, crash), this resets
-// 	 * the chip instead of leaving the PWM frozen with the gate drive enabled.
-// 	 *
-// 	 * Timeout is ~4 s nominal.  It can't be much shorter: saving preferences
-// 	 * erases a 128 KB flash sector, which stalls the whole CPU (including the
-// 	 * kicking interrupt) for up to ~2 s, and the LSI clock feeding the watchdog
-// 	 * is loose (17-47 kHz across parts and temperature). */
-// 	DBGMCU->APB1FZ |= DBGMCU_APB1_FZ_DBG_IWDG_STOP;	// pause the watchdog while halted on a breakpoint
-// 	IWDG->KR = 0x5555;								// enable register access
-// 	IWDG->PR = 0x3;									// prescaler /32: ~1 kHz tick from the ~32 kHz LSI
-// 	IWDG->RLR = 4000;								// ~4 s nominal timeout
-// 	IWDG->KR = 0xAAAA;								// latch the reload value
-// 	IWDG->KR = 0xCCCC;								// start the watchdog.  No way to stop it now
-// }
+static void watchdog_init(void){
+	/* Independent watchdog, kicked by the commutation interrupt.  If the control
+	 * loop ever stops running (wedged SPI, stuck ADC poll, crash), this resets
+	 * the chip instead of leaving the PWM frozen with the gate drive enabled.
+	 *
+	 * Timeout is ~4 s nominal: the ~32 kHz LSI through the /32 prescaler gives a
+	 * 1 kHz tick, and RELV = 4000.  It must not be much shorter - zero_current()
+	 * blocks for ~1.5 s at boot and saving preferences erases a flash page (the
+	 * CPU, including the kicking interrupt, stalls for the whole erase), and the
+	 * LSI is loose (17-47 kHz across parts and temperature). */
+	DBG_ConfigPeriph(DBG_IWDG_STOP, ENABLE);		// pause the watchdog while halted at a breakpoint
+	IWDG_WriteConfig(IWDG_WRITE_ENABLE);			// open PREDIV/RELV for writing
+	IWDG_SetPrescalerDiv(IWDG_PRESCALER_DIV32);		// ~32 kHz LSI / 32 -> 1 kHz tick
+	IWDG_CntReload(4000);							// ~4 s nominal timeout
+	IWDG_ReloadKey();								// latch the reload value
+	IWDG_Enable();									// start it - there is no way to stop it now
+}
+
+uint16_t adc_measurements_[3] = { 0 };
+
+void start_general_purpose_adc() {
+    // VBUS, MOS_TEMP, MOT_TEMP
+    DMA_SetCurrDataCounter(DMA1_CH1, 3);
+    DMA1_CH1->MADDR = (uint32_t)(&adc_measurements_[0]);
+    DMA_EnableChannel(DMA1_CH1, ENABLE);
+}
 
 /* USER CODE END 0 */
 
@@ -353,14 +372,15 @@ int main(void)
   MX_PGA_Init();
   MX_ADC1_Init();
   MX_ADC2_Init();
-  // MX_ADC3_Init();
+  MX_ADC3_Init();
   MX_USB_Init();
   /* USER CODE BEGIN 2 */
 
-  /* Start the watchdog first, so a hang anywhere - including during init -
-   * resets the chip.  The commutation interrupt kicks it once running;
-   * all of init takes well under the ~4 s timeout */
-  // watchdog_init();
+  /* Start the watchdog early, so a hang anywhere - including during the rest of
+   * init - resets the chip.  The commutation interrupt kicks it once running;
+   * the slowest thing before that is zero_current() (~1.5 s), well inside the
+   * ~4 s timeout */
+  watchdog_init();
 
   /* Load settings from flash */
   preference_writer_load(&prefs);
@@ -390,6 +410,7 @@ int main(void)
   if(M_ZERO==-1){M_ZERO = 0;}
   if(isnan(I_BW) || I_BW==-1){I_BW = 1000;}
   if(isnan(I_MAX) || I_MAX ==-1){I_MAX=40;}
+  if(I_MAX > I_MAX_LIMIT){I_MAX = I_MAX_LIMIT;}	// sense chain saturates above this, masking the OC fault (hw_config.h)
   if(isnan(I_FW_MAX) || I_FW_MAX ==-1){I_FW_MAX=0;}
   if((CAN_ID < 0) || (CAN_ID > 127)){CAN_ID = 1;}			// 7-bit node ID - the upper 4 CAN ID bits are the opcode
   if((CAN_MASTER < 0) || (CAN_MASTER > 127)){CAN_MASTER = 0;}
@@ -415,10 +436,9 @@ int main(void)
   if(isnan(THETA_MAX)){THETA_MAX = 0.0f;}
 
   myprintf("\r\nFirmware Version Number: %.2f\r\n", VERSION_NUM);
-  // if(RCC->CSR & RCC_CSR_IWDGRSTF){
-	//   myprintf("!!! Last reset caused by the watchdog - control loop stopped running !!!\r\n");
-  // }
-  // __HAL_RCC_CLEAR_RESET_FLAGS();
+  if(watchdog_reset_flag){
+	  myprintf("!!! Last reset was caused by the watchdog - the control loop had stopped running !!!\r\n");
+  }
 
   /* Controller Setup */
   init_controller_params(&controller);
@@ -442,10 +462,23 @@ int main(void)
   while(ADC_GetFlagStatus(ADC1, ADC_FLAG_RDY) == RESET);
   ADC_CalibrationOperation(ADC1, ADC_CALIBRATION_SINGLE_MODE);
   while (ADC_GetCalibrationStatus(ADC1, ADC_CALIBRATION_SINGLE_MODE));
+  ADC_SetDMATransferMode(ADC1, ADC_MULTI_REG_DMA_EACH_ADC);
   ADC_Enable(ADC2, ENABLE);
   while(ADC_GetFlagStatus(ADC2, ADC_FLAG_RDY) == RESET);
   ADC_CalibrationOperation(ADC2, ADC_CALIBRATION_SINGLE_MODE);
   while (ADC_GetCalibrationStatus(ADC2, ADC_CALIBRATION_SINGLE_MODE));
+  ADC_SetDMATransferMode(ADC2, ADC_MULTI_REG_DMA_EACH_ADC);
+  ADC_Enable(ADC3, ENABLE);
+  while(ADC_GetFlagStatus(ADC3, ADC_FLAG_RDY) == RESET);
+  ADC_CalibrationOperation(ADC3, ADC_CALIBRATION_SINGLE_MODE);
+  while (ADC_GetCalibrationStatus(ADC3, ADC_CALIBRATION_SINGLE_MODE));
+  ADC_SetDMATransferMode(ADC3, ADC_MULTI_REG_DMA_EACH_ADC);
+
+  ADC_ConfigExternalTrigRegularConv(ADC1, ADC_EXT_TRIG_REG_CONV_ATIM1_TRGO);
+  ADC_ConfigExternalTrigRegularConv(ADC2, ADC_EXT_TRIG_REG_CONV_ATIM1_TRGO);
+  ADC_ConfigExternalTrigRegularConv(ADC3, ADC_EXT_TRIG_REG_CONV_ATIM1_TRGO);
+
+  start_general_purpose_adc();
 
   /* Turn on PWM */
   ATIM1->CCDAT1 = ATIM1->AR / 2;
@@ -488,13 +521,18 @@ int main(void)
   // HAL_Delay(1);
   //drv_enable_gd(drv);   */
   controller.gate_drive_enabled = 0;
-  myprintf("ADC A OFFSET: %d     ADC B OFFSET: %d\r\n", controller.adc_a_offset, controller.adc_b_offset);
+  myprintf("ADC OFFSETS: A %d  B %d  C %d    VBUS: %.1f V\r\n", controller.adc_a_offset, controller.adc_b_offset, controller.adc_c_offset, controller.v_bus);
 
-  /* Set Interrupt Priorities */
-  NVIC_SetPriority(PWM_ISR, 1); // commutation > communication
+  /* Set Interrupt Priorities.
+   * NVIC_PriorityGroup_4 = 4 bits of preemption priority, and the lower the
+   * number the higher the priority.  The 40 kHz commutation interrupt must not
+   * be delayed by communications, so it is the highest; USB (which also parses
+   * the CDC stream into the FSM) sits just below it, then CAN, then the serial
+   * console. */
+  NVIC_SetPriority(PWM_ISR, 0);			// commutation - highest
+  NVIC_SetPriority(USB_ISR, 1);			// just below commutation
+  NVIC_SetPriority(USB_WKUP_ISR, 1);
   NVIC_SetPriority(CAN_ISR, 2);
-  NVIC_SetPriority(USB_ISR, 0);
-  NVIC_SetPriority(USB_WKUP_ISR, 0);
   NVIC_SetPriority(USART_ISR, 3);
 
   /* CAN setup */
@@ -527,6 +565,7 @@ int main(void)
 	   * out of the interrupts so it can't stall commutation */
 	  run_fsm_slow(&state);
     /* USER CODE END WHILE */
+		myprintf("ADC OFFSETS: A %d  B %d  C %d    VBUS: %.1f V\r\n", controller.adc_a_offset, controller.adc_b_offset, controller.adc_c_offset, controller.v_bus);
 
     /* USER CODE BEGIN 3 */
   }

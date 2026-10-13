@@ -43,6 +43,13 @@ void limit(float *x, float min, float max){
 
 int float_to_uint(float x, float x_min, float x_max, int bits){
     /// Converts a float to an unsigned int, given range and number of bits ///
+    /* Clamp into range, and reject an empty / inverted / NaN range: a zero span
+     * used to divide by zero and produce a NaN (or a wild integer) that
+     * corrupted the packed reply field.  Out-of-range inputs saturate instead
+     * of wrapping - pack_reply() passes positions that can exceed P_MAX */
+    if(!(x_max > x_min)){return 0;}
+    if(x < x_min){x = x_min;}
+    else if(x > x_max){x = x_max;}
     float span = x_max - x_min;
     float offset = x_min;
     return (int) ((x-offset)*((float)((1<<bits)-1))/span);
