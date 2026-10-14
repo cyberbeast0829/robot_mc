@@ -38,6 +38,7 @@
 #include "hw_config.h"
 #include "user_config.h"
 #include "usb_istr.h"
+#include "timing.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -234,23 +235,36 @@ void ATIM1_UP_IRQHandler(void)
 	//HAL_GPIO_WritePin(LED, GPIO_PIN_SET );	// Useful for timing
   TIM_ClrIntPendingBit(ATIM1, TIM_INT_UPDATE);
 
+	/* Timing instrumentation (see timing.h).  ISR_TIMING_ENABLE = 0 compiles it
+	 * out; the marks have to stay in place so the stages stay in step with the
+	 * ISR_SEG_* indices.  This is also what catches the handler overrunning its
+	 * 25 us slot - period_max is then a multiple of isr_period (6000 cycles) */
+	ISR_TIMING_BEGIN();
+
 	/* Kick the watchdog - if this loop ever stops running, the chip resets */
 	IWDG_ReloadKey();
 
 	/* Sample ADCs */
 	analog_sample(&controller);
+	ISR_TIMING_MARK(ISR_SEG_ADC);
 
 	/* Sample position sensor */
 	ps_sample(&comm_encoder, DT);
+	ISR_TIMING_MARK(ISR_SEG_ENC);
 
 	/* Check for latched faults (overvoltage, overcurrent) */
 	check_faults(&controller);
+	ISR_TIMING_MARK(ISR_SEG_FAULTS);
 
 	/* Run Finite State Machine */
 	run_fsm(&state);
+	ISR_TIMING_MARK(ISR_SEG_FSM);
 
 	/* Check for CAN messages */
 	can_tx_rx();
+	ISR_TIMING_MARK(ISR_SEG_CAN);
+
+	ISR_TIMING_END();
 
 	/* increment loop count */
 	controller.loop_count++;

@@ -12,6 +12,7 @@
 #include "math_ops.h"
 #include "hw_config.h"
 #include "user_config.h"
+#include "timing.h"
 
 extern uint16_t adc_measurements_[3];
 
@@ -58,9 +59,11 @@ void analog_sample (ControllerStruct *controller){
 	 * The conversion finishes within a microsecond of the interrupt starting, so
 	 * just wait for it.  If it never finishes (ADC or trigger misconfiguration),
 	 * the watchdog resets the chip. */
+	ISR_TIMING_SPAN_BEGIN(t_adc_wait);
 	while(ADC_GetFlagStatus(ADC1, ADC_FLAG_JENDC) == RESET){;}
 	while(ADC_GetFlagStatus(ADC2, ADC_FLAG_JENDC) == RESET){;}
 	while(ADC_GetFlagStatus(ADC3, ADC_FLAG_JENDC) == RESET){;}
+	ISR_TIMING_SPAN_END(ISR_EXT_ADC_WAIT, t_adc_wait);
 
 	ADC_ClearFlag(ADC1, ADC_FLAG_JENDC);
 	ADC_ClearFlag(ADC2, ADC_FLAG_JENDC);

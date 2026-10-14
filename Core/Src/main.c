@@ -50,6 +50,7 @@
 #include "foc.h"
 #include "math_ops.h"
 #include "calibration.h"
+#include "timing.h"
 #include "usb.h"
 #include "usb_pwr.h"
 /* USER CODE END Includes */
@@ -334,6 +335,30 @@ void start_general_purpose_adc() {
     DMA_EnableChannel(DMA1_CH1, ENABLE);
 }
 
+/* ISR timing instrumentation (see timing.h).  Kept in RAM only - read it from
+ * the debugger's watch window, there is no printing path for it */
+volatile IsrTiming isr_timing;
+
+void isr_timing_init(void){
+	/* Enable the DWT cycle counter once; it then free-runs for the rest of the
+	 * session.  These are the same three writes the SDK's CPU_DELAY_INTI() macro
+	 * does, but its matching CPU_DELAY_DISABLE() clears TRCENA again (and
+	 * __SYSTEM_DELAY_US() zeroes CYCCNT on the way in), so the counter cannot be
+	 * set up with that macro.  It also has to run after the last
+	 * __SYSTEM_DELAY_US(), i.e. after SetSysClock() has finished. */
+	DEM_CR |= DEM_CR_TRCENA;		// enable the trace / DWT block
+	DWT_CYCCNT = 0;
+	DWT_CR |= DWT_CR_CYCCNTENA;		// start counting core cycles
+
+	/* One PWM update period, from the timer as configured in tim.c: centre
+	 * aligned, AR = 3000, REPCNT = 1 -> one update event every
+	 * AR*(REPCNT+1) = 6000 cycles.  ATIM1 is clocked from SYSCLK and the DWT from
+	 * HCLK, both 240 MHz here, so the two cycle counts compare directly */
+	isr_timing.isr_period = ATIM1->AR*(ATIM1->REPCNT + 1u);
+	isr_timing.period_last = DWT_CYCCNT;
+	isr_timing.reset_req = 1;		// start the statistics on the first cycle
+}
+
 /* USER CODE END 0 */
 
 /**
@@ -419,8 +444,8 @@ int main(void)
   if(isnan(TEMP_MAX) || TEMP_MAX==-1){TEMP_MAX = 125.0f;}
   if(isnan(I_MAX_CONT) || I_MAX_CONT==-1){I_MAX_CONT = 14.0f;}
   if(isnan(I_CAL)||I_CAL==-1){I_CAL = 5.0f;}
-  if(isnan(PPAIRS) || PPAIRS==-1){PPAIRS = 21.0f;}
-  if(isnan(GR) || GR==-1){GR = 1.0f;}
+  if(isnan(PPAIRS) || PPAIRS==-1){PPAIRS = 14.0f;}
+  if(isnan(GR) || GR==-1){GR = 7.75f;}
   if(isnan(KT) || KT==-1){KT = 1.0f;}
   if(isnan(KP_MAX) || KP_MAX==-1){KP_MAX = 500.0f;}
   if(isnan(KD_MAX) || KD_MAX==-1){KD_MAX = 5.0f;}
@@ -550,6 +575,11 @@ int main(void)
 
   /* Turn on interrupts */
   USART_ConfigInt(USART3, USART_INT_RXDNE, ENABLE);
+
+  /* Start the ISR timing instrumentation.  It has to be before the first
+   * commutation interrupt, and after SystemClock_Config()/MX_TIM1_Init() - the
+   * DWT counts HCLK and the PWM period is read from the timer */
+  isr_timing_init();
 
   TIM_ClearFlag(ATIM1, TIM_FLAG_UPDATE);
   TIM_ClrIntPendingBit(ATIM1, TIM_INT_UPDATE);

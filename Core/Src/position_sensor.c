@@ -10,6 +10,7 @@
 #include "math_ops.h"
 #include "hw_config.h"
 #include "user_config.h"
+#include "timing.h"
 
 uint16_t spi_tx_words[2], spi_rx_words[2];
 
@@ -48,8 +49,10 @@ void ps_sample(EncoderStruct * encoder, float dt){
 	GPIO_WriteBits(ENC_CS, Bit_RESET); // CS low
 	SPI_Transmit_DMA((uint8_t *)spi_tx_words, 1);
 	SPI_Receive_DMA((uint8_t *)spi_rx_words, 1);
+	ISR_TIMING_SPAN_BEGIN(t_enc_wait);
 	while (DMA_GetFlagStatus(DMA_FLAG_TC2, DMA2) == RESET);
 	while (DMA_GetFlagStatus(DMA_FLAG_TC1, DMA2) == RESET);
+	ISR_TIMING_SPAN_END(ISR_EXT_ENC_WAIT, t_enc_wait);
 	GPIO_WriteBits(ENC_CS, Bit_SET); // CS high
 	SPI_StopTransmit_DMA();
 	SPI_StopReceive_DMA();
