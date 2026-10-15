@@ -49,7 +49,10 @@
 
 /* Private macro -------------------------------------------------------------*/
 /* Private variables ---------------------------------------------------------*/
-bool packet_sent = false;
+/* Written from this interrupt, polled by myprintf() in the main loop:
+ * it has to be volatile or the poll can be optimized away */
+volatile bool packet_sent = false;
+
 /* Private function prototypes -----------------------------------------------*/
 /* Private functions ---------------------------------------------------------*/
 extern void usb_rx_process_packet(uint16_t bufaddr, uint32_t len, uint8_t endpoint_pair);
@@ -64,10 +67,13 @@ void EP1_IN_Callback (void)
 
 /**
  * @brief  EP1_OUT_Callback
+ *
+ * Not used: in the vendor CDC layout host -> device data arrives on EP3 (see
+ * Virtual_Com_Port_Reset) and EP1 OUT is left disabled, so this never runs.
+ * The entry has to stay because the library's callback table points at it.
  */
 void EP1_OUT_Callback(void)
 {
-    usb_rx_process_packet(ENDP1_RXADDR, USB_GetEpRxCnt(ENDP1), ENDP1);
 }
 
 /**
@@ -80,6 +86,8 @@ void EP3_IN_Callback (void)
 
 /**
  * @brief  EP3_OUT_Callback
+ *
+ * CDC data, host -> device: this is what feeds the FSM with typed characters
  */
 void EP3_OUT_Callback(void)
 {

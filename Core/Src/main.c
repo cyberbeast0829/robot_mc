@@ -99,7 +99,11 @@ static uint8_t watchdog_reset_flag = 0;
 // 参见https://www.eet-china.com/mp/a269236.html “Keil、IAR、CubeIDE中变量不被初始化方法”
 // 下述方法仅限于用Keil+AC6
 uint32_t _reboot_cookie __attribute__ ((section(".bss.NO_INIT")));
-extern bool packet_sent;
+
+/* packet_sent is written from the USB interrupt (EP1_IN_Callback) and polled in
+ * the main loop, so it must be volatile - without it a compiler is free to hoist
+ * the load out of the wait loop and stall myprintf() for its whole timeout */
+extern volatile bool packet_sent;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -595,7 +599,7 @@ int main(void)
 	   * out of the interrupts so it can't stall commutation */
 	  run_fsm_slow(&state);
     /* USER CODE END WHILE */
-		myprintf("ADC OFFSETS: A %d  B %d  C %d    VBUS: %.1f V\r\n", controller.adc_a_offset, controller.adc_b_offset, controller.adc_c_offset, controller.v_bus);
+		// myprintf("ADC OFFSETS: A %d  B %d  C %d    VBUS: %.1f V\r\n", controller.adc_a_offset, controller.adc_b_offset, controller.adc_c_offset, controller.v_bus);
 
     /* USER CODE BEGIN 3 */
   }

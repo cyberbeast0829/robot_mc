@@ -44,14 +44,14 @@ const uint8_t Virtual_Com_Port_DeviceDescriptor[] =
     USB_DEVICE_DESCRIPTOR_TYPE,     /* bDescriptorType */
     0x00,
     0x02,   /* bcdUSB = 2.00 */
-    0xEF,   /* bDeviceClass: CDC */
-    0x02,   /* bDeviceSubClass */
-    0x01,   /* bDeviceProtocol */
+    0x02,   /* bDeviceClass: CDC */
+    0x00,   /* bDeviceSubClass */
+    0x00,   /* bDeviceProtocol */
     0x40,   /* bMaxPacketSize0 */
-    0x09,   /*idVendor (0x19F5)*/
+    0x09,   /* idVendor (0x1209) */
     0x12,
-    0x32,
-    0x0D,   /* idProduct = 0x5740 */
+    0x32,   /* idProduct = 0x0D32 */
+    0x0D,
     0x00,
     0x03,   /* bcdDevice = 2.00 */
     1,              /* Index of string descriptor describing manufacturer */
@@ -60,6 +60,19 @@ const uint8_t Virtual_Com_Port_DeviceDescriptor[] =
     0x01    /* bNumConfigurations */
 };
 
+/* Configuration descriptor.
+ *
+ * This is the Nations N32H47x VCP example layout (usbfsd_desc.c), which is the
+ * only shape verified with this USB library: a plain single-function CDC device -
+ * bDeviceClass = 0x02 at the device level, NO Interface Association Descriptor,
+ * 2 interfaces, and the data OUT endpoint on EP3 while the data IN endpoint is
+ * EP1 (EP1 OUT is not used at all, see Virtual_Com_Port_Reset()).
+ *
+ * It replaces the descriptor inherited from the STM32/ODrive code, which declared
+ * bDeviceClass = 0xEF with two IADs plus a third (vendor specific) interface with
+ * its own EP3 IN/OUT pair, and used EP1 for both data directions.  Windows gave
+ * that device a COM port and answered the control requests, but never started the
+ * data pipes - the failure this vendor layout avoids. */
 const uint8_t Virtual_Com_Port_ConfigDescriptor[] =
 {
     /*Configuration Descriptor*/
@@ -67,33 +80,22 @@ const uint8_t Virtual_Com_Port_ConfigDescriptor[] =
     USB_CONFIGURATION_DESCRIPTOR_TYPE,      /* bDescriptorType: Configuration */
     VIRTUAL_COM_PORT_SIZ_CONFIG_DESC,       /* wTotalLength:no of returned bytes */
     0x00,
-    0x03,   /* bNumInterfaces: 3 interface */
+    0x02,   /* bNumInterfaces: 2 interface */
     0x01,   /* bConfigurationValue: Configuration value */
     0x00,   /* iConfiguration: Index of string descriptor describing the configuration */
     0xC0,   /* bmAttributes: self powered */
-    0x32,   /* MaxPower 0 mA */
+    0x32,   /* MaxPower 100 mA */
 
-    /* Interface Association Descriptor: CDC device (virtual com port) */
-    0x08,   /* bLength: IAD size */
-    0x0B,   /* bDescriptorType: Interface Association Descriptor */
-    0x00,   /* bFirstInterface */
-    0x02,   /* bInterfaceCount */
-    0x02,   /* bFunctionClass: Communication Interface Class */
-    0x02,   /* bFunctionSubClass: Abstract Control Model */
-    0x01,   /* bFunctionProtocol: Common AT commands */
-    0x04,   /* iFunction */
-
-    /*Interface Descriptor*/
+    /*Interface Descriptor (CDC communication class interface = interface 0)*/
     0x09,   /* bLength: Interface Descriptor size */
     USB_INTERFACE_DESCRIPTOR_TYPE,  /* bDescriptorType: Interface */
-    /* Interface descriptor type */
     0x00,   /* bInterfaceNumber: Number of Interface */
     0x00,   /* bAlternateSetting: Alternate setting */
     0x01,   /* bNumEndpoints: One endpoints used */
     0x02,   /* bInterfaceClass: Communication Interface Class */
     0x02,   /* bInterfaceSubClass: Abstract Control Model */
     0x01,   /* bInterfaceProtocol: Common AT commands */
-    0x06,   /* iInterface: */
+    0x00,   /* iInterface: */
     /*Header Functional Descriptor*/
     0x05,   /* bLength: Endpoint Descriptor size */
     0x24,   /* bDescriptorType: CS_INTERFACE */
@@ -117,7 +119,7 @@ const uint8_t Virtual_Com_Port_ConfigDescriptor[] =
     0x06,   /* bDescriptorSubtype: Union func desc */
     0x00,   /* bMasterInterface: Communication class interface */
     0x01,   /* bSlaveInterface0: Data Class Interface */
-    /*Endpoint 2 Descriptor*/
+    /*Endpoint 2 Descriptor (notification, IN)*/
     0x07,   /* bLength: Endpoint Descriptor size */
     USB_ENDPOINT_DESCRIPTOR_TYPE,   /* bDescriptorType: Endpoint */
     0x82,   /* bEndpointAddress: (IN2) */
@@ -125,72 +127,33 @@ const uint8_t Virtual_Com_Port_ConfigDescriptor[] =
     VIRTUAL_COM_PORT_INT_SIZE,      /* wMaxPacketSize: */
     0x00,
     0x10,   /* bInterval: */
-    /*Data class interface descriptor*/
+
+    /*Data class interface descriptor (interface 1)*/
     0x09,   /* bLength: Endpoint Descriptor size */
     USB_INTERFACE_DESCRIPTOR_TYPE,  /* bDescriptorType: */
     0x01,   /* bInterfaceNumber: Number of Interface */
     0x00,   /* bAlternateSetting: Alternate setting */
     0x02,   /* bNumEndpoints: Two endpoints used */
-    0x0A,   /* bInterfaceClass: CDC */
+    0x0A,   /* bInterfaceClass: CDC Data */
     0x00,   /* bInterfaceSubClass: */
     0x00,   /* bInterfaceProtocol: */
     0x00,   /* iInterface: */
-    /*Endpoint 1 OUT Descriptor*/
+    /*Endpoint 3 Descriptor (data OUT: host -> device)*/
     0x07,   /* bLength: Endpoint Descriptor size */
     USB_ENDPOINT_DESCRIPTOR_TYPE,   /* bDescriptorType: Endpoint */
-    0x01,   /* bEndpointAddress: (OUT1) */
+    0x03,   /* bEndpointAddress: (OUT3) */
     0x02,   /* bmAttributes: Bulk */
     VIRTUAL_COM_PORT_DATA_SIZE,             /* wMaxPacketSize: */
     0x00,
     0x00,   /* bInterval: ignore for Bulk transfer */
-    /*Endpoint 1 IN Descriptor*/
+    /*Endpoint 1 Descriptor (data IN: device -> host)*/
     0x07,   /* bLength: Endpoint Descriptor size */
     USB_ENDPOINT_DESCRIPTOR_TYPE,   /* bDescriptorType: Endpoint */
     0x81,   /* bEndpointAddress: (IN1) */
     0x02,   /* bmAttributes: Bulk */
     VIRTUAL_COM_PORT_DATA_SIZE,             /* wMaxPacketSize: */
     0x00,
-    0x00,    /* bInterval */
-
-    ///////////////////////////////////////////////////////////////////////////////
-  
-    /* Interface Association Descriptor: custom device */
-    0x08,   /* bLength: IAD size */
-    0x0B,   /* bDescriptorType: Interface Association Descriptor */
-    0x02,   /* bFirstInterface */
-    0x01,   /* bInterfaceCount */
-    0xFF,   /* bFunctionClass: */
-    0xFF,   /* bFunctionSubClass: */
-    0xFF,   /* bFunctionProtocol: */
-    0x05,   /* iFunction */
-
-    /*Data class interface descriptor*/
-    0x09,   /* bLength: Endpoint Descriptor size */
-    USB_INTERFACE_DESCRIPTOR_TYPE,  /* bDescriptorType: */
-    0x02,   /* bInterfaceNumber: Number of Interface */
-    0x00,   /* bAlternateSetting: Alternate setting */
-    0x02,   /* bNumEndpoints: Two endpoints used */
-    0x00,   /* bInterfaceClass: vendor specific */
-    0x01,   /* bInterfaceSubClass: */
-    0x00,   /* bInterfaceProtocol: */ 
-    0x07,   /* iInterface: */
-
-    /*Endpoint 3 OUT Descriptor*/
-    0x07,   /* bLength: Endpoint Descriptor size */
-    USB_ENDPOINT_DESCRIPTOR_TYPE,   /* bDescriptorType: Endpoint */
-    0x03,   /* bEndpointAddress: (OUT1) */
-    0x02,   /* bmAttributes: Bulk */
-    VIRTUAL_COM_PORT_DATA_SIZE,             /* wMaxPacketSize: */
-    0x00,
-    0x00,   /* bInterval: ignore for Bulk transfer */
-    /*Endpoint 3 IN Descriptor*/
-    0x07,   /* bLength: Endpoint Descriptor size */
-    USB_ENDPOINT_DESCRIPTOR_TYPE,   /* bDescriptorType: Endpoint */
-    0x83,   /* bEndpointAddress: (IN1) */
-    0x02,   /* bmAttributes: Bulk */
-    VIRTUAL_COM_PORT_DATA_SIZE,             /* wMaxPacketSize: */
-    0x00,
-    0x00,    /* bInterval */
+    0x00    /* bInterval */
 };
 
 /* USB String Descriptors */

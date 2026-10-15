@@ -169,31 +169,27 @@ void Virtual_Com_Port_Reset(void)
     USB_SetEpRxValid(ENDP0);
 
 
-    /* Initialize Endpoint 1 IN */
+    /* Initialize Endpoint 1 IN - CDC data, device -> host.  Kept NAKed here:
+     * myprintf()/USB_Send_DATA() arm it when there is something to send, so the
+     * host can never be handed a stale buffer on the first IN token */
     USB_SetEpType(ENDP1, EP_BULK);
     USB_SetEpTxAddr(ENDP1, ENDP1_TXADDR);
     USB_SetEpTxCnt(ENDP1, Device_Property.MaxPacketSize);
-    SetEPTxStatus(ENDP1, EP_TX_VALID);
+    SetEPTxStatus(ENDP1, EP_TX_NAK);
+    SetEPRxStatus(ENDP1, EP_RX_DIS);		// host -> device data uses EP3 in this layout
 
-    /* Initialize Endpoint 1 OUT */
-    USB_SetEpType(ENDP1, EP_BULK);
-    USB_SetEpRxAddr(ENDP1, ENDP1_RXADDR);
-    USB_SetEpRxCnt(ENDP1, Device_Property.MaxPacketSize);
-    SetEPRxStatus(ENDP1, EP_RX_VALID);
-
-    /* Initialize Endpoint 2 */
+    /* Initialize Endpoint 2 - CDC notification, never used (stays NAKed) */
     USB_SetEpType(ENDP2, EP_INTERRUPT);
     USB_SetEpTxAddr(ENDP2, ENDP2_TXADDR);
     SetEPRxStatus(ENDP2, EP_RX_DIS);
     SetEPTxStatus(ENDP2, EP_TX_NAK);
 
-    /* Initialize Endpoint 3 */
+    /* Initialize Endpoint 3 - CDC data, host -> device */
     USB_SetEpType(ENDP3, EP_BULK);
     USB_SetEpRxAddr(ENDP3, ENDP3_RXADDR);
-    USB_SetEpTxAddr(ENDP3, ENDP3_TXADDR);
-    SetEPTxStatus(ENDP3, EP_TX_VALID);
     USB_SetEpRxCnt(ENDP3, Device_Property.MaxPacketSize);
     SetEPRxStatus(ENDP3, EP_RX_VALID);
+    SetEPTxStatus(ENDP3, EP_TX_DIS);
 
     /* Set this device to response on default address */
     USB_SetDeviceAddress(0);
@@ -218,8 +214,6 @@ void Virtual_Com_Port_SetConfiguration(void)
     {
         /* Device configured */
         bDeviceState = CONFIGURED;
-        USB_ClrDattogTx(ENDP1);
-        USB_ClrDattogRx(ENDP1);
     }
 }
 
@@ -331,7 +325,7 @@ uint8_t *Virtual_Com_Port_GetConfigDescriptor(uint16_t Length)
 uint8_t *Virtual_Com_Port_GetStringDescriptor(uint16_t Length)
 {
     uint8_t wValue0 = pInformation->USBwValue0;
-    if (wValue0 > 8)
+    if (wValue0 >= 8)
     {
         return NULL;
     }

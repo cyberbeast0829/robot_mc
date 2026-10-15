@@ -57,13 +57,17 @@
 #define ENDP0_RXADDR        (0x40)
 #define ENDP0_TXADDR        (0x80)
 
-/* EP1  */
-/* tx buffer base address */
-#define ENDP1_RXADDR        (0xC0)
-#define ENDP1_TXADDR        (0x110)
-#define ENDP2_TXADDR        (0x150)
-#define ENDP3_RXADDR        (0x160)
-#define ENDP3_TXADDR        (0x1A0)
+/* EP1/EP2/EP3 buffer addresses.
+ *
+ * NOTE: these are the Nations VCP example's addresses (usbfsd_conf.h), not the
+ * ODrive/STM32 ones this port started from.  In this layout EP1 is the CDC data
+ * IN endpoint (device -> host), EP2 the notification endpoint and EP3 the CDC
+ * data OUT endpoint (host -> device) - there is deliberately no EP1 RX and no
+ * EP3 TX buffer, see Virtual_Com_Port_Reset().  Keeping the addresses identical
+ * to the example also keeps the whole table inside the packet memory */
+#define ENDP1_TXADDR        (0xC0)
+#define ENDP2_TXADDR        (0x100)
+#define ENDP3_RXADDR        (0x110)
 
 
 /*-------------------------------------------------------------*/
@@ -72,7 +76,12 @@
 /* IMR_MSK */
 /* mask defining which events has to be handled */
 /* by the device application software */
-#define IMR_MSK (CTRL_CTRSM  | CTRL_WKUPM | CTRL_RSTM )
+#define IMR_MSK (CTRL_CTRSM  | CTRL_WKUPM | CTRL_ERRORM | CTRL_RSTM )
+/* NOTE: CTRL_ERRORM is in the mask so that the ERR flag gets cleared by
+ * USB_Istr() (the branch is compiled out without it) - a sticky error flag that
+ * nobody clears is the one thing the vendor's mask handles and this one did not.
+ * CTRL_SUSPDM/CTRL_SOFM/CTRL_ESOFM are deliberately left out: suspend handling
+ * would set bDeviceState = SUSPENDED and make myprintf() fall back to USART3 */
 //#define IMR_MSK    ( CTRL_CTRSM | CTRL_WKUPM | CTRL_SUSPDM | CTRL_ERRORM  | CTRL_SOFM \
                    | CTRL_ESOFM | CTRL_RSTM )
 
