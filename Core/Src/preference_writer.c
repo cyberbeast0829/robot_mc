@@ -9,6 +9,7 @@
 #include "preference_writer.h"
 #include "user_config.h"
 #include "n32h47x_48x_flash.h"
+#include "n32h47x_48x_iwdg.h"	// the save kicks the watchdog itself, the ISR is masked
 
 /* The two 8 KB flash pages at the top of the N32H473CE's 512 KB flash (same page
  * layout as flash_writer.h).  The stored block is ~1.3 KB, so one page each is
@@ -120,32 +121,83 @@ void preference_writer_load(PreferenceWriter *pr){
 	pr->sequence = 0;
 }
 
+/* Wait until the flash controller reports that no operation is in progress.
+ * The UM requires this before writing any FLASH register: both
+ * FLASH_EraseOnePage() and FLASH_ProgramdoubleWord() start with
+ * FLASH_ClearFlag(), i.e. a write to FLASH->STS, and writing any Flash register
+ * while FLASH_STS.BUSY is set is not allowed ("当 FLASH_STS.BUSY 为'1'时，不能对
+ * 任何 Flash 寄存器执行写操作").  Such a write can leave the controller wedged,
+ * and from then on every flash access - including every instruction fetch -
+ * suspends the CPU, which is the hang seen on the bench.  Reading FLASH->STS
+ * while BUSY is safe: that read is itself the access which gets stalled until
+ * the operation finishes. */
+static int flash_wait_idle(void){
+	uint32_t timeout = EraseTimeout;
+	while(timeout-- != 0){
+		if(FLASH_GetSTS() != FLASH_BUSY){return 1;}
+	}
+	return 0;
+}
+
+/* One 64-bit program, with the idle check the SDK omits at entry */
+static int flash_program64(uint32_t address, uint32_t data0, uint32_t data1){
+	return flash_wait_idle() && (FLASH_ProgramdoubleWord(address, data0, data1) == FLASH_EOP);
+}
+
 int preference_writer_save(PreferenceWriter *pr){
 	/* Write the RAM config to the page NOT holding the newest valid block.
-	 * Erasing the page stalls the CPU (the caller - save_preferences in fsm.c -
-	 * kicks the watchdog first and only runs from the main loop, with the gate
-	 * drive off).  The N32 flash programs in 64-bit double-words. */
+	 *
+	 * The erase + program sequence has to be atomic with respect to every other
+	 * flash access, so interrupts are masked for all of it:
+	 *  - one 64-bit program means "write two words to one flash address" (UM) -
+	 *    the two stores must be issued back to back with nothing in between;
+	 *  - while BUSY is set, any flash access (an instruction fetch, or an
+	 *    exception's vector fetch) suspends the CPU until the operation ends.
+	 * An interrupt taken between those two stores therefore stalls the CPU inside
+	 * the vector fetch while the controller waits for a second word that can never
+	 * be written - a permanent deadlock.  The watchdog cannot break it either: it
+	 * is kicked from the control ISR, which can no longer run, so the chip is
+	 * reset a few seconds later and the save silently never lands.  The UM states
+	 * the same rule for the debugger: "调试模式下，Row/双字编程过程中不要打断点，
+	 * 否则会导致编程错误".
+	 *
+	 * The whole save is a few hundred milliseconds (the controller suspends the
+	 * CPU for ~2.6 ms per operation - measured by stepping it with a debugger),
+	 * inside the ~4 s watchdog window even with the LSI at the fast end of its
+	 * tolerance, and the caller (save_preferences in fsm.c) only runs this from
+	 * the main loop, with the gate drive off, in SETUP/MENU.  The watchdog is
+	 * kicked from here because the masked ISR cannot do it. */
 	int target = !pr->active_sector;
 	uint32_t base = sector_addr[target];
 	uint32_t sequence = pr->sequence + 1;
+	int ok = 0;
 
-	FLASH_Unlock();
-	FLASH_ClearFlag(FLASH_STS_CLRFLAG);
-	if(FLASH_EraseOnePage(base) != FLASH_EOP){
+	IWDG_ReloadKey();
+	__disable_irq();
+
+	if(flash_wait_idle()){
+		FLASH_Unlock();
+		ok = (FLASH_EraseOnePage(base) == FLASH_EOP);
+		/* Header: magic, version, sequence, CRC - two 64-bit programs */
+		ok = ok && flash_program64(base + 4*OFFS_MAGIC, CONFIG_MAGIC, CONFIG_VERSION);
+		ok = ok && flash_program64(base + 4*OFFS_SEQUENCE, sequence, crc_of_ram_config(sequence));
+		/* Payload: 256 ints then 64 floats, two 32-bit words per program */
+		for(int i = 0; ok && (i < N_INT_REG); i += 2){
+			ok = flash_program64(base + 4*OFFS_PAYLOAD + 4*i, (uint32_t)__int_reg[i], (uint32_t)__int_reg[i+1]);
+			IWDG_ReloadKey();	// the control ISR is masked and cannot kick it
+		}
+		for(int i = 0; ok && (i < N_FLOAT_REG); i += 2){
+			ok = flash_program64(base + 4*(OFFS_PAYLOAD + N_INT_REG) + 4*i, float_bits(__float_reg[i]), float_bits(__float_reg[i+1]));
+			IWDG_ReloadKey();
+		}
+		flash_wait_idle();	// let the last program finish before touching CTRL again
 		FLASH_Lock();
-		return 0;
 	}
-	/* Header: magic, version, sequence, CRC - two 64-bit programs */
-	FLASH_ProgramdoubleWord(base + 4*OFFS_MAGIC,    CONFIG_MAGIC, CONFIG_VERSION);
-	FLASH_ProgramdoubleWord(base + 4*OFFS_SEQUENCE, sequence, crc_of_ram_config(sequence));
-	/* Payload: 256 ints then 64 floats, two 32-bit words per program */
-	for(int i = 0; i < N_INT_REG; i += 2){
-		FLASH_ProgramdoubleWord(base + 4*OFFS_PAYLOAD + 4*i, (uint32_t)__int_reg[i], (uint32_t)__int_reg[i+1]);
-	}
-	for(int i = 0; i < N_FLOAT_REG; i += 2){
-		FLASH_ProgramdoubleWord(base + 4*(OFFS_PAYLOAD + N_INT_REG) + 4*i, float_bits(__float_reg[i]), float_bits(__float_reg[i+1]));
-	}
-	FLASH_Lock();
+
+	__enable_irq();
+	IWDG_ReloadKey();
+
+	if(!ok){return 0;}		// caller keeps the previous block as the active one
 
 	/* Verify what actually landed in flash before pointing at it */
 	uint32_t check_seq;

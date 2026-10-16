@@ -426,10 +426,11 @@ extern uint32_t _reboot_cookie;
  }
 
  static void save_preferences(void){
-	 /* Write settings to flash.  Erasing a config sector stalls the whole
-	  * CPU (including the commutation interrupt) for up to ~2 seconds, so this
-	  * must only be called from the main loop, in states where the gate drive
-	  * is off.  Kick the watchdog first so the stall can't trip it. */
+	 /* Write settings to flash.  preference_writer_save() masks interrupts for
+	  * the whole erase + program sequence (the N32 flash dead-locks the CPU if an
+	  * interrupt lands between the two stores of a 64-bit program) and kicks the
+	  * watchdog itself while that lasts, so nothing here may print or block.  Only
+	  * call this from the main loop, in states where the gate drive is off. */
 	 IWDG_ReloadKey();
 	 if(!preference_writer_save(&prefs)){
 		 myprintf("\n\r!!! Preference save failed - config unchanged in flash !!!\r\n");
