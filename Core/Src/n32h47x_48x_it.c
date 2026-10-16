@@ -241,6 +241,13 @@ void ATIM1_UP_IRQHandler(void)
 	 * 25 us slot - period_max is then a multiple of isr_period (6000 cycles) */
 	ISR_TIMING_BEGIN();
 
+	/* Start the encoder frame before anything else.  It needs 16 bits at 7.5 MHz
+	 * = 2.13 us (521 cycles) on the wire and nothing below needs the result, so
+	 * the transfer runs while the ADCs are read and the faults are checked
+	 * instead of the CPU sitting out the wait.  ps_finish_sample() collects it
+	 * below - see the note in position_sensor.c */
+	ps_start_read();
+
 	/* Kick the watchdog - if this loop ever stops running, the chip resets */
 	IWDG_ReloadKey();
 
@@ -248,13 +255,15 @@ void ATIM1_UP_IRQHandler(void)
 	analog_sample(&controller);
 	ISR_TIMING_MARK(ISR_SEG_ADC);
 
-	/* Sample position sensor */
-	ps_sample(&comm_encoder, DT);
-	ISR_TIMING_MARK(ISR_SEG_ENC);
-
-	/* Check for latched faults (overvoltage, overcurrent) */
+	/* Check for latched faults (overvoltage, overcurrent).  Position independent,
+	 * so it belongs inside the encoder frame rather than after it */
 	check_faults(&controller);
 	ISR_TIMING_MARK(ISR_SEG_FAULTS);
+
+	/* Collect the encoder frame started above (the marks are in execution order,
+	 * so FAULTS now precedes ENC - read the segments by name) */
+	ps_finish_sample(&comm_encoder, DT);
+	ISR_TIMING_MARK(ISR_SEG_ENC);
 
 	/* Run Finite State Machine */
 	run_fsm(&state);

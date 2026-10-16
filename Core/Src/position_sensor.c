@@ -32,31 +32,72 @@ void ps_warmup(EncoderStruct * encoder, int n){
 	}
 }
 
-void ps_sample(EncoderStruct * encoder, float dt){
+/* The encoder read is split in two so that the SPI transfer is not dead time.
+ * A frame is a fixed 16 bits at 7.5 MHz - 2.13 us, 521 cycles measured on the
+ * wire - and no CPU-side trick makes it shorter (10 MHz is the encoder's limit
+ * and this SPI can only divide its 120 MHz APB2 clock by powers of two, so
+ * 7.5 MHz is as fast as it goes).  What can be changed is whether the CPU waits
+ * for it: the commutation interrupt starts the frame on entry, does the work
+ * that does not need it (the ADC read and the fault check), and only then
+ * collects the result.  The two halves are ~500 cycles apart in the ISR, and
+ * the frame needs 521, so the wait is normally already over.
+ *
+ * ps_sample() is the two halves back to back, for a caller that wants the value
+ * in the same breath. */
+
+/* Poll iterations ps_finish_sample() waits before calling the frame lost.  An
+ * iteration costs about 20 cycles (the flag read is a function call), so this is
+ * ~2000 cycles: about 4x the 521-cycle frame, so it cannot fire on a healthy
+ * encoder that happens to be harvested a little early, yet far below the
+ * 6000-cycle (25 us) slot, so a dead encoder cannot stall the interrupt - which
+ * is what it used to do (infinite spin -> watchdog reset loop) */
+#define PS_WAIT_ITERS 100
+
+void ps_start_read(void){
+	/* The transfer-complete flags have to be cleared before the channels are
+	 * enabled, or the previous frame's flag would read as this one completing */
+	DMA_ClearFlag(DMA_FLAG_TC1, DMA2);
+	DMA_ClearFlag(DMA_FLAG_TC2, DMA2);
+	GPIO_WriteBits(ENC_CS, Bit_RESET); // CS low
+	SPI_Transmit_DMA((uint8_t *)spi_tx_words, 1);
+	SPI_Receive_DMA((uint8_t *)spi_rx_words, 1);
+}
+
+int ps_finish_sample(EncoderStruct * encoder, float dt){
 	/* updates EncoderStruct encoder with the latest sample
-	 * after elapsed time dt */
+	 * after elapsed time dt.  Returns 0 if the frame never arrived, in which
+	 * case nothing is updated and the previous sample is held */
+
+	/* Only the RX flag is waited on: its DMA request comes from the last received
+	 * bit, which cannot happen before the TX half has gone out */
+	ISR_TIMING_SPAN_BEGIN(t_enc_wait);
+	uint32_t wait = PS_WAIT_ITERS;
+	while((DMA_GetFlagStatus(DMA_FLAG_TC1, DMA2) == RESET) && (--wait != 0)){;}
+	ISR_TIMING_SPAN_END(ISR_EXT_ENC_WAIT, t_enc_wait);
+
+	GPIO_WriteBits(ENC_CS, Bit_SET); // CS high
+	SPI_StopTransmit_DMA();
+	SPI_StopReceive_DMA();
+
+	if(wait == 0){
+		/* No frame came back.  Hold the last good sample (raw/count/angle/
+		 * velocity are all left alone) instead of feeding the control loop a stale
+		 * register read, and count it so a broken encoder shows up instead of
+		 * silently freezing the position.  Reading the status then the data
+		 * register clears RXNE/overrun, so a late frame cannot also swallow the
+		 * next one */
+		encoder->lost_frames++;
+		(void)SPI1->STS;
+		(void)SPI1->DAT;
+		return 0;
+	}
+	encoder->raw = spi_rx_words[0];
 
 	/* Shift around previous samples.  The buffer holds multi-turn positions in
 	 * integer counts, so velocity resolution doesn't degrade as the float
 	 * multi-turn angle gets large */
 	encoder->old_angle = encoder->angle_singleturn;
 	for(int i = N_POS_SAMPLES-1; i>0; i--){encoder->count_buff[i] = encoder->count_buff[i-1];}
-
-	/* SPI read/write */
-	// encoder->spi_tx_word = ENC_READ_WORD;
-	DMA_ClearFlag(DMA_FLAG_TC1, DMA2);
-	DMA_ClearFlag(DMA_FLAG_TC2, DMA2);
-	GPIO_WriteBits(ENC_CS, Bit_RESET); // CS low
-	SPI_Transmit_DMA((uint8_t *)spi_tx_words, 1);
-	SPI_Receive_DMA((uint8_t *)spi_rx_words, 1);
-	ISR_TIMING_SPAN_BEGIN(t_enc_wait);
-	while (DMA_GetFlagStatus(DMA_FLAG_TC2, DMA2) == RESET);
-	while (DMA_GetFlagStatus(DMA_FLAG_TC1, DMA2) == RESET);
-	ISR_TIMING_SPAN_END(ISR_EXT_ENC_WAIT, t_enc_wait);
-	GPIO_WriteBits(ENC_CS, Bit_SET); // CS high
-	SPI_StopTransmit_DMA();
-	SPI_StopReceive_DMA();
-	encoder->raw = spi_rx_words[0];
 
 	/* Linearization */
 	int off_1 = encoder->offset_lut[(encoder->raw)>>9];				// lookup table lower entry
@@ -107,6 +148,15 @@ void ps_sample(EncoderStruct * encoder, float dt){
 			/((float)ENC_CPR*dt*(float)(N_POS_SAMPLES-1));
 	encoder->elec_velocity = encoder->ppairs*encoder->velocity;
 
+	return 1;
+}
+
+void ps_sample(EncoderStruct * encoder, float dt){
+	/* Both halves back to back, for a caller that wants the value in the same
+	 * breath.  The commutation interrupt calls them apart, so the transfer runs
+	 * while the ADC is read and the faults are checked - see the note above */
+	ps_start_read();
+	ps_finish_sample(encoder, dt);
 }
 
 void ps_print(EncoderStruct * encoder, int dt_ms){

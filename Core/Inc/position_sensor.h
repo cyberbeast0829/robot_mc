@@ -31,10 +31,13 @@ typedef struct{
 	int m_zero, e_zero;
 	int offset_lut[N_LUT];
 	uint8_t first_sample;
+	int lost_frames;		// frames that never came back (encoder unplugged/dead) - see ps_finish_sample()
 } EncoderStruct;
 
 
 void ps_warmup(EncoderStruct * encoder, int n);
+void ps_start_read(void);
+int ps_finish_sample(EncoderStruct * encoder, float dt);
 void ps_sample(EncoderStruct * encoder, float dt);
 void ps_print(EncoderStruct * encoder, int dt_ms);
 
