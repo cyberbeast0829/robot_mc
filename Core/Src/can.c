@@ -41,6 +41,14 @@ FDCAN_InitType hcan1 = {
   .MsgRamStrAddr = (uint32_t)FDCAN_ram,
   .MsgRamOffset = 0,
   .pMsgInfo = &Node_msg,
+  /* 标准滤波器元素个数。必须是 1（或更多）：FDCAN_InitMsgRam() 会把它写进
+   * SIDFC.LSS，LSS = 0 表示“标准滤波器列表里一个元素都没有”，于是
+   * can_rx_init() 写进去的 ID 掩码元素根本不被硬件使用；再叠加下面的
+   * FDCAN_REJECT_STD 全局滤波，所有标准帧都会被拒收（表现为完全收不到）。
+   * 同时它也是消息 RAM 的布局依据：为 0 时 StdFilterStrAddr 与 RxFIFO0
+   * 起始地址重合，过滤器元素会被写进 Rx FIFO 0 的第一个元素里。 */
+  .StdFilterSize = 1,
+  .ExtFilterSize = 0,
   .RxFifo0Size = 8,
   .RxFifo0DataSize = FDCAN_DATA_BYTES_8,
   .RxFifo1Size = 0,
@@ -52,9 +60,11 @@ FDCAN_InitType hcan1 = {
   .TxFifoQueueSize = 8,
   .TxFifoQueueMode = FDCAN_TX_FIFO_MODE,
   .TxEventSize = 0,
-  .AutoRetransmission = DISABLE,
+  /* 自动重发必须打开（CCCR.DAR = 0）：DAR = 1 时一帧只要没被应答就不会重发，
+   * 上位机侧速率不匹配/暂时没上线时，TEC 很快涨到 255 → bus-off，之后连收都不收。 */
+  .AutoRetransmission = ENABLE,
   .TransmitPause = DISABLE,
-  .ProtocolException = DISABLE,
+  .ProtocolException = ENABLE,
 };
 
 /* CAN1 init function */
