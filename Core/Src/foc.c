@@ -49,16 +49,11 @@ void set_dtc(ControllerStruct *controller){
 }
 
 void analog_sample (ControllerStruct *controller){
-	/* Phase current conversions are hardware-triggered by the PWM timer update
-	 * event - ADC1 and ADC2 each run an injected channel off ATIM1_TRGO - so they
-	 * are sampled at the same point in the PWM cycle every loop, in the middle of
-	 * the low-side conduction window, the same event that runs this interrupt.
-	 * ADC1 converts phase A, ADC2 phase B (VBUS is on ADC2's regular channel).
-	 * Wait for BOTH injected sequence-complete flags: they are separate
-	 * converters, so their completion is not guaranteed to be simultaneous.
-	 * The conversion finishes within a microsecond of the interrupt starting, so
-	 * just wait for it.  If it never finishes (ADC or trigger misconfiguration),
-	 * the watchdog resets the chip. */
+	/* The PWM peak update triggers all three injected ADCs and this ISR
+	 * once per 40 kHz cycle, in the low-side conduction window.  ADC2 also
+	 * runs the regular VBUS sequence, so wait for each independent injected
+	 * sequence to finish.  If a trigger or converter fails, the watchdog
+	 * resets the chip. */
 	ISR_TIMING_SPAN_BEGIN(t_adc_wait);
 	while(ADC_GetFlagStatus(ADC1, ADC_FLAG_JENDC) == RESET){;}
 	while(ADC_GetFlagStatus(ADC2, ADC_FLAG_JENDC) == RESET){;}
@@ -69,17 +64,11 @@ void analog_sample (ControllerStruct *controller){
 	ADC_ClearFlag(ADC2, ADC_FLAG_JENDC);
 	ADC_ClearFlag(ADC3, ADC_FLAG_JENDC);
 
-	/* Handle phase order swapping so that voltage/current/torque match encoder direction */
-	if(!PHASE_ORDER){
-		controller->adc_a_raw = ADC1->JDAT1;
-		controller->adc_b_raw = ADC2->JDAT1;
-		controller->adc_c_raw = ADC3->JDAT1;
-	}
-	else{
-		controller->adc_a_raw = ADC2->JDAT1;
-		controller->adc_b_raw = ADC1->JDAT1;
-		controller->adc_c_raw = ADC3->JDAT1;
-	}
+	/* Raw samples and zero offsets stay bound to physical ADC1/2/3, even
+	 * when calibration changes PHASE_ORDER.  Swap only corrected currents. */
+	controller->adc_a_raw = ADC1->JDAT1;
+	controller->adc_b_raw = ADC2->JDAT1;
+	controller->adc_c_raw = ADC3->JDAT1;
 
 	controller->adc_vbus_raw = adc_measurements_[0];	// ADC2 regular channel 12 is VBUS
 	controller->v_bus = (float)controller->adc_vbus_raw*V_SCALE;
@@ -92,9 +81,14 @@ void analog_sample (ControllerStruct *controller){
 	 * control behaviour, but the value is now always valid */
 	controller->v_bus_filt = (1.0f-VBUS_FILT_ALPHA)*controller->v_bus_filt + VBUS_FILT_ALPHA*controller->v_bus;
 
-    controller->i_a = controller->i_scale*(float)(controller->adc_a_raw - controller->adc_a_offset);    // Calculate phase currents from ADC readings
-    controller->i_b = controller->i_scale*(float)(controller->adc_b_raw - controller->adc_b_offset);
-    controller->i_c = controller->i_scale*(float)(controller->adc_c_raw - controller->adc_c_offset);
+	controller->i_a = controller->i_scale*(float)(controller->adc_a_raw - controller->adc_a_offset);
+	controller->i_b = controller->i_scale*(float)(controller->adc_b_raw - controller->adc_b_offset);
+	controller->i_c = controller->i_scale*(float)(controller->adc_c_raw - controller->adc_c_offset);
+	if(PHASE_ORDER){
+		float i_a = controller->i_a;
+		controller->i_a = controller->i_b;
+		controller->i_b = i_a;
+	}
     // controller->i_c = -controller->i_a - controller->i_b;
 
     // ADC_EnableSoftwareStartConv(ADC2, ENABLE);
@@ -147,7 +141,7 @@ void svm(float v_scale, float u, float v, float w, float *dtc_u, float *dtc_v, f
     }
 
 void zero_current(ControllerStruct *controller){
-	/* Measure zero-current ADC offset */
+	/* Measure physical ADC1/2/3 zero offsets, independent of PHASE_ORDER. */
 
     int adc_a_offset = 0;
     int adc_b_offset = 0;
@@ -178,10 +172,8 @@ void init_controller_params(ControllerStruct *controller){
     controller->k_q = K_SCALE*I_BW;
     controller->ki_fw = .1f*controller->ki_d;
     controller->flux_linkage = KT/(1.5f*PPAIRS);
-    /* The current sense gain is fixed in hardware (on-chip PGA, differential
-     * gain 32 - see pga.c).  The old firmware doubled i_scale above 40 A to
-     * follow a DRV8323 CSA gain change; that driver is not on this board, so
-     * the same I_SCALE is correct for every I_MAX */
+    /* Fixed on-chip PGA configuration and 5 mOhm shunts; I_MAX does not
+     * change the hardware gain or the current conversion coefficient. */
     controller->i_scale = I_SCALE;
     controller->fault = 0;
     /* Seed the overcurrent latch threshold; check_faults() keeps it in sync

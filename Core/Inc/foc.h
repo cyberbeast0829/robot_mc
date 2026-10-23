@@ -18,7 +18,7 @@
 
 
 typedef struct{
-    int adc_a_raw, adc_b_raw, adc_c_raw, adc_vbus_raw;      // Raw ADC Values
+	int adc_a_raw, adc_b_raw, adc_c_raw, adc_vbus_raw;	// Physical ADC1/2/3 samples, then VBUS; independent of PHASE_ORDER
     float i_a, i_b, i_c;                                    // Phase currents
     float v_bus, v_bus_filt;                                // DC link voltage
     float theta_mech, theta_elec;                           // Rotor mechanical and electrical angle
@@ -30,7 +30,7 @@ typedef struct{
     float i_scale, k_d, k_q, ki_d, ki_q, ki_fw;             // Current loop gains
     float flux_linkage;
     float d_int, q_int;                                     // Current error integrals
-    int adc_a_offset, adc_b_offset, adc_c_offset;           // ADC offsets
+	int adc_a_offset, adc_b_offset, adc_c_offset;		// Physical ADC1/2/3 zero offsets; independent of PHASE_ORDER
     float i_d_des, i_q_des, t_ff_filt;                      // Current references
     int loop_count;                                         // Degubbing counter
     int timeout;                                            // Watchdog counter

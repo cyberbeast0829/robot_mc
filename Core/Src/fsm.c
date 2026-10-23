@@ -322,7 +322,7 @@ extern uint32_t _reboot_cookie;
 	    myprintf(" %-4s %-31s %-5s %-6s %.5f\n\r", "k", "Torque Constant (N-m/A)", "0", "-", KT);
 	    myprintf("\r\n Control:\r\n");
 	    myprintf(" %-4s %-31s %-5s %-6s %.3f\n\r", "b", "Current Bandwidth (Hz)", "100", "2000", I_BW);
-	    myprintf(" %-4s %-31s %-5s %-6s %.3f\n\r", "l", "Current Limit (A)", "0.0", "40.0", I_MAX);	// upper bound = I_MAX_LIMIT (hw_config.h)
+	    myprintf(" %-4s %-31s %-5s %-6.1f %.3f\n\r", "l", "Current Limit (A)", "0.0", I_MAX_LIMIT, I_MAX);
 	    myprintf(" %-4s %-31s %-5s %-6s %.3f\n\r", "p", "Max Position Setpoint (rad)", "-", "-", P_MAX);
 	    myprintf(" %-4s %-31s %-5s %-6s %.3f\n\r", "v", "Max Velocity Setpoint (rad)/s", "-", "-", V_MAX);
 	    myprintf(" %-4s %-31s %-5s %-6s %.3f\n\r", "x", "Max Position Gain (N-m/rad)", "0.0", "1000.0", KP_MAX);
@@ -360,8 +360,7 @@ extern uint32_t _reboot_cookie;
 			 myprintf("CAN_TX_ID set to %d\r\n", CAN_MASTER);
 			 break;
 		 case 'l':
-			 /* Capped at I_MAX_LIMIT: the sense chain saturates above ~40 A,
-			  * which would mask the overcurrent fault */
+			 /* Keep the OC trip inside the corrected 5 mOhm sense range. */
 			 I_MAX = fmaxf(fminf(atof(fsmstate->cmd_buff), I_MAX_LIMIT), 0.0f);
 			 myprintf("I_MAX set to %f\r\n", I_MAX);
 			 break;

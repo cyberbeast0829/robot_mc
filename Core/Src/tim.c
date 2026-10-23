@@ -114,10 +114,19 @@ void MX_TIM1_Init(void)
   NVIC_InitStructure.NVIC_IRQChannelCmd                = ENABLE;
   NVIC_Init(&NVIC_InitStructure);
 
-  TIM_Enable(ATIM1, ENABLE);
-
-  /* TIM1 Main Output Disable */
-  TIM_EnableCtrlPwmOutputs(ATIM1, DISABLE);
+	TIM_EnableCtrlPwmOutputs(ATIM1, DISABLE);
+	/* Prime the INTERNAL repetition counter with 0, then leave its reload
+	 * value at 1 without another software update.  The first overflow (CNT=AR)
+	 * then generates UEV and reloads 1; subsequent UEVs stay at CNT=AR, once
+	 * per full 40 kHz PWM cycle.  Loading 1 with UG before starting instead
+	 * puts UEV/TRGO at CNT=0, where PWM1 has all low-side switches off.
+	 * UEV also transfers the PWM compare preloads and triggers ADC1/2/3.
+	 * Do not issue another software update after this sequence. */
+	ATIM1->REPCNT = 0;
+	TIM_GenerateEvent(ATIM1, TIM_EVT_SRC_UPDATE);
+	ATIM1->REPCNT = 1;
+	TIM_ClrIntPendingBit(ATIM1, TIM_INT_UPDATE);
+	TIM_Enable(ATIM1, ENABLE);
 }
 
 /* USER CODE BEGIN 1 */

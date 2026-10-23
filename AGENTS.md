@@ -58,6 +58,13 @@ Use the Nations **standard peripheral driver** (`Drivers/n32h47x_48x_std_periph_
 The PWM/advanced timer is `ATIM1` (aliased `TIM_PWM` in `hw_config.h`); FOC writes
 `TIM_PWM->CCDAT1/2/3` directly against period `TIM_PWM->AR` (see `foc.c`).
 
+The three phase-current shunts are **5 mOhm in the low-side legs**, confirmed by
+the maintainer. `I_SCALE` is nominally `0.005035400390625 A/count` for the current
+ADC/PGA configuration; the previous `0.050354...` coefficient assumed 0.5 mOhm
+and over-reported current by 10x. The board current limit is conservatively
+capped at 4 A (6 A software OC trip). Do not restore the old 40 A limit or alter
+the PGA gain without verifying the analogue range and actual phase current.
+
 ⚠ **Never assume an `HAL_*` / `stm32f4xx_*` / `TIM1->BDTR` / `.Instance` reference resolves
 here** — verify it against the N32 SDK. The incomplete-port leftovers have been cleaned up
 (the `HAL_GPIO_WritePin` / `drv_disable_gd` / `TIM1->BDTR` calls; `foc.c`'s `__HAL_ADC_*` →
@@ -81,6 +88,12 @@ Same shape as upstream, with these N32 names:
 - `USART3_IRQHandler` → `update_fsm`; `USB_FS_LP_IRQHandler` → `USB_Istr`; USB CDC RX also
   feeds `update_fsm` through `usb_rx_process_packet`.
 - Control loop is 40 kHz (`DT = 25 µs` in `hw_config.h`).
+
+ATIM1 update/TRGO and the control ISR are fixed at the PWM **peak**, inside the
+low-side sampling window. Preserve `tim.c`'s startup sequence: load the internal
+repetition counter with 0 using UG, then write `REPCNT=1` without another UG.
+Another software update can change the sampling phase. All three injected ADCs
+use `ATIM1_TRGO`; there is no separate OC4/TRGO2 sampling path.
 
 Invariants carried from upstream — keep them:
 

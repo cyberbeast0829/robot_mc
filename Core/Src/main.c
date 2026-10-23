@@ -438,8 +438,8 @@ int main(void)
   if(E_ZERO==-1){E_ZERO = 0;}
   if(M_ZERO==-1){M_ZERO = 0;}
   if(isnan(I_BW) || I_BW==-1){I_BW = 1000;}
-  if(isnan(I_MAX) || I_MAX ==-1){I_MAX=40;}
-  if(I_MAX > I_MAX_LIMIT){I_MAX = I_MAX_LIMIT;}	// sense chain saturates above this, masking the OC fault (hw_config.h)
+  if(isnan(I_MAX) || I_MAX ==-1){I_MAX=I_MAX_LIMIT;}
+  if(I_MAX > I_MAX_LIMIT){I_MAX = I_MAX_LIMIT;}	// also clamp settings saved with the old current scale
   if(isnan(I_FW_MAX) || I_FW_MAX ==-1){I_FW_MAX=0;}
   if((CAN_ID < 0) || (CAN_ID > 127)){CAN_ID = 1;}			// 7-bit node ID - the upper 4 CAN ID bits are the opcode
   if((CAN_MASTER < 0) || (CAN_MASTER > 127)){CAN_MASTER = 0;}
@@ -486,28 +486,41 @@ int main(void)
 
   //for(int i = 0; i<128; i++){myprintf("%d\r\n", comm_encoder.offset_lut[i]);}
 
-  /* Turn on ADCs */
-  ADC_Enable(ADC1, ENABLE);
-  while(ADC_GetFlagStatus(ADC1, ADC_FLAG_RDY) == RESET);
-  ADC_CalibrationOperation(ADC1, ADC_CALIBRATION_SINGLE_MODE);
-  while (ADC_GetCalibrationStatus(ADC1, ADC_CALIBRATION_SINGLE_MODE));
-  ADC_SetDMATransferMode(ADC1, ADC_MULTI_REG_DMA_EACH_ADC);
-  ADC_Enable(ADC2, ENABLE);
-  while(ADC_GetFlagStatus(ADC2, ADC_FLAG_RDY) == RESET);
-  ADC_CalibrationOperation(ADC2, ADC_CALIBRATION_SINGLE_MODE);
-  while (ADC_GetCalibrationStatus(ADC2, ADC_CALIBRATION_SINGLE_MODE));
-  ADC_SetDMATransferMode(ADC2, ADC_MULTI_REG_DMA_EACH_ADC);
-  ADC_Enable(ADC3, ENABLE);
-  while(ADC_GetFlagStatus(ADC3, ADC_FLAG_RDY) == RESET);
-  ADC_CalibrationOperation(ADC3, ADC_CALIBRATION_SINGLE_MODE);
-  while (ADC_GetCalibrationStatus(ADC3, ADC_CALIBRATION_SINGLE_MODE));
-  ADC_SetDMATransferMode(ADC3, ADC_MULTI_REG_DMA_EACH_ADC);
+	/* ATIM1 is already running.  Keep both groups untriggered until all
+	 * calibrations finish; ADC1/3 never need regular conversions. */
+	ADC_ConfigExternalTrigRegularConv(ADC1, ADC_EXT_TRIG_REG_CONV_SOFTWARE);
+	ADC_ConfigExternalTrigRegularConv(ADC2, ADC_EXT_TRIG_REG_CONV_SOFTWARE);
+	ADC_ConfigExternalTrigRegularConv(ADC3, ADC_EXT_TRIG_REG_CONV_SOFTWARE);
+	ADC_ConfigExternalTrigInjectedConv(ADC1, ADC_EXT_TRIG_INJ_CONV_SOFTWARE);
+	ADC_ConfigExternalTrigInjectedConv(ADC2, ADC_EXT_TRIG_INJ_CONV_SOFTWARE);
+	ADC_ConfigExternalTrigInjectedConv(ADC3, ADC_EXT_TRIG_INJ_CONV_SOFTWARE);
 
-  ADC_ConfigExternalTrigRegularConv(ADC1, ADC_EXT_TRIG_REG_CONV_ATIM1_TRGO);
-  ADC_ConfigExternalTrigRegularConv(ADC2, ADC_EXT_TRIG_REG_CONV_ATIM1_TRGO);
-  ADC_ConfigExternalTrigRegularConv(ADC3, ADC_EXT_TRIG_REG_CONV_ATIM1_TRGO);
+	/* Wait for ENCAL itself: the SDK status helper can report completion
+	 * early when a calibration factor is already nonzero. */
+	ADC_Enable(ADC1, ENABLE);
+	while(ADC_GetFlagStatus(ADC1, ADC_FLAG_RDY) == RESET){;}
+	ADC_CalibrationOperation(ADC1, ADC_CALIBRATION_DIFF_MODE);
+	while(ADC1->CTRL2 & ADC_CTRL2_ENCAL){;}
+	ADC_SetDMATransferMode(ADC1, ADC_MULTI_REG_DMA_EACH_ADC);
+	ADC_Enable(ADC2, ENABLE);
+	while(ADC_GetFlagStatus(ADC2, ADC_FLAG_RDY) == RESET){;}
+	ADC_CalibrationOperation(ADC2, ADC_CALIBRATION_SINGLE_MODE);
+	while(ADC2->CTRL2 & ADC_CTRL2_ENCAL){;}
+	/* ADC2 also measures single-ended VBUS/temperatures in its regular group. */
+	ADC_CalibrationOperation(ADC2, ADC_CALIBRATION_DIFF_MODE);
+	while(ADC2->CTRL2 & ADC_CTRL2_ENCAL){;}
+	ADC_SetDMATransferMode(ADC2, ADC_MULTI_REG_DMA_EACH_ADC);
+	ADC_Enable(ADC3, ENABLE);
+	while(ADC_GetFlagStatus(ADC3, ADC_FLAG_RDY) == RESET){;}
+	ADC_CalibrationOperation(ADC3, ADC_CALIBRATION_DIFF_MODE);
+	while(ADC3->CTRL2 & ADC_CTRL2_ENCAL){;}
+	ADC_SetDMATransferMode(ADC3, ADC_MULTI_REG_DMA_EACH_ADC);
 
-  start_general_purpose_adc();
+	start_general_purpose_adc();
+	ADC_ConfigExternalTrigInjectedConv(ADC1, ADC_EXT_TRIG_INJ_CONV_ATIM1_TRGO);
+	ADC_ConfigExternalTrigInjectedConv(ADC2, ADC_EXT_TRIG_INJ_CONV_ATIM1_TRGO);
+	ADC_ConfigExternalTrigInjectedConv(ADC3, ADC_EXT_TRIG_INJ_CONV_ATIM1_TRGO);
+	ADC_ConfigExternalTrigRegularConv(ADC2, ADC_EXT_TRIG_REG_CONV_ATIM1_TRGO);
 
   /* Turn on PWM */
   ATIM1->CCDAT1 = ATIM1->AR / 2;

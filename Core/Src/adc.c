@@ -36,11 +36,13 @@ void MX_ADC1_Init(void)
 
   ADC_InitStruct(&ADC_InitStructure);
   ADC_InitStructure.WorkMode       = ADC_WORKMODE_INDEPENDENT;
-  ADC_InitStructure.MultiChEn      = ENABLE;
+	/* ADC1 only uses the injected group.  The unused regular group still
+	 * needs a valid SDK sequence length (1..16); zero encodes 16 channels. */
+	ADC_InitStructure.MultiChEn      = DISABLE;
   ADC_InitStructure.ContinueConvEn = DISABLE;
   ADC_InitStructure.ExtTrigSelect  = ADC_EXT_TRIG_REG_CONV_SOFTWARE;
   ADC_InitStructure.DatAlign       = ADC_DAT_ALIGN_R;
-  ADC_InitStructure.ChsNumber      = 0;
+	ADC_InitStructure.ChsNumber      = 1;
   ADC_Init(ADC1, &ADC_InitStructure);
 
   ADC_ConfigInjectedChannel(ADC1, ADC_CH_1, 1, ADC_SAMP_TIME_CYCLES_7_5);
@@ -139,11 +141,12 @@ void MX_ADC3_Init(void)
 
   ADC_InitStruct(&ADC_InitStructure);
   ADC_InitStructure.WorkMode       = ADC_WORKMODE_INDEPENDENT;
-  ADC_InitStructure.MultiChEn      = ENABLE;
-  ADC_InitStructure.ContinueConvEn = ENABLE;
+	/* ADC3 only uses the injected group, like ADC1. */
+	ADC_InitStructure.MultiChEn      = DISABLE;
+	ADC_InitStructure.ContinueConvEn = DISABLE;
   ADC_InitStructure.ExtTrigSelect  = ADC_EXT_TRIG_REG_CONV_SOFTWARE;
   ADC_InitStructure.DatAlign       = ADC_DAT_ALIGN_R;
-  ADC_InitStructure.ChsNumber      = 0;
+	ADC_InitStructure.ChsNumber      = 1;
   ADC_Init(ADC3, &ADC_InitStructure);
 
   ADC_ConfigInjectedChannel(ADC3, ADC_CH_1, 1, ADC_SAMP_TIME_CYCLES_7_5);

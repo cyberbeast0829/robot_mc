@@ -128,11 +128,12 @@
  * removed - it was an ST-hal leftover and was never used) */
 
 /* Other hardware-related constants */
-// I_SCALE = (3.3 / (2^12)) / (PGA_GAIN * RSHUNT)
-// This board senses current through the on-chip PGA (pga.c) at a fixed
-// DIFFERENTIAL gain of 32 - there is no gain switching.  The value below is
-// (3.3/4096) / 0.016, i.e. it assumes a sense chain of 0.016 V/A (32 x 0.5 mOhm).
-#define I_SCALE 			0.05035400390625f    // Amps per A/D count at PGA differential gain 32
+/* The three low-side shunts are 5 mOhm (confirmed on this board), not
+ * 0.5 mOhm.  With the same ADC/PGA configuration the old 0.050354 A/count
+ * coefficient over-reported current by 10x.  Keep the original conversion
+ * convention, corrected for the actual shunts; verify absolute gain against
+ * a phase-current measurement before increasing the board current limit. */
+#define I_SCALE 			0.005035400390625f  // Nominal amps per A/D count with 5 mOhm shunts
 // V_SCALE = (3.3 * VBUS_S_DIVIDER) / (2^12) 其中 VBUS_S_DIVIDER = 93.91 / 3.01
 #define V_SCALE 			0.02513618342504f    // Bus volts per A/D Count
 #define DTC_MAX 			0.7f          	// Max duty cycle
@@ -143,15 +144,12 @@
 #define V_BUS_MAX			60.0f			// max drive voltage - torque command is cut above this (soft limit)
 #define V_BUS_FAULT			67.0f			// hard overvoltage limit - latches a fault and disables the gate drive
 
-/* Current limit
- *
- * The sense chain is characterised for up to ~40 A; above that the CSA/PGA
- * output saturates, which silently masks the overcurrent fault (a saturated
- * reading can never exceed the threshold), so I_MAX is hard-capped here.  The
- * old firmware doubled i_scale for I_MAX > 40 A to follow a DRV8323 CSA gain
- * change; that driver does not exist on this board, so that branch was removed.
- * Raise I_MAX_LIMIT only after re-characterising the sense chain. */
-#define I_MAX_LIMIT			40.0f			// Hard upper bound for I_MAX (A)
+/* Conservative limit for the 5 mOhm board.  At I_MAX=4 A the 1.5x OC trip
+ * is 6 A, about 1192 ADC counts from zero with I_SCALE above, leaving room
+ * around the measured midscale offsets.  The previous 40 A limit no longer
+ * fits the corrected measurement range.  Raising this requires checking
+ * both the analogue sense range and the power-stage/shunt ratings. */
+#define I_MAX_LIMIT			4.0f			// Hard upper bound for I_MAX (A)
 #define I_OC_FAULT_FACTOR	1.5f			// Overcurrent latch threshold = factor * I_MAX
 
 /* Current controller */
