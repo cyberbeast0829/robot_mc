@@ -91,7 +91,6 @@ FSMStruct state;
 EncoderStruct comm_encoder;
 CalStruct comm_encoder_cal;
 CANTxMessage can_tx;
-CANRxMessage can_rx;
 
 /* Latched in early_start_checks() (before RCC_DeInit could touch the flags) and
  * reported once myprintf() works - tells the user the previous run was killed
@@ -397,7 +396,6 @@ int main(void)
   MX_GPIO_Init();
   MX_USART2_UART_Init();
   MX_TIM1_Init();
-  MX_CAN1_Init();
   MX_SPI1_Init();
   // MX_SPI3_Init();
   MX_PGA_Init();
@@ -533,10 +531,13 @@ int main(void)
   NVIC_SetPriority(CAN_ISR, 2);
   NVIC_SetPriority(USART_ISR, 3);
 
-  /* CAN setup */
-  can_rx_init(&can_rx);
+  /* CAN setup.  The protocol (config.can_prot) and bitrate (config.can_baud) are
+   * persisted, so the peripheral - timing, message RAM layout and acceptance
+   * filters - can only be configured after the configuration has been loaded
+   * above.  Both values take effect on power-up. */
+  MX_CAN1_Init();
   can_tx_init(&can_tx);
-  FDCAN_Start(FDCAN2); //start CAN.  RX is polled from the commutation interrupt
+  can_proto_init();
   //__HAL_CAN_ENABLE_IT(&CAN_H, CAN_IT_RX_FIFO0_MSG_PENDING); // Start can interrupt
 
   /* Start the FSM */
@@ -568,8 +569,9 @@ int main(void)
 	   * 之前，避免应答被菜单输出拖慢 */
 	  endpoint_serial_poll();
 
-	  /* Slow state machine work: printing, flash saves.  All of it was moved
-	   * out of the interrupts so it can't stall commutation */
+      /* CAN 协议的慢活（目前是 CYBERBEAST 的 JSON 描述符流式发送）。
+       * 收帧和心跳仍在 40 kHz 控制中断里 */
+      can_proto_poll();
 	  run_fsm_slow(&state);
     /* USER CODE END WHILE */
 		// myprintf("ADC OFFSETS: A %d  B %d  C %d    VBUS: %.1f V\r\n", controller.adc_a_offset, controller.adc_b_offset, controller.adc_c_offset, controller.v_bus);

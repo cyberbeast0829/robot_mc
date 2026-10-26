@@ -215,10 +215,14 @@ LUT 的验证：把电机停到升级前同一机械角度，比较 `telemetry.e
 
 **LUT 能导出吗？** 不能，隐藏记录。它随配置页保留；换板/整片擦除要重新标定。
 
-**能加多少参数？** 配置记录 256 条、总载荷 4 KB、描述符 64 KB。当前用了 27 条
+**能加多少参数？** 配置记录 256 条、总载荷 4 KB、描述符 64 KB。当前用了 30 条
 配置 + 1 条 LUT（512 B）。超限会在 `make endpoints` 时直接报错。
 
 **保存会磨损 flash 吗？** 每次擦一页（8 KB），只在显式 `action.save` 时发生。
 
-**支持 CAN 吗？** 现有 11-bit 协议不变；CyberBeast 29-bit 的 endpoint 访问正在
-移植，方案见 [DEV.md](DEV.md#can--cyberbeast-移植)。
+**支持 CAN 吗？** 两套协议，用 `config.can_prot` 选择：`0` = 原有 11-bit 协议
+（默认，500 kbit/s），`1` = CYBERBEAST。`config.can_baud` 决定速率与物理层：
+≤ 1 Mbit/s 为 Classic CAN，> 1 Mbit/s 为 CAN FD（例：`can_baud = 5000000` 就是
+CYBERBEAST 默认的 1M 仲裁 / 5M 数据）。两者都是**下次上电生效**，
+`system.can_prot_active` / `system.can_fd` / `system.can_baud_active` 可核对
+当前实际运行值。详见 [DEV.md](DEV.md#can协议选择与-cyberbeast)。

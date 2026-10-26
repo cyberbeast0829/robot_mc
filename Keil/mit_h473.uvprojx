@@ -400,6 +400,21 @@
               <FilePath>..\Core\Src\can.c</FilePath>
             </File>
             <File>
+              <FileName>can_cyberbeast.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Core\Src\can_cyberbeast.c</FilePath>
+            </File>
+            <File>
+              <FileName>can_mit.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Core\Src\can_mit.c</FilePath>
+            </File>
+            <File>
+              <FileName>can_proto.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Core\Src\can_proto.c</FilePath>
+            </File>
+            <File>
               <FileName>endpoint.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\Core\Src\endpoint.c</FilePath>

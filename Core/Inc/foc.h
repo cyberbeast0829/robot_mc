@@ -15,6 +15,7 @@
  * FAULT_MODE (gates off) until explicitly cleared by exiting to the menu */
 #define FAULT_OV		(1<<0)		// bus overvoltage
 #define FAULT_OC		(1<<1)		// phase overcurrent
+#define FAULT_ESTOP		(1<<2)		// E-stop requested over CAN (CYBERBEAST 0xC0)
 
 
 typedef struct{

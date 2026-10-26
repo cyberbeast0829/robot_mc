@@ -474,6 +474,7 @@ extern uint32_t _reboot_cookie;
 			 myprintf("\n\r!!! FAULT - gate drive disabled !!!\r\n");
 			 if(controller.fault & FAULT_OV){myprintf("  Overvoltage: bus hit %.2f V (limit %.1f V)\r\n", controller.fault_vbus, V_BUS_FAULT);}
 			 if(controller.fault & FAULT_OC){myprintf("  Overcurrent: phase current hit %.1f A (limit %.1f A)\r\n", controller.fault_iabs, controller.i_oc_limit);}
+			 if(controller.fault & FAULT_ESTOP){myprintf("  E-stop requested over CAN\r\n");}
 			 myprintf("  esc (or the CAN menu command) to clear\r\n");
 		 }
 	 }

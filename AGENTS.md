@@ -47,9 +47,17 @@ Two equivalent builds produce the same firmware:
   neither build. `motorcontrol.ioc` is the **STM32F446RETx** CubeMX file — **do not
   regenerate** from it (it would revert the port); `adc.c`/`tim.c` also contain hand edits
   *outside* the `USER CODE` blocks that a regeneration would silently drop.
+- ⚠⚠ **The two builds are NOT equivalent on hardware** (2026-10-26 bench): the `make`
+  (GNU/`arm-none-eabi-gcc`) image boots and talks CAN, but the commutation encoder reads a
+  constant 0 (`telemetry.encoder_raw == 0`, `elec_angle` frozen, `lost_frames == 0`) with the
+  same sources that work when flashed from Keil. Root cause **unknown / not investigated**.
+  Bench-verify with the **Keil** image (`Keil/Objects/mit_h473.axf`) until this is fixed, and
+  don't conclude "the firmware is broken" from a `make` image symptom.
 - Testing: `make check` (generated tables/docs are current) and `make hosttest`
   (`tools/test_prefs_codec.c`, no target hardware) are the only automated checks.
-  Everything else is verified by a clean build + bench testing by the maintainer.
+  Everything else is verified by a clean build + bench testing by the maintainer
+  (`tools/cb_bench.py` drives the CYBERBEAST platform over slcan: `--stage-a/-b/-c/-c-static/-d`,
+  `--reset-test`, `--timeout-test`).
 
 ## 文档
 
@@ -97,10 +105,10 @@ Same shape as upstream, with these N32 names:
 
 - **`ATIM1_UP_IRQHandler`** (`Core/Src/n32h47x_48x_it.c`, priority 0), every PWM cycle:
   clear update flag → kick IWDG (`IWDG->KR = 0xAAAA`) → `analog_sample` → `ps_sample`
-  → `check_faults` → `run_fsm` → `can_tx_rx`.
-- **Main loop** calls `run_fsm_slow(&state)` — all printing, setup/zero command handling,
-  and flash saves. ISR→main handoff is via the `volatile *_pending` flags in `FSMStruct`
-  (`fsm.h`).
+  → `check_faults` → `run_fsm` → `can_tx_rx` (25 µs 时基 + 最多 2 帧 → 协议分发).
+- **Main loop** calls `endpoint_serial_poll()` → `can_proto_poll()` → `run_fsm_slow(&state)`
+  — all printing, setup/zero command handling, and flash saves. ISR→main handoff is via
+  the `volatile *_pending` flags in `FSMStruct` (`fsm.h`).
 - `USART3_IRQHandler` → `update_fsm`; `USB_FS_LP_IRQHandler` → `USB_Istr`; USB CDC RX also
   feeds `update_fsm` through `usb_rx_process_packet`.
 - Control loop is 40 kHz (`DT = 25 µs` in `hw_config.h`).
@@ -134,6 +142,19 @@ USB CDC when `bDeviceState == CONFIGURED`, otherwise it polls USART3. It **can b
 `can.h`'s comment table is the spec of record; the controller is `FDCAN2`. ID =
 `(opcode << 7) | node_id`. Floats on the wire are float32 little-endian. All externally
 supplied floats (CAN, serial) must be clamped and NaN-checked before reaching the control loop.
+
+CYBERBEAST (`can_cyberbeast.c`) gotchas verified on the bench:
+
+- **An SDO write ACK carries no status.** Read-only endpoint, wrong width, and a failing
+  `require` all still ACK — always read back. (`docs/DEV.md` 台架实测 has the table.)
+- **`CAN_TIMEOUT` (`config.can_timeout`) is in milliseconds** (default `100`), but
+  `controller.timeout` counts control cycles (25 µs), so every comparison goes through
+  `CAN_TIMEOUT_CYCLES` (= `CAN_TIMEOUT * 40` in `user_config.h`) — never compare the raw
+  value. On timeout `zero_commands()` clears `p_des/v_des/kp/kd/t_ff`.
+- **Heartbeat `Dest` is the master id** (learned from received frames, cleared at reset →
+  falls back to 1), not a broadcast; don't filter heartbeats by `dest == my_host_id`.
+- The bench tool's own frame rate matters: a slow serial read once pushed the harness to
+  ~20 Hz, below the 25 ms timeout, which looked like "the firmware ignores commands".
 
 ## Endpoint 参数访问层（fibre 风格）
 
@@ -184,28 +205,27 @@ supplied floats (CAN, serial) must be clamped and NaN-checked before reaching th
 
 ## 与 JointSDK（CyberBeast）的兼容性
 
-用 JointSDK 自己的 `cb_jsondesc_parse.c` 验证过描述符（新增端点后需在 SDK 环境
-重跑一次）：118 个可见端点、ID/类型/权限全部正确。endpoint 层的约定与
-CyberBeast 完全一致：u16 ID、参数值小端、`bool/uint8/int32/uint32/float`、
-`r/w/rw` 权限、数组根节点、描述符总长 < 64 KB。
-把 CyberBeast 移植过来时，`0x20/0x21/0x24/0x25` 四条消息直接复用
-`endpoint_handler()` / `endpoint_json` / `endpoint_json_crc` 即可，不需要改参数表；
-`0x20` 传 `EP_OP_READ`、`0x21` 传 `EP_OP_WRITE`。
+CAN 传输层已实现（`can_proto.c` 分发 + `can_cyberbeast.c`）：`config.can_prot`
+选协议（0=旧 11-bit，1=CYBERBEAST），`config.can_baud` 选物理层（≤1M Classic，
+>1M CAN FD：仲裁域固定 1M、数据域=该值），**都只在下次上电生效**；
+`system.can_prot_active` / `system.can_fd` 报告实际运行值。消息 RAM、滤波器、
+NBTP/DBTP 都在 `can.c` 的 `MX_CAN1_Init()` 里按这两个值构建，所以该函数必须在
+`config_apply_defaults()`/`preference_writer_load()` 之后调用（不能放回 CubeMX 的
+SysInit 段）。
 
-仍属**传输/协议层**的工作（与 endpoint 无关）：
-
-- CyberBeast 用 **29-bit 扩展帧**，本工程现有协议用 11-bit 标准帧
-  `(opcode<<7)|node_id`；需要增加扩展帧过滤器，两套协议可以共存。
-- `0x20` 读：`[flags][id u16 BE][req_len][offset u32 BE]`，Classic 下每帧最多
-  4 字节；`0x21` 写：`[flags][id u16 BE][data_len][value]`，**整帧必须 ≥ 8 字节**
-  （SDK 会补零），成功后回 8 字节确认。值是小端。
-- `0x24/0x25` 描述符：一次请求后设备自主流式发送，先发元数据帧
-  `[00 00][total u32 LE][crc u16 LE]`，再发 `[chunkOffset u16 LE][6 字节数据]`
-  （Classic），每毫秒 ≤50 帧。当前描述符约 9.3 KB（约 1550 帧）。
+- CYBERBEAST 用 **29-bit 扩展帧**；旧协议用 11-bit 标准帧 `(opcode<<7)|node_id`。
+  两套**不共存**（各装自己的滤波器），由 `can_prot` 二选一。
+- `0x20/0x21/0x24/0x25` 直接复用 `endpoint_handler()` / `endpoint_json`；
+  参数值小端、帧头大端。描述符流式发送在**主循环**（`can_proto_poll()`，2 帧/ms），
+  不要在 ISR 里发；`can_cyberbeast_codec.h` 是 pure codec，`make hosttest` 覆盖。
+- 已实现：MIT(0x00/0x80)、TORQUE(0x03/0x83)、CURRENT(0x04)、SDO、查询 0x40~0x49、
+  心跳 0x48、系统 0x60~0x65、ESTOP 0xC0。
+- **未实现**：CSP/CSV(0x01/0x02)（本固件只有一套 PD+t_ff 控制律）、批量读
+  （0x20 bit6 → 回 ERR，主站退回单读）、ODrive 路径别名。
 - **高层 `jsdk_context_configure()` 仍不兼容**：它会先做握手（等 `0x00` MIT
   响应）并解析 `axis0.motor.config.gear_ratio` 等 7 个 ODrive 专有路径。
   只用 endpoint 访问时，改用 `jsdk_context_desc_fetch()` + `jsdk_joint_param_get/set`；
-  要让 `configure()` 通过，需要额外加 ODrive 路径别名和状态枚举映射。
+  **不要为它改固件参数命名**（客户将改 JointSDK）。
 
 ## 配置持久化（ID-keyed TLV）
 

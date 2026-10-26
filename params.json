@@ -285,6 +285,66 @@
       "default": 100
     },
     {
+      "name": "config.can_prot",
+      "type": "int32",
+      "access": "rw",
+      "ref": "CAN_PROT",
+      "min": 0,
+      "max": 1,
+      "brief": "CAN 协议（0=旧 11-bit 协议 500k，1=CYBERBEAST；下次上电生效）",
+      "persist": true,
+      "default": 0
+    },
+    {
+      "name": "config.can_baud",
+      "type": "int32",
+      "access": "rw",
+      "ref": "CAN_BAUD",
+      "min": 50000,
+      "max": 5000000,
+      "unit": "bit/s",
+      "brief": "CAN 波特率：≤1M 为 Classic CAN（该速率），>1M 为 CAN FD（仲裁域固定 1M，数据域=本值）；下次上电生效",
+      "persist": true,
+      "default": 500000
+    },
+    {
+      "name": "config.can_hb_ms",
+      "type": "int32",
+      "access": "rw",
+      "ref": "CAN_HB_MS",
+      "min": 0,
+      "max": 10000,
+      "unit": "ms",
+      "brief": "CYBERBEAST 心跳周期（0 = 关闭）",
+      "persist": true,
+      "default": 100
+    },
+    {
+      "name": "system.can_prot_active",
+      "type": "int32",
+      "access": "r",
+      "get": "can_active_prot()",
+      "brief": "当前生效的 CAN 协议（0=旧 11-bit，1=CYBERBEAST）",
+      "persist": false
+    },
+    {
+      "name": "system.can_fd",
+      "type": "bool",
+      "access": "r",
+      "get": "can_is_fd()",
+      "brief": "当前是否以 CAN FD 运行",
+      "persist": false
+    },
+    {
+      "name": "system.can_baud_active",
+      "type": "int32",
+      "access": "r",
+      "get": "can_active_baud()",
+      "unit": "bit/s",
+      "brief": "当前生效的 CAN 速率（Classic 为位速率；FD 为数据域速率）",
+      "persist": false
+    },
+    {
       "name": "config.m_zero",
       "type": "int32",
       "access": "rw",

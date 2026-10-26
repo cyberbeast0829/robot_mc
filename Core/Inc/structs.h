@@ -31,6 +31,5 @@ extern EncoderStruct comm_encoder;
 extern PreferenceWriter prefs;
 extern CalStruct comm_encoder_cal;
 extern CANTxMessage can_tx;
-extern CANRxMessage can_rx;
 
 #endif

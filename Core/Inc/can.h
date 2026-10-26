@@ -26,6 +26,7 @@ extern "C" {
 
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include <stdbool.h>
 
 /* USER CODE BEGIN Includes */
 
@@ -34,6 +35,41 @@ extern "C" {
 extern FDCAN_InitType hcan1;
 
 /* USER CODE BEGIN Private defines */
+
+/* ------------------------------------------------------------------------
+ * Protocol selection (config.can_prot) and physical layer (config.can_baud)
+ *
+ * can_prot selects the frame-level protocol.  The bitrate parameter selects
+ * the physical layer, exactly like ODrive's can.baud_rate:
+ *
+ *   can_baud <= 1000000  Classic CAN at that bitrate
+ *   can_baud >  1000000  CAN FD: 1 Mbit/s arbitration, can_baud data phase
+ *
+ * Both values are read once at power-up (the peripheral timing, the message
+ * RAM layout and the acceptance filters all depend on them), so a write takes
+ * effect on the next power cycle.  system.can_prot_active / system.can_fd
+ * report what is actually running.
+ *
+ * Only the CYBERBEAST protocol can use CAN FD; the legacy 11-bit protocol is
+ * always Classic (can_baud is clamped to 1 Mbit/s for it).
+ * ------------------------------------------------------------------------ */
+#define CAN_PROT_LEGACY			0
+#define CAN_PROT_CYBERBEAST		1
+
+#define CAN_FD_BAUD_THRESHOLD	1000000u	// > this is CAN FD, <= is Classic
+#define CAN_FD_NOMINAL_BAUD		1000000u	// FD arbitration phase is fixed at 1 Mbit/s
+
+/* A CAN frame, protocol independent.  len is in bytes (already decoded from
+ * the DLC), id_type is FDCAN_STANDARD_ID or FDCAN_EXTENDED_ID */
+#define CAN_MAX_FRAME_BYTES		64
+
+typedef struct{
+	uint32_t id;
+	uint32_t id_type;
+	uint8_t  len;
+	uint8_t  data[CAN_MAX_FRAME_BYTES];
+} can_frame_t;
+
 //#define P_MIN -12.5f
 //#define P_MAX 12.5f
 //#define V_MIN -65.0f
@@ -49,7 +85,7 @@ extern FDCAN_InitType hcan1;
 #define SENSE_BUFFER 0.0f
 
 /* ------------------------------------------------------------------------
- * CAN protocol
+ * CAN protocol (legacy, can_prot = 0)
  *
  * The 11-bit CAN ID is split into a 4-bit opcode and a 7-bit node ID:
  *
@@ -125,7 +161,7 @@ extern FDCAN_InitType hcan1;
 #define CAN_VAR_I_MAX		18		// current limit (A)
 #define CAN_VAR_KT			19		// torque constant (N-m/A)
 #define CAN_VAR_GR			20		// gear ratio
-#define CAN_VAR_CAN_TIMEOUT	21		// command timeout (commutation cycles, 0 = disabled)
+#define CAN_VAR_CAN_TIMEOUT	21		// command timeout in ms (0 = disabled)
 #define CAN_VAR_VERSION		22		// firmware version (VERSION_NUM)
 #define CAN_VAR_MODE		23		// current FSM state (the *_MODE values in fsm.h)
 
@@ -140,31 +176,49 @@ extern FDCAN_InitType hcan1;
 
 /* USER CODE END Private defines */
 
-void MX_CAN1_Init(void);
-
 /* USER CODE BEGIN Prototypes */
 typedef struct{
 	uint8_t id;
-	uint8_t data[8];
-	FDCAN_RxHeaderType rx_header;
-	FDCAN_FilterType filter;
-}CANRxMessage ;
-
-typedef struct{
-	uint8_t id;
-	uint8_t data[8];
+	uint8_t data[CAN_MAX_FRAME_BYTES];
 	uint8_t reply_var_a, reply_var_b;	// telemetry reply content, set by CAN_OP_SET_REPLY_FORMAT
 	FDCAN_TxHeaderType tx_header;
 }CANTxMessage ;
 
-void can_rx_init(CANRxMessage *msg);
+/* Hardware layer (can.c) */
+void MX_CAN1_Init(void);		// clocks/pins + FDCAN_Init from CAN_PROT/CAN_BAUD
+void can_rx_init(void);			// acceptance filters for the active protocol
 void can_tx_init(CANTxMessage *msg);
+uint8_t can_active_prot(void);	// 0 = legacy, 1 = CYBERBEAST (what is really running)
+bool can_is_fd(void);			// true when the peripheral runs CAN FD
+uint32_t can_active_baud(void);	// bit/s of the phase that carries data
+bool can_send_frame(uint32_t id, uint32_t id_type, const uint8_t *data, uint8_t len);
+bool can_send_legacy(CANTxMessage *msg);
+bool can_rx_fetch(can_frame_t *f);	// pop one frame from FIFO0 (ISR context)
+
+/* Protocol dispatch (can_proto.c) */
+typedef struct{
+	uint8_t id;
+	void (*init)(void);			// reset protocol state (called once after the hardware is up)
+	void (*rx)(const can_frame_t *f);	// one received frame, commutation-interrupt context
+	void (*tick_1ms)(void);		// 1 ms cadence, commutation-interrupt context
+	void (*poll)(void);			// main loop: slow work (descriptor streaming)
+} can_protocol_t;
+
+extern const can_protocol_t can_proto_legacy;
+extern const can_protocol_t can_proto_cyberbeast;
+
+void can_proto_init(void);		// pick the active protocol table
+void can_proto_rx(const can_frame_t *f);
+void can_proto_tick(void);		// call every commutation cycle (25 us)
+void can_proto_poll(void);		// call from the main loop
+
+/* Legacy protocol helpers (can.c) */
 void pack_reply(CANTxMessage *msg, uint8_t id, float p, float v, float t, float vb);
-void unpack_cmd(CANRxMessage msg, float *commands);
+void unpack_cmd(const can_frame_t *f, float *commands);
 void pack_float_reply(CANTxMessage *msg, uint8_t var_id, float value);
 void pack_float_pair_reply(CANTxMessage *msg, float value_a, float value_b);
 void pack_telemetry_reply(CANTxMessage *msg, uint8_t var_a, uint8_t var_b);
-int can_unpack_two_floats(CANRxMessage *msg, float *a, float *b);
+int can_unpack_two_floats(const can_frame_t *f, float *a, float *b);
 float can_read_variable(uint8_t var_id);
 /* USER CODE END Prototypes */
 

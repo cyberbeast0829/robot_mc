@@ -44,7 +44,10 @@ extern "C" {
 #define CAN_TIMEOUT_CYCLES      (CAN_TIMEOUT * 40)
 #define M_ZERO					__int_reg[4]
 #define E_ZERO					__int_reg[5]
-#define ENCODER_LUT             __int_reg[6]                                    // Encoder offset LUT - 128 elements long
+#define ENCODER_LUT             __int_reg[6]                                    // Encoder offset LUT - 128 elements long (6..133)
+#define CAN_PROT                __int_reg[134]                                  // CAN protocol: 0 = legacy 11-bit, 1 = CYBERBEAST. Applied at power-up
+#define CAN_BAUD                __int_reg[135]                                  // bit/s. <= 1M: Classic CAN at this rate. > 1M: CAN FD (1M arbitration, data = this)
+#define CAN_HB_MS               __int_reg[136]                                  // CYBERBEAST heartbeat period (ms), 0 = disabled
 
 
 

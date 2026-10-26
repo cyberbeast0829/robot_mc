@@ -1,5 +1,5 @@
 {
-  "next_id": 120,
+  "next_id": 126,
   "map": {
     "config.i_bw": 1,
     "config.i_max": 2,
@@ -119,6 +119,12 @@
     "action.reset_timing": 116,
     "system.config_schema": 117,
     "internal.encoder_lut": 118,
-    "system.save_status": 119
+    "system.save_status": 119,
+    "config.can_prot": 120,
+    "config.can_baud": 121,
+    "config.can_hb_ms": 122,
+    "system.can_prot_active": 123,
+    "system.can_fd": 124,
+    "system.can_baud_active": 125
   }
 }

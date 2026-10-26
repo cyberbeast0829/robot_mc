@@ -28,50 +28,51 @@
 #include "structs.h"
 /* USER CODE END 0 */
 
-uint32_t FDCAN_ram[512]; // 消息缓冲 RAM（512 words = 2 KB，标准帧滤波器/Rx FIFO/Tx FIFO 都从这里分配）
+uint32_t FDCAN_ram[512]; // 消息缓冲 RAM（512 words = 2 KB）。FD 布局：8×64B Rx + 8×64B Tx
+                         // + 1 个标准或扩展滤波器 ≈ 291 words，仍有余量
 FDCAN_MsgRamType Node_msg;
 
-FDCAN_InitType hcan1 = {
-  .FrameFormat = FDCAN_FRAME_CLASSIC,
-  .Mode = FDCAN_MODE_NORMAL,
-  .Prescaler = 2,
-  .SyncJumpWidth = 2,
-  .TimeSeg1 = 34,
-  .TimeSeg2 = 5, // 默认500K波特率
-  .MsgRamStrAddr = (uint32_t)FDCAN_ram,
-  .MsgRamOffset = 0,
-  .pMsgInfo = &Node_msg,
-  /* 标准滤波器元素个数。必须是 1（或更多）：FDCAN_InitMsgRam() 会把它写进
-   * SIDFC.LSS，LSS = 0 表示“标准滤波器列表里一个元素都没有”，于是
-   * can_rx_init() 写进去的 ID 掩码元素根本不被硬件使用；再叠加下面的
-   * FDCAN_REJECT_STD 全局滤波，所有标准帧都会被拒收（表现为完全收不到）。
-   * 同时它也是消息 RAM 的布局依据：为 0 时 StdFilterStrAddr 与 RxFIFO0
-   * 起始地址重合，过滤器元素会被写进 Rx FIFO 0 的第一个元素里。 */
-  .StdFilterSize = 1,
-  .ExtFilterSize = 0,
-  .RxFifo0Size = 8,
-  .RxFifo0DataSize = FDCAN_DATA_BYTES_8,
-  .RxFifo1Size = 0,
-  .RxFifo1DataSize = FDCAN_DATA_BYTES_8,
-  .RxBufferSize = 0,
-  .RxBufferDataSize = FDCAN_DATA_BYTES_8,
-  .TxBufferSize = 0,
-  .TxBufferDataSize = FDCAN_DATA_BYTES_8,
-  .TxFifoQueueSize = 8,
-  .TxFifoQueueMode = FDCAN_TX_FIFO_MODE,
-  .TxEventSize = 0,
-  /* 自动重发必须打开（CCCR.DAR = 0）：DAR = 1 时一帧只要没被应答就不会重发，
-   * 上位机侧速率不匹配/暂时没上线时，TEC 很快涨到 255 → bus-off，之后连收都不收。 */
-  .AutoRetransmission = ENABLE,
-  .TransmitPause = DISABLE,
-  .ProtocolException = ENABLE,
-};
+FDCAN_InitType hcan1;    // 由 MX_CAN1_Init() 按 CAN_PROT / CAN_BAUD 填好
+
+/* 本板 FDCAN 内核时钟：RCC_FDCAN_PLLSRC_DIV6 于 240 MHz PLL → 40 MHz */
+#define FDCAN_CLK_HZ            40000000u
+
+/* 当前真正生效的物理层/协议。开机时由 CAN_PROT/CAN_BAUD 决定一次：消息 RAM
+ * 布局、滤波器、NBTP/DBTP 都依赖它，所以写入参数只在下次上电生效。 */
+static uint8_t  can_prot_running = CAN_PROT_LEGACY;
+static uint32_t can_baud_running = 500000u;
+static bool     can_fd_running   = false;
+
+static const uint8_t DLCtoBytes[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 12, 16, 20, 24, 32, 48, 64};
+
+/* 仲裁域时序：40 个时间量子/位，prescaler = 40 MHz / (40 × baud)。
+ * 1M→1、500k→2、250k→4、125k→8 …；采样点由 MX_CAN1_Init 按协议选
+ * （旧协议 34/5 = 87.5%，CYBERBEAST 31/8 = 80%）。 */
+static bool can_nominal_timing(uint32_t baud, uint32_t *prescaler){
+        uint32_t denom = baud*40u;
+        if((denom == 0u) || ((FDCAN_CLK_HZ % denom) != 0u)){return false;}
+        uint32_t p = FDCAN_CLK_HZ/denom;
+        if((p < 1u) || (p > 512u)){return false;}
+        *prescaler = p;
+        return true;
+}
+
+/* 数据域时序。40 MHz 只能精确产生少数几档，超出表就退回 Classic 1M 并让
+ * system.can_fd 如实报告 0（不做“看起来是 FD、其实没跑起来”的静默降级）。 */
+static bool can_data_timing(uint32_t baud, uint32_t *p, uint32_t *t1, uint32_t *t2, uint32_t *sjw){
+        switch(baud){
+        case 2000000u: *p = 1; *t1 = 15; *t2 = 4; *sjw = 1; return true;        // 20 tq, 80 %
+        case 4000000u: *p = 1; *t1 = 7;  *t2 = 2; *sjw = 1; return true;        // 10 tq, 80 %
+        case 5000000u: *p = 1; *t1 = 5;  *t2 = 2; *sjw = 1; return true;        //  8 tq, 75 %
+        default: return false;
+        }
+}
 
 /* CAN1 init function */
 void MX_CAN1_Init(void)
 {
   GPIO_InitType GPIO_InitStructure;
-  NVIC_InitType NVIC_InitStructure;
+  uint32_t prescaler, data_prescaler = 1, data_tseg1 = 15, data_tseg2 = 4, data_sjw = 1;
 
   RCC_ConfigFDCANPllClk(RCC_FDCAN_PLLSRC_DIV6); // 6分频，240M / 6 = 40M
   RCC_ConfigFDCANClksrc(RCC_FDCAN_CLKSRC_PLL);
@@ -88,12 +89,79 @@ void MX_CAN1_Init(void)
   GPIO_InitStructure.GPIO_Current = GPIO_DC_12mA;
   GPIO_InitStructure.GPIO_Slew_Rate = GPIO_SLEW_RATE_FAST;
   GPIO_InitPeripheral(CAN_RX_GPIO_Port, &GPIO_InitStructure);
-  
+
   GPIO_InitStructure.Pin        = CAN_TX_Pin;
   GPIO_InitStructure.GPIO_Alternate = GPIO_AF_FDCAN2_TX;
   GPIO_InitStructure.GPIO_Mode  = GPIO_MODE_AF_PP;
   GPIO_InitPeripheral(CAN_TX_GPIO_Port, &GPIO_InitStructure);
-  
+
+  /* ---- 由持久化参数决定物理层 ----
+   * 该函数在 config_apply_defaults()/preference_writer_load() 之后调用，
+   * 否则读到的是默认值而不是客户配置。 */
+  can_prot_running = (CAN_PROT == CAN_PROT_CYBERBEAST) ? CAN_PROT_CYBERBEAST : CAN_PROT_LEGACY;
+  can_baud_running = (CAN_BAUD >= 50000) ? (uint32_t)CAN_BAUD : 500000u;
+  if((can_prot_running == CAN_PROT_LEGACY) && (can_baud_running > CAN_FD_BAUD_THRESHOLD)){
+          can_baud_running = CAN_FD_NOMINAL_BAUD;       // 旧协议只有 8 字节帧，不用 FD
+  }
+
+  /* can_baud 在 FD 下是**数据域**速率：先决定物理层，再算仲裁域时序。
+   * （不能把 5M 当仲裁速率去做 40 MHz/(40×baud) 的整除检查——那会永远失败。） */
+  can_fd_running = false;
+  if(can_baud_running > CAN_FD_BAUD_THRESHOLD){
+          if(can_data_timing(can_baud_running, &data_prescaler, &data_tseg1, &data_tseg2, &data_sjw)){
+                  can_fd_running = true;
+          }
+          else{
+                  /* 数据域速率不在 2M/4M/5M 表里 → 退回 Classic 1M，
+                   * 由 system.can_fd = 0 如实反映 */
+                  can_baud_running = CAN_FD_NOMINAL_BAUD;
+          }
+  }
+
+  uint32_t nominal_baud = can_fd_running ? CAN_FD_NOMINAL_BAUD : can_baud_running;
+  if(!can_nominal_timing(nominal_baud, &prescaler)){
+          can_baud_running = 500000u;
+          can_fd_running = false;
+          (void)can_nominal_timing(can_baud_running, &prescaler);
+  }
+
+  hcan1.FrameFormat       = can_fd_running ? FDCAN_FRAME_FD_BRS : FDCAN_FRAME_CLASSIC;
+  hcan1.Mode              = FDCAN_MODE_NORMAL;
+  hcan1.Prescaler         = prescaler;
+  hcan1.SyncJumpWidth     = 2;
+  /* 旧协议保持原有 87.5% 采样点（34/5），不改变已在跑的客户总线；
+   * CYBERBEAST 用 Vector/CiA 推荐的 80%（31/8，与 ODrive 参考实现一致）。 */
+  hcan1.TimeSeg1          = (can_prot_running == CAN_PROT_LEGACY) ? 34u : 31u;
+  hcan1.TimeSeg2          = (can_prot_running == CAN_PROT_LEGACY) ? 5u : 8u;
+  hcan1.DataPrescaler     = data_prescaler;
+  hcan1.DataSyncJumpWidth = data_sjw;
+  hcan1.DataTimeSeg1      = data_tseg1;
+  hcan1.DataTimeSeg2      = data_tseg2;
+  hcan1.MsgRamStrAddr     = (uint32_t)FDCAN_ram;
+  hcan1.MsgRamOffset      = 0;
+  hcan1.pMsgInfo          = &Node_msg;
+  /* 滤波器元素个数必须与 can_rx_init() 实际写入的元素匹配：FDCAN_InitMsgRam()
+   * 用它们计算消息 RAM 布局，并且 LSS/LSE = 0 时写进去的滤波器元素不会生效。
+   * 旧协议用 1 个标准滤波器；CYBERBEAST 用 1 个扩展滤波器。 */
+  hcan1.StdFilterSize     = (can_prot_running == CAN_PROT_LEGACY) ? 1 : 0;
+  hcan1.ExtFilterSize     = (can_prot_running == CAN_PROT_CYBERBEAST) ? 1 : 0;
+  hcan1.RxFifo0Size       = 8;
+  hcan1.RxFifo0DataSize   = can_fd_running ? FDCAN_DATA_BYTES_64 : FDCAN_DATA_BYTES_8;
+  hcan1.RxFifo1Size       = 0;
+  hcan1.RxFifo1DataSize   = FDCAN_DATA_BYTES_8;
+  hcan1.RxBufferSize      = 0;
+  hcan1.RxBufferDataSize  = FDCAN_DATA_BYTES_8;
+  hcan1.TxBufferSize      = 0;
+  hcan1.TxBufferDataSize  = can_fd_running ? FDCAN_DATA_BYTES_64 : FDCAN_DATA_BYTES_8;
+  hcan1.TxFifoQueueSize   = 8;
+  hcan1.TxFifoQueueMode   = FDCAN_TX_FIFO_MODE;
+  hcan1.TxEventSize       = 0;
+  /* 自动重发必须打开（CCCR.DAR = 0）：DAR = 1 时一帧只要没被应答就不会重发，
+   * 上位机侧速率不匹配/暂时没上线时，TEC 很快涨到 255 → bus-off，之后连收都不收。 */
+  hcan1.AutoRetransmission = ENABLE;
+  hcan1.TransmitPause      = DISABLE;
+  hcan1.ProtocolException  = ENABLE;
+
   FDCAN_DeInit(FDCAN2);
 
   FDCAN_Init(FDCAN2, &hcan1);
@@ -101,42 +169,44 @@ void MX_CAN1_Init(void)
   FDCAN_ConfigTSPrescaler(FDCAN2, FDCAN_TIMESTAMP_PRESC_16);
   FDCAN_Config_TS(FDCAN2, FDCAN_TIMESTAMP_DISABLE);
 
-  NVIC_InitStructure.NVIC_IRQChannel                   = FDCAN2_INT0_IRQn;
-  NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 0;
-  NVIC_InitStructure.NVIC_IRQChannelSubPriority        = 0;
-  NVIC_InitStructure.NVIC_IRQChannelCmd                = ENABLE;
-  NVIC_Init(&NVIC_InitStructure);
+  /* RX 由 40 kHz 控制中断轮询（can_rx_fetch），FDCAN 中断源保持关闭，
+   * 所以这里也不去动 NVIC（main.c 的优先级表里 CAN_ISR 只是占位）。 */
 
-  /* CAN RX is polled from the commutation interrupt (can_tx_rx), not interrupt-driven,
-     * so the CAN1_RX0 interrupt is left disabled */
-  // FDCAN_ConfigIntLine(FDCAN2, FDCAN_INT_RX_FIFO0_NEW_MESSAGE, FDCAN_INTERRUPT_LINE0);
-  // FDCAN_ActivateInt(FDCAN2, FDCAN_INT_RX_FIFO0_NEW_MESSAGE, FDCAN_TX_BUFFER0);
-
+  can_rx_init();          // 滤波器
+  FDCAN_Start(FDCAN2);    // 收帧从 40 kHz 控制中断轮询
 }
 
 /* USER CODE BEGIN 1 */
 
-void can_rx_init(CANRxMessage *msg){
-  msg->filter.FilterIndex = 0;
-	msg->filter.FilterConfig=FDCAN_FILTER_TO_RXFIFO0; 	// set fifo assignment
-	/* Classic (mask) filter with M_CAN semantics: the hardware matches
-	 * (RxID & FilterID2) == (FilterID1 & FilterID2) on the standard 11 ID bits,
-	 * where a 1 in FilterID2 means "this bit must match".  The 11-bit ID is
-	 * (opcode << 7) | node_id, so masking only the low 7 bits accepts this
-	 * node's frames for every opcode while ignoring everything addressed to
-	 * another node.
-	 * NOTE: the filter ID is the raw 11-bit standard ID here - the previous
-	 * "CAN_ID << 5" was carried over from the STM32 bxCAN 16-bit filter
-	 * register (FxR1[15:5]) and never matched this node's frames. */
-	msg->filter.FilterID1=CAN_ID & 0x7F;			// this node's ID, in the 11-bit standard ID field
-	msg->filter.FilterID2=0x7F;						// match the 7 node ID bits; the 4 opcode bits are "don't care"
-	msg->filter.FilterType = FDCAN_FILTER_MASK;
-	msg->filter.IdType = FDCAN_STANDARD_ID;
-	FDCAN_ConfigFilter(FDCAN2, &msg->filter);
-	/* Reject frames that do not match the filter above (and all remote frames).
-	 * Without this the M_CAN default (ANFS = 00) accepts non-matching standard
-	 * frames into FIFO 0, which would make the filter above a no-op: every node
-	 * on the bus could put this controller in motor mode. */
+/* 安装当前协议的验收滤波器。
+ * 旧协议：标准 (mask) 滤波器，M_CAN 语义 (RxID & FilterID2) == (FilterID1 & FilterID2)。
+ * 11 位 ID 是 (opcode<<7)|node_id，只掩低 7 位就等于“接受本节点所有 opcode”。
+ * CYBERBEAST：29 位扩展帧，Dest 可能是本节点、位掩码广播或 0xFF 全局广播。
+ * 掩码过滤器无法同时表达这三种情况，所以硬件接受全部扩展帧（掩码 0），
+ * Dest 由软件过滤。1M FD 下满总线约 2k 帧/s，而 40 kHz 轮询可消化 40k 帧/s。 */
+void can_rx_init(void)
+{
+	FDCAN_FilterType filter;
+	memset(&filter, 0, sizeof(filter));
+	filter.FilterIndex  = 0;
+	filter.FilterConfig = FDCAN_FILTER_TO_RXFIFO0;
+	filter.FilterType   = FDCAN_FILTER_MASK;
+
+	if(can_prot_running == CAN_PROT_LEGACY){
+		filter.IdType    = FDCAN_STANDARD_ID;
+		filter.FilterID1 = CAN_ID & 0x7F;       // this node's ID, in the 11-bit standard ID field
+		filter.FilterID2 = 0x7F;                // match the 7 node ID bits; opcode bits are "don't care"
+	}
+	else{
+		filter.IdType    = FDCAN_EXTENDED_ID;
+		filter.FilterID1 = 0;                   // accept every extended frame ...
+		filter.FilterID2 = 0;                   // ... mask 0 = all bits "don't care"
+	}
+	FDCAN_ConfigFilter(FDCAN2, &filter);
+
+	/* Reject frames that do not match (and all remote frames).  Without this the
+	 * M_CAN default (ANFS = 00) accepts non-matching standard frames into FIFO 0,
+	 * which would make the filter above a no-op. */
 	FDCAN_ConfigGlobalFilter(FDCAN2, FDCAN_REJECT_STD, FDCAN_REJECT_EXT,
 	  FDCAN_REJECT_STD_REMOTE, FDCAN_REJECT_EXT_REMOTE);
 }
@@ -153,6 +223,65 @@ void can_tx_init(CANTxMessage *msg){
 	msg->tx_header.ID = CAN_MASTER;  // recipient CAN ID
   msg->reply_var_a = CAN_VAR_POSITION;	// default telemetry reply until CAN_OP_SET_REPLY_FORMAT changes it
 	msg->reply_var_b = CAN_VAR_VELOCITY;
+}
+
+/* ---- 帧收发（协议无关） ------------------------------------------------ */
+
+uint8_t can_active_prot(void){return can_prot_running;}
+bool can_is_fd(void){return can_fd_running;}
+uint32_t can_active_baud(void){return can_baud_running;}
+
+/* 字节数 → DLC 编码（只有 0..8, 12, 16, 20, 24, 32, 48, 64 是合法长度） */
+static uint32_t dlc_from_len(uint8_t len){
+        if(len <= 8u){return (uint32_t)len << FDCAN_ELEMENT_DLC_OFFSET;}
+        if(len <= 12u){return FDCAN_DLC_BYTES_12;}
+        if(len <= 16u){return FDCAN_DLC_BYTES_16;}
+        if(len <= 20u){return FDCAN_DLC_BYTES_20;}
+        if(len <= 24u){return FDCAN_DLC_BYTES_24;}
+        if(len <= 32u){return FDCAN_DLC_BYTES_32;}
+        if(len <= 48u){return FDCAN_DLC_BYTES_48;}
+        return FDCAN_DLC_BYTES_64;
+}
+
+/* 发一帧。FD 模式下所有帧都用 FD 格式（与 ODrive 一致），但 ≤8 字节的帧
+ * 不启用 BRS：控制/查询帧没有必要付数据域提速的开销。
+ * ⚠ Classic 模式下必须拒绝 >8 字节：Tx FIFO 元素只有 8 字节，硬塞 64 字节
+ * 会踩坏消息 RAM。 */
+bool can_send_frame(uint32_t id, uint32_t id_type, const uint8_t *data, uint8_t len){
+        if(len > CAN_MAX_FRAME_BYTES){return false;}
+        if(!can_fd_running && (len > 8u)){return false;}
+
+        FDCAN_TxHeaderType h;
+        memset(&h, 0, sizeof(h));
+        h.IdType        = id_type;
+        h.ID            = id;
+        h.TxFrameType   = FDCAN_DATA_FRAME;
+        h.ErrorState    = FDCAN_ESI_PASSIVE;
+        h.TxEventFifo   = FDCAN_NO_TX_EVENTS;
+        h.MsgMarker     = 0x55;
+        h.DataLength    = dlc_from_len(len);
+        h.FDFormat      = can_fd_running ? FDCAN_FD_CAN : FDCAN_CLASSIC_CAN;
+        h.BitRateSwitch = (can_fd_running && (len > 8u)) ? FDCAN_BRS_ON : FDCAN_BRS_OFF;
+        return FDCAN_AddMsgToTxFifoQ(FDCAN2, &h, (uint8_t *)data) == SUCCESS;
+}
+
+/* 旧协议用：把 CANTxMessage 里配好的 ID/DLC 发出去 */
+bool can_send_legacy(CANTxMessage *msg){
+        uint8_t len = DLCtoBytes[msg->tx_header.DataLength >> FDCAN_ELEMENT_DLC_OFFSET];
+        return can_send_frame(msg->tx_header.ID, FDCAN_STANDARD_ID, msg->data, len);
+}
+
+/* 从 Rx FIFO0 取一帧。返回 false = 没有待处理帧。 */
+bool can_rx_fetch(can_frame_t *f){
+        FDCAN_RxHeaderType h;
+        if(FDCAN_GetRxFifoFillLevel(FDCAN2, FDCAN_RX_FIFO0) <= 0){return false;}
+        if(FDCAN_GetRxMsg(FDCAN2, FDCAN_RX_FIFO0, &h, f->data) != SUCCESS){return false;}
+        if(h.RxFrameType != FDCAN_DATA_FRAME){return false;}
+        f->id      = h.ID;
+        f->id_type = h.IdType;
+        f->len     = DLCtoBytes[h.DataLength >> FDCAN_ELEMENT_DLC_OFFSET];
+        if(f->len > CAN_MAX_FRAME_BYTES){f->len = CAN_MAX_FRAME_BYTES;}
+        return true;
 }
 
 /// CAN Reply Packet Structure ///
@@ -198,12 +327,12 @@ void pack_reply(CANTxMessage *msg, uint8_t id, float p, float v, float t, float 
 /// 5: [kd[11-4]]
 /// 6: [kd[3-0], torque[11-8]]
 /// 7: [torque[7-0]]
-void unpack_cmd(CANRxMessage msg, float *commands){// ControllerStruct * controller){
-        int p_int = (msg.data[0]<<8)|msg.data[1];
-        int v_int = (msg.data[2]<<4)|(msg.data[3]>>4);
-        int kp_int = ((msg.data[3]&0xF)<<8)|msg.data[4];
-        int kd_int = (msg.data[5]<<4)|(msg.data[6]>>4);
-        int t_int = ((msg.data[6]&0xF)<<8)|msg.data[7];
+void unpack_cmd(const can_frame_t *f, float *commands){// ControllerStruct * controller){
+        int p_int = (f->data[0]<<8)|f->data[1];
+        int v_int = (f->data[2]<<4)|(f->data[3]>>4);
+        int kp_int = ((f->data[3]&0xF)<<8)|f->data[4];
+        int kd_int = (f->data[5]<<4)|(f->data[6]>>4);
+        int t_int = ((f->data[6]&0xF)<<8)|f->data[7];
 
         commands[0] = uint_to_float(p_int, P_MIN, P_MAX, 16);
         commands[1] = uint_to_float(v_int, V_MIN, V_MAX, 12);
@@ -258,9 +387,9 @@ void pack_telemetry_reply(CANTxMessage *msg, uint8_t var_a, uint8_t var_b){
 /// Unpack two float32s from a command frame ///
 /// Returns 0 (and leaves the outputs unusable) if either is NaN,
 /// so garbage frames can't inject NaN into the control loop
-int can_unpack_two_floats(CANRxMessage *msg, float *a, float *b){
-    memcpy(a, &msg->data[0], sizeof(float));
-    memcpy(b, &msg->data[4], sizeof(float));
+int can_unpack_two_floats(const can_frame_t *f, float *a, float *b){
+    memcpy(a, &f->data[0], sizeof(float));
+    memcpy(b, &f->data[4], sizeof(float));
     return !(isnan(*a) || isnan(*b));
     }
 

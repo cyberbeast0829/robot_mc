@@ -42,6 +42,9 @@ const prefs_entry_t prefs_entries[] = {
 	{26, PREFS_T_I32, 4, (void *)&(M_ZERO)},
 	{27, PREFS_T_I32, 4, (void *)&(E_ZERO)},
 	{118, PREFS_T_BLOB, 512, (void *)&(ENCODER_LUT)},
+	{120, PREFS_T_I32, 4, (void *)&(CAN_PROT)},
+	{121, PREFS_T_I32, 4, (void *)&(CAN_BAUD)},
+	{122, PREFS_T_I32, 4, (void *)&(CAN_HB_MS)},
 };
 const unsigned prefs_entry_count = sizeof(prefs_entries) / sizeof(prefs_entries[0]);
 
@@ -78,6 +81,9 @@ void config_apply_defaults(void){
 	M_ZERO = 0;
 	E_ZERO = 0;
 	memset((void *)&(ENCODER_LUT), 0, 512);
+	CAN_PROT = 0;
+	CAN_BAUD = 500000;
+	CAN_HB_MS = 100;
 }
 
 void config_apply_limits(void){
@@ -132,4 +138,10 @@ void config_apply_limits(void){
 	if(CAN_MASTER > 127){CAN_MASTER = 127;}
 	if(CAN_TIMEOUT < 0){CAN_TIMEOUT = 0;}
 	if(CAN_TIMEOUT > 100000){CAN_TIMEOUT = 100000;}
+	if(CAN_PROT < 0){CAN_PROT = 0;}
+	if(CAN_PROT > 1){CAN_PROT = 1;}
+	if(CAN_BAUD < 50000){CAN_BAUD = 50000;}
+	if(CAN_BAUD > 5000000){CAN_BAUD = 5000000;}
+	if(CAN_HB_MS < 0){CAN_HB_MS = 0;}
+	if(CAN_HB_MS > 10000){CAN_HB_MS = 10000;}
 }

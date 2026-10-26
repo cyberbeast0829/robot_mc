@@ -240,16 +240,23 @@ id u16 | type u8 | flags u8 | len u16 | reserved u16 | value[len] | padding
 | 改 C 类型/长度（同 ID） | **不要** | 该参数静默回默认值 |
 | 改块布局/编码 | `PREFS_SCHEMA` +1 | 见下 |
 
-迁移：`PREFS_SCHEMA` +1 → `prefs_block_valid()` 会拒旧块 → 在
-`preference_writer_load()` 加"旧 schema 分支"读出旧值、立即按新格式保存一次。
-当前没有迁移函数（schema 1 是第一版）。
+迁移：`PREFS_SCHEMA` +1 → `prefs_block_valid()` 本来会拒旧块。做法是让它**继续接受**
+上一个 schema（`PREFS_SCHEMA_V1`），再在 `preference_writer_load()` 里用
+`prefs_block_schema()` 辨认版本、就地做一次性换算。这样旧配置（含编码器 LUT/标定）
+不会丢；换算只发生在 RAM，下次保存写出的块已经是新 schema（**不要**在加载后再
+“顺手再存一次”——那会在开机时擦写 flash）。
+
+已有迁移：**schema 1 → 2**——`config.can_timeout` 的单位从「控制周期（25 µs）」
+改成**毫秒**（`prefs_v1_cycles_to_ms()`，40 控制周期 = 1 ms，四舍五入，0 仍是关闭）。
+新默认值 100 ms（旧默认 1000 周期 = 25 ms）。
 
 容量：单条 512 B、总载荷 4096 B、记录 256 条。`internal.encoder_lut` 是 512 B，
 `prefs_defs.c` 里的 `_Static_assert(N_LUT * sizeof(int) == 512)` 会在改 `N_LUT`
 时编译失败——同时改 `params.json` 的 `size`。
 
 主机测试：`make hosttest`（往返、缺记录默认值、未知记录透传、512 B blob、
-CRC/schema 拒绝、空表拒绝、`old_block == out` 别名拒绝、容量失败）。
+CRC/schema 拒绝、空表拒绝、`old_block == out` 别名拒绝、容量失败、
+schema 1→2 单位迁移与降级块仍可读）。
 
 ## Flash 布局与 OTA 契约
 
@@ -284,35 +291,136 @@ bootloader 契约（本仓库不含 bootloader，app 链接在 `0x08000000`）�
 失败恢复：保存掉电用另一页；擦写失败 `save_status = 3` 且旧页保留；两页都坏
 → 默认值 + `prefs_loaded = 0`，需要重新设置 + 标定。没有自动"恢复出厂"。
 
-## CAN / CyberBeast 移植
+## CAN：协议选择与 CYBERBEAST
 
-目标：用 JointSDK 的 CyberBeast 协议访问同一套 endpoint。endpoint 层已经就绪
-（16 位 ID、小端、`r/w/rw`、纯 ASCII 描述符、`function` 类型的动作端点），
-缺的只是 CAN 传输层。
+**三个持久化参数决定协议与物理层，开机时读取一次，写入后下次上电生效：**
 
-CyberBeast 用 **29-bit 扩展帧**：`Priority(3) | MsgType(8) | Dest(8) | Source(8) | Seq(2)`；
-现有协议用 11-bit 标准帧 `(opcode << 7) | node_id`。给 FDCAN2 增加扩展帧过滤器，
-两套共存。
+| 参数 | 含义 |
+|---|---|
+| `config.can_prot` | `0` = 旧 11-bit 协议（默认），`1` = CYBERBEAST |
+| `config.can_baud` | bit/s。`≤ 1M`：Classic CAN，该值就是位速率；`> 1M`：CAN FD，仲裁域固定 1 M，数据域 = 该值（支持 2M/4M/5M） |
+| `config.can_hb_ms` | CYBERBEAST 心跳周期（默认 100 ms，0 关闭） |
 
-| 消息 | 帧格式 | 映射 |
+`system.can_prot_active` / `system.can_fd` / `system.can_baud_active` 报告**真正在跑**
+的协议、物理层与速率。`can_prot=0` 时 `can_baud > 1M` 会被钳到 1M（旧协议只有
+8 字节帧）；FD 数据速率不在 2M/4M/5M 表里时退回 Classic 1M，并让
+`system.can_fd=0` 如实反映，不做“看起来是 FD、其实没跑起来”的静默降级。
+Classic 速率必须能由 40 MHz / (40 个时间量子) 整除：50k/100k/125k/200k/250k/500k/1M。
+
+为什么必须开机生效：NBTP/DBTP、消息 RAM 元素大小（8 B vs 64 B）和滤波器类型
+都由这两个值决定，运行期重建会打断 40 kHz 控制循环。因此 `MX_CAN1_Init()` 从
+CubeMX 的 SysInit 段移到了配置加载之后
+（`config_apply_defaults` → `preference_writer_load` → `config_apply_limits` 之后）。
+
+### 代码结构
+
+| 文件 | 职责 |
+|---|---|
+| `can.c` | 时钟/引脚、NBTP/DBTP、消息 RAM、滤波器、`can_send_frame` / `can_rx_fetch` |
+| `can_proto.c` | 协议表（`can_protocol_t`）与分发；25 µs → 1 ms 时基 |
+| `can_mit.c` | 旧 11-bit 协议（从 `n32h47x_48x_it.c` 原样搬出） |
+| `can_cyberbeast.c/.h` | CYBERBEAST |
+| `can_cyberbeast_codec.h` | 纯编解码（固件与 host 测试共用） |
+
+`n32h47x_48x_it.c` 的 `can_tx_rx()` 只做：`can_proto_tick()` + 每周期最多取 2 帧
+→ `can_proto_rx()`。控制帧、查询、心跳、SDO 参数访问都在 ISR；**描述符流式发送
+在主循环**（`can_proto_poll()`，2 帧/ms）。新增协议 = 一个 `can_protocol_t` + 一个
+`can_prot` 枚举值，不动硬件层。
+
+### CYBERBEAST 实现范围
+
+| MsgType | 行为 |
+|---|---|
+| `0x00/0x80` MIT | 8 字节位域 → `p_des/v_des/kp/kd/t_ff`（**输出端 1:1**）；单播回 8 字节响应；FD 广播按 `slot = node_id` 取槽（node_id 必须 1..7） |
+| `0x03/0x83` TORQUE | 线上是电机端 N·m → `t_ff = τ × GR`，`kp = kd = 0` |
+| `0x04` CURRENT | `t_ff = I × KT × GR`，不回应答；**刷新超时**（比 ODrive 的 F19 更安全） |
+| `0x01/0x02` CSP/CSV | **暂不支持**（本固件没有独立位置/速度环），静默忽略 |
+| `0x20/0x21` SDO | 直接 `endpoint_handler()`；值小端；Classic 下 ReqLen 钳到 4；`>4` 字节走分段写；批量读回 ERR |
+| `0x22` SAVE | 置 `state.save_pending`（门极关闭时由主循环写 flash） |
+| `0x24/0x25` 描述符 | 元数据 + 定长分片（8/64 B，末尾补 0），2 帧/ms |
+| `0x40..0x49` 查询 | 状态/位置速度/电流/温度/母线/错误/版本；功率与母线电流返回 0 |
+| `0x48` 心跳 | Classic 8 B / FD 19 B；pos/vel 按**原始计数域**钳位（F32 教训）；字节 18 是映射后的 ODrive AxisState |
+| `0x60..0x65` | SET_NODE_ID（RAM，需 save 持久化）/ SET_ZERO / START（仅 MENU）/ STOP / RESET / CLEAR |
+| `0xC0` ESTOP | `controller.fault |= FAULT_ESTOP` → FAULT_MODE 关栅，需显式回菜单清除 |
+
+心跳的**目的地址是主站 ID**（协议 §4.6 `Dest=MasterID`，不是广播）：`cb_master_id` 从收到的帧里
+学 Source，**复位/上电清零**，清零期间按默认主站 `1` 发送（`config.can_master` 只在没学到值之前
+起作用，学到了就听学到的）。⇒ 主站 ID 不是 1 时，必须**先发一帧**（任意类型）才会把心跳改发到
+自己的 ID；台架脚本不要按 `dest == 本机` 过滤心跳，否则"刚复位没心跳"是假故障。
+
+单位表（最容易错的地方）：
+
+| 量 | 线上 | 本工程 |
 |---|---|---|
-| `0x20` 读 | `[flags][id u16 BE][req_len][offset u32 BE]` | `endpoint_handler(id, EP_OP_READ, …)`，按 `offset/req_len` 切片（Classic 每帧 ≤4 B） |
-| `0x21` 写 | `[flags][id u16 BE][data_len][value]`（整帧 ≥8 B，SDK 补零） | `endpoint_handler(id, EP_OP_WRITE, …)`，成功回 8 字节 ACK |
-| `0x24/0x25` 描述符 | 元数据 `[00 00][total u32 LE][crc u16 LE]`，数据 `[chunkOffset u16 LE][≤6 B]` | 流式发送 `endpoint_json`，≤50 帧/ms（约 9 KB ≈ 1550 帧） |
+| MIT pos/vel/kp/kd/τ | 输出端 rad / rad/s / N·m/rad / N·m | 同口径，1:1 |
+| TORQUE / CURRENT | 电机端 N·m / A | `×GR` / `×KT×GR` 换成输出端 `t_ff` |
+| 心跳 pos/vel | 电机端 turns（×100 / ×10000） | `angle_multiturn/(2π)` |
+| QUERY_POS_VEL | 电机端 turns | 同上 |
 
-已知不兼容：`jsdk_context_configure()` 会先做 `0x00` MIT 握手并解析 7 个 ODrive
-专有路径（`axis0.motor.config.gear_ratio` 等）。先用底层
-`jsdk_context_desc_fetch()` + `jsdk_joint_param_get/set`；SDK 侧的适配由
-SDK 项目解决，不要为它改固件参数命名。
+量程沿用 `P_MAX/V_MAX/KP_MAX/KD_MAX/I_MAX`：MIT 力矩满量程 `I_MAX·KT·GR`，
+响应电流满量程 `I_MAX·GR`（= `mit_max_torque / KT`），与 ODrive 的动态算法一致。
 
-移植清单：扩展帧过滤器 → `0x20/0x21`（带 op）→ `0x24/0x25` 流式状态机 →
-回归（SDK 解析描述符；读写所有 access 组合；`action.*` 的读必须返回
-`EP_ERR_WRITE_ONLY`）→ 更新本文档。`can_tx_rx` 在 ISR 里，动作只置标志。
+### 与 JointSDK 的现状
+
+`jsdk_context_configure()` 仍会失败：它要求 `axis0.motor.config.gear_ratio` 等
+7 个 ODrive 路径。**本工程刻意不加这些别名**（客户将改 JointSDK 适配），
+所以现阶段用 `jsdk_context_desc_fetch()` + `jsdk_joint_param_get/set()` 访问参数，
+控制用 `0x00/0x03/0x04`。描述符仍是纯 ASCII、动作端点为 `function` 类型，
+可直接被 SDK 的 `cb_jsondesc_parse` 解析（124 个可见端点，约 9.9 KB）。
+
+### 台架注意
+
+- 5 M 数据域没有额外配置 TDC（与 ODrive 现状一致），需要实测误码率/TEC。
+- 仲裁域统一 40 个时间量子；旧协议保持原采样点 **87.5%**（34/5，总线行为不变），
+  CYBERBEAST 用 80%（31/8，与 ODrive 一致；FD 数据域 5 M = 8 tq/75%）。
+- 扩展帧过滤器接受**全部**扩展帧，Dest 由软件过滤；1M 满总线约 2k 帧/s，
+  40 kHz 轮询可消化 40k 帧/s。
+- 改 `can_prot` / `can_baud` / `can_id` 后必须断电重启，`system.can_prot_active`
+  可核对；`can_id` 的滤波器和 CyberBeast 的 Dest 都按新值生效。
+- `action.save` 写入的是新参数值，但运行中的物理层不变（下次上电才切换）。
+
+### 台架实测（2026-10-26，Keil 构建 + CANable 2.0）
+
+| 场景 | 结果 |
+|---|---|
+| Classic 1M：A 握手/SDO/心跳/描述符/查询/ESTOP | 34/34 |
+| Classic 1M：B 闭环力矩脉冲 | 7/7 |
+| FD 1M/5M：A | 34/34 |
+| FD：B MIT 单播脉冲 / C 64 B 广播脉冲 | 7/7 · 5/5 |
+| FD：C-static 广播槽位 + 单位映射 | 9/9 |
+| FD：`0x64` 重启（回 1.99 s）+ 配置保持 | 7/7 |
+| FD：SDO/控制错误路径（D） | 12/12 |
+| FD：MOTOR 下命令超时（T，含 20 Hz 主站存活） | 11/11 |
+
+schema 1 → 2 迁移已实机验证（同一块配置，不动 flash）：旧块算出
+`config.can_timeout = 25`（原 1000 控制周期）、`system.config_schema = 2`、
+`prefs_sequence` 不变、`e_zero = 934` / `ppairs = 14`（同块的标定记录）全部保留；
+改成 100 后 `action.save` → sequence +1，重启后直读 schema 2 块，值仍是 100
+（**没有二次换算**）。
+
+几条必须记住的行为（都是客户会踩的）：
+
+- **`config.can_timeout` 的单位是毫秒**（默认 **100 ms**，0 = 关闭）。固件内部用
+  `CAN_TIMEOUT_CYCLES`（×40）与 `controller.timeout`（控制周期）比较，实测最后一帧后
+  **100 ms 量级**被 `zero_commands()` 清零。⇒ 主站必须快于 10 Hz（旧版本是 25 ms 超时、
+  要求 >40 Hz，已改）。`telemetry.can_timeout_count` 报的是**控制周期数**（饱和在
+  `can_timeout × 40`），用来判断“离超时还有多远”。
+- **写的 ACK 不含成败位**（协议如此）：只读端点、类型不符、`require` 不满足都**照样回 ACK**，
+  必须读回判定。实测：写 `telemetry.v_bus` 无效果；门极使能时写 `config.gr` 被拒（值不变）。
+- 错误路径实测：批量读（flags bit6）回 `BATCH|ERR`（`0x60`）；读 `action.*` 回 0 字节
+  且**不会触发动作**；越界写钳到 min/max（`config.i_bw` 1e9→2000、-1e9→100）；
+  NaN 被丢弃（值不变）；宽度不符（`config.gr` 用 int16）被丢弃；`0x03` TORQUE 超大值
+  钳到 `I_MAX·KT·GR`，NaN 帧被忽略。
+- 台架脚本：`python tools/cb_bench.py --port COMx --stage-a|--stage-b|--stage-c|--stage-c-static|--stage-d|--reset-test|--timeout-test [--fd]`。
+  ⚠ 脚本自身的收发周期很关键：早期版本用 `ser.read(4096)`（串口 timeout 50 ms）导致
+  实际只有 ~20 Hz、比 25 ms 的超时还慢，量出来的力矩/位置变化偏小 —— **别用"命令没反应"
+  去怀疑固件，先数自己发了多少帧**。
 
 ## 测试
 
-自动检查：`make check`（生成物/文档最新）、`make hosttest`（`prefs_codec`）、
-`make`（链接）。Windows 用 MSYS2 bash 构建（Chocolatey 的 make 用 cmd，
+自动检查：`make check`（生成物/文档最新）、
+`make hosttest`（`prefs_codec` + `test_can_cyberbeast`）、`make`（链接）。
+Windows 用 MSYS2 bash 构建（Chocolatey 的 make 用 cmd，
 `mkdir -p` 会失败）：
 
 ```bash
