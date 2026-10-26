@@ -42,6 +42,47 @@ static void bind(prefs_entry_t *e){
 	e[2].ptr = &blob_a[0];
 }
 
+/* 改写 schema 字段并重算 CRC（用来伪造上一个版本的块） */
+static void patch_schema(uint8_t *b, uint16_t schema){
+	uint16_t plen = (uint16_t)(b[12] | (b[13] << 8));
+	b[4] = (uint8_t)(schema & 0xFF);
+	b[5] = (uint8_t)(schema >> 8);
+	uint32_t crc = prefs_crc32(0xFFFFFFFFu, b, 16);
+	crc = prefs_crc32(crc, b + PREFS_HEADER_LEN, plen);
+	b[16] = (uint8_t)(crc & 0xFF);
+	b[17] = (uint8_t)((crc >> 8) & 0xFF);
+	b[18] = (uint8_t)((crc >> 16) & 0xFF);
+	b[19] = (uint8_t)((crc >> 24) & 0xFF);
+}
+
+static void test_schema_migration(void){
+	prefs_entry_t e[N_ENTRIES];
+	size_t len = 0;
+
+	memcpy(e, entries, sizeof(entries));
+	bind(e);
+	f32_a = 2.0f; i32_a = 1000;
+	CHECK(prefs_block_build(block, sizeof(block), 5, e, N_ENTRIES, NULL, 0, &len) == PREFS_OK);
+	CHECK(prefs_block_schema(block) == PREFS_SCHEMA);
+
+	/* 降级成 schema 1（老固件写出的块）：仍必须能读，且 schema 可辨认 */
+	patch_schema(block, PREFS_SCHEMA_V1);
+	CHECK(prefs_block_valid(block, sizeof(block), NULL, NULL));
+	CHECK(prefs_block_schema(block) == PREFS_SCHEMA_V1);
+
+	/* 从 schema 1 旧块保存 -> 新块必须是当前 schema */
+	CHECK(prefs_block_build(work, sizeof(work), 6, e, N_ENTRIES, block, sizeof(block), &len)
+              == PREFS_OK);
+	CHECK(prefs_block_schema(work) == PREFS_SCHEMA);
+
+	/* v1 -> v2 单位换算：控制周期(25 us) -> 毫秒，四舍五入，0 仍是关闭 */
+	CHECK(prefs_v1_cycles_to_ms(0) == 0);
+	CHECK(prefs_v1_cycles_to_ms(20) == 1);
+	CHECK(prefs_v1_cycles_to_ms(1000) == 25);
+	CHECK(prefs_v1_cycles_to_ms(40000) == 1000);
+	CHECK(prefs_v1_cycles_to_ms(-40) == 0);
+}
+
 static void test_roundtrip(void){
 	prefs_entry_t e[N_ENTRIES];
 	size_t len = 0;
@@ -124,10 +165,11 @@ static void test_reject(void){
 	CHECK(!prefs_block_valid(block, sizeof(block), NULL, NULL));
 	block[16] ^= 0xFF;
 
-	/* schema */
-	block[4] = 2;
+	/* schema：不认识的版本拒收（CRC 一并重算，确保是 schema 判据在起作用） */
+	patch_schema(block, 9);
 	CHECK(!prefs_block_valid(block, sizeof(block), NULL, NULL));
-	block[4] = 1;
+	patch_schema(block, PREFS_SCHEMA);
+	CHECK(prefs_block_valid(block, sizeof(block), NULL, NULL));
 
 	/* 别名：旧块不能和目标缓冲是同一块内存 */
 	CHECK(prefs_block_build(block, sizeof(block), 2, e, N_ENTRIES, block, sizeof(block), &len) == PREFS_ERR_VALUE);
@@ -154,6 +196,7 @@ int main(void){
 	test_roundtrip();
 	test_defaults_and_carry();
 	test_reject();
+	test_schema_migration();
 
 	if(failures){
 		printf("%d failure(s)\n", failures);

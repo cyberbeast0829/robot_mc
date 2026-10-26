@@ -9,6 +9,7 @@
 #include "preference_writer.h"
 #include "prefs_codec.h"
 #include "prefs_defs.h"
+#include "user_config.h"	// CAN_TIMEOUT (v1 schema unit migration)
 #include "n32h47x_48x_flash.h"
 #include "n32h47x_48x_iwdg.h"	// the save kicks the watchdog itself, the ISR is masked
 
@@ -39,8 +40,14 @@ void preference_writer_load(PreferenceWriter *pr){
 	if(src >= 0){
 		/* 记录按 endpoint ID 写回 RAM；缺记录由 main.c 先调用
 		 * config_apply_defaults() 补上的默认值保持不变 */
+		uint16_t schema = prefs_block_schema((const uint8_t *)sector_addr[src]);
 		(void)prefs_block_load((const uint8_t *)sector_addr[src], PREFS_PAGE_SIZE,
 		                       prefs_entries, prefs_entry_count);
+		if(schema == PREFS_SCHEMA_V1){
+			/* schema 1 -> 2：can_timeout 从“控制周期”换成毫秒。只改 RAM；
+			 * 下次保存写出的块已经是 schema 2，所以每次上电只换算一次。 */
+			CAN_TIMEOUT = prefs_v1_cycles_to_ms(CAN_TIMEOUT);
+		}
 		pr->active_sector = src;
 		pr->sequence = seq[src];
 		pr->schema = PREFS_SCHEMA;

@@ -34,7 +34,7 @@ ID 由 `tools/endpoint_ids.json` 锁定，固件升级不会改变；`access` �
 | `config.phase_order` | 22 | int32 | rw |  | 0 .. 1 | 0 | 是 | 相序（标定得出；门极关闭时才允许写） |
 | `config.can_id` | 23 | int32 | rw |  | 0 .. 127 | 1 | 是 | CAN 节点 ID |
 | `config.can_master` | 24 | int32 | rw |  | 0 .. 127 | 0 | 是 | CAN 主站 ID |
-| `config.can_timeout` | 25 | int32 | rw |  | 0 .. 100000 | 1000 | 是 | CAN 命令超时（控制周期数，0 = 关闭） |
+| `config.can_timeout` | 25 | int32 | rw | ms | 0 .. 100000 | 100 | 是 | CAN 命令超时（毫秒，0 = 关闭）；超时后清零 p_des/v_des/kp/kd/t_ff |
 | `config.m_zero` | 26 | int32 | rw |  | — | 0 | 是 | 机械零位编码器计数（门极关闭时才允许写） |
 | `config.e_zero` | 27 | int32 | rw |  | — | 0 | 是 | 电角度零点编码器计数（门极关闭时才允许写） |
 
@@ -74,7 +74,7 @@ ID 由 `tools/endpoint_ids.json` 锁定，固件升级不会改变；`access` �
 | `telemetry.gate_drive` | 57 | bool | r |  | — | — | 否 | 门极是否使能 |
 | `telemetry.mode` | 58 | uint8 | r |  | — | — | 否 | 当前 FSM 状态（MENU_MODE 等） |
 | `telemetry.loop_count` | 59 | uint32 | r |  | — | — | 否 | 控制周期计数 |
-| `telemetry.can_timeout_count` | 60 | int32 | r |  | — | — | 否 | CAN 命令超时计数器 |
+| `telemetry.can_timeout_count` | 60 | int32 | r |  | — | — | 否 | 距上一帧控制命令的控制周期数（40 拍 = 1 ms，饱和在 can_timeout 对应值） |
 | `telemetry.temperature` | 61 | float | r | C | — | — | 否 | 温度观测器估计值 |
 | `telemetry.resistance` | 62 | float | r | Ohm | — | — | 否 | 温度观测器估计电阻 |
 | `telemetry.can_tec` | 63 | uint8 | r |  | — | — | 否 | CAN 发送错误计数 |

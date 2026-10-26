@@ -74,7 +74,7 @@ void config_apply_defaults(void){
 	PHASE_ORDER = 0;
 	CAN_ID = 1;
 	CAN_MASTER = 0;
-	CAN_TIMEOUT = 1000;
+	CAN_TIMEOUT = 100;
 	M_ZERO = 0;
 	E_ZERO = 0;
 	memset((void *)&(ENCODER_LUT), 0, 512);

@@ -279,9 +279,10 @@
       "ref": "CAN_TIMEOUT",
       "min": 0,
       "max": 100000,
-      "brief": "CAN 命令超时（控制周期数，0 = 关闭）",
+      "unit": "ms",
+      "brief": "CAN 命令超时（毫秒，0 = 关闭）；超时后清零 p_des/v_des/kp/kd/t_ff",
       "persist": true,
-      "default": 1000
+      "default": 100
     },
     {
       "name": "config.m_zero",
@@ -550,7 +551,7 @@
       "type": "int32",
       "access": "r",
       "get": "controller.timeout",
-      "brief": "CAN 命令超时计数器"
+      "brief": "距上一帧控制命令的控制周期数（40 拍 = 1 ms，饱和在 can_timeout 对应值）"
     },
     {
       "name": "telemetry.temperature",

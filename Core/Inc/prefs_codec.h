@@ -3,7 +3,7 @@
  *
  * 配置持久化的纯编解码层（不碰硬件，可主机单测）。
  *
- * 块格式（schema 1）：
+ * 块格式（schema 2）：
  *
  *   Header (20 B):
  *     magic        u32  'PCFG'
@@ -38,7 +38,13 @@ extern "C" {
 #endif
 
 #define PREFS_MAGIC				0x47464350u	// 'PCFG' (little-endian bytes)
-#define PREFS_SCHEMA			1u
+#define PREFS_SCHEMA			2u
+/* schema 1 -> 2：config.can_timeout 的单位从“控制周期(25 us)”换成毫秒。
+ * 旧块仍然可以被读入（prefs_block_valid() 接受它），随后由
+ * preference_writer_load() 调 prefs_v1_cycles_to_ms() 做一次性换算。
+ * 注意：换算只发生在 RAM 里；下次保存时写出的块已经是 schema 2。 */
+#define PREFS_SCHEMA_V1			1u
+#define PREFS_CONTROL_CYCLES_PER_MS	40	// 控制环 40 kHz（DT = 25 us），与 user_config.h 的 CAN_TIMEOUT_CYCLES 一致
 #define PREFS_HEADER_LEN		20u
 #define PREFS_REC_HDR_LEN		8u
 #define PREFS_MAX_PAYLOAD		4096u
@@ -76,9 +82,16 @@ typedef struct{
 /** CRC-32/MPEG-2：poly 0x04C11DB7，init 0xFFFFFFFF，无反射、无最终异或。 */
 uint32_t prefs_crc32(uint32_t state, const void *data, size_t len);
 
-/** 校验块头 + CRC。成功时可选返回 sequence / payload 长度。 */
+/** 校验块头 + CRC。成功时可选返回 sequence / payload 长度。
+ *  schema 字段为 PREFS_SCHEMA 或 PREFS_SCHEMA_V1 都算有效（后者需迁移）。 */
 bool prefs_block_valid(const uint8_t *block, size_t len,
                        uint32_t *sequence, uint16_t *payload_len);
+
+/** 块的 schema 字段（调用前先 prefs_block_valid()）。 */
+uint16_t prefs_block_schema(const uint8_t *block);
+
+/** schema 1 迁移：把“控制周期”计的值换算成毫秒（四舍五入）。 */
+int32_t prefs_v1_cycles_to_ms(int32_t cycles);
 
 /** 把块里的已知记录写回 entries[].ptr。返回成功应用的记录数。 */
 unsigned prefs_block_load(const uint8_t *block, size_t len,

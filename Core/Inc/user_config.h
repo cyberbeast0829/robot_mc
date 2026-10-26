@@ -36,7 +36,12 @@ extern "C" {
 #define PHASE_ORDER             __int_reg[0]                                    // Phase swapping during calibration
 #define CAN_ID                  __int_reg[1]                                    // CAN bus ID
 #define CAN_MASTER              __int_reg[2]                                    // CAN bus "master" ID
-#define CAN_TIMEOUT             __int_reg[3]                                    // CAN bus timeout period
+#define CAN_TIMEOUT             __int_reg[3]                                    // CAN command timeout in **milliseconds** (0 = disabled)
+/* The control loop runs at 40 kHz (DT = 25 us in hw_config.h), so 1 ms = 40 ISR
+ * ticks. controller.timeout counts ticks; compare against this, never against
+ * CAN_TIMEOUT itself. Change both here and in prefs_codec.c's v1 migration if
+ * DT ever changes. */
+#define CAN_TIMEOUT_CYCLES      (CAN_TIMEOUT * 40)
 #define M_ZERO					__int_reg[4]
 #define E_ZERO					__int_reg[5]
 #define ENCODER_LUT             __int_reg[6]                                    // Encoder offset LUT - 128 elements long

@@ -74,8 +74,9 @@ extern uint32_t _reboot_cookie;
 			 break;
 
 		 case MOTOR_MODE:
-			 /* If CAN has timed out, reset all commands */
-			 if((CAN_TIMEOUT > 0 ) && (controller.timeout > CAN_TIMEOUT)){
+			 /* If CAN has timed out, reset all commands.  CAN_TIMEOUT is in ms;
+			  * controller.timeout counts control cycles (25 us each). */
+			 if((CAN_TIMEOUT > 0 ) && (controller.timeout > CAN_TIMEOUT_CYCLES)){
 				 zero_commands(&controller);
 			 }
 			 /* Otherwise, commutate */
@@ -86,7 +87,7 @@ extern uint32_t _reboot_cookie;
 
 			 /* Stop counting once past the threshold so the counter can't
 			  * overflow during long sessions with the CAN watchdog disabled */
-			 if(controller.timeout <= CAN_TIMEOUT){controller.timeout++;}
+			 if(controller.timeout <= CAN_TIMEOUT_CYCLES){controller.timeout++;}
 			 break;
 
 		 case SETUP_MODE:
@@ -334,7 +335,7 @@ extern uint32_t _reboot_cookie;
 	    myprintf("\r\n CAN:\r\n");
 	    myprintf(" %-4s %-31s %-5s %-6s %-5i\n\r", "i", "CAN ID", "0", "127", CAN_ID);
 	    myprintf(" %-4s %-31s %-5s %-6s %-5i\n\r", "m", "CAN TX ID", "0", "127", CAN_MASTER);
-	    myprintf(" %-4s %-31s %-5s %-6s %d\n\r", "t", "CAN Timeout (cycles)(0 = none)", "0", "100000", CAN_TIMEOUT);
+	    myprintf(" %-4s %-31s %-5s %-6s %d\n\r", "t", "CAN Timeout (ms)(0 = none)", "0", "100000", CAN_TIMEOUT);
 	    myprintf(" \n\r To change a value, type 'prefix''value''ENTER'\n\r e.g. 'b1000''ENTER'\r\n ");
 	    myprintf("VALUES NOT ACTIVE UNTIL POWER CYCLE! \n\r\n\r");
  }

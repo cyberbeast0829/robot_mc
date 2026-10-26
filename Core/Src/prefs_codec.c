@@ -51,11 +51,24 @@ static const prefs_entry_t *find_entry(const prefs_entry_t *entries, unsigned co
 	return NULL;
 }
 
+uint16_t prefs_block_schema(const uint8_t *block){
+	return (block && (rd32(block) == PREFS_MAGIC)) ? rd16(block + 4) : 0u;
+}
+
+/* schema 1 的 can_timeout 是按控制周期存的（1000 = 25 ms），换成毫秒。
+ * 四舍五入，0（= 关闭）仍然是 0。 */
+int32_t prefs_v1_cycles_to_ms(int32_t cycles){
+	if(cycles <= 0){return 0;}
+	return (cycles + (PREFS_CONTROL_CYCLES_PER_MS / 2)) / PREFS_CONTROL_CYCLES_PER_MS;
+}
+
 bool prefs_block_valid(const uint8_t *block, size_t len,
                        uint32_t *sequence, uint16_t *payload_len){
 	if(!block || (len < PREFS_HEADER_LEN)){return false;}
 	if(rd32(block) != PREFS_MAGIC){return false;}
-	if(rd16(block + 4) != PREFS_SCHEMA){return false;}
+	uint16_t schema = rd16(block + 4);
+	/* schema 1 仍然可以读：单位迁移在 preference_writer_load() 里做 */
+	if((schema != PREFS_SCHEMA) && (schema != PREFS_SCHEMA_V1)){return false;}
 
 	uint16_t plen = rd16(block + 12);
 	uint16_t nrec = rd16(block + 14);
@@ -76,7 +89,6 @@ unsigned prefs_block_load(const uint8_t *block, size_t len,
                           const prefs_entry_t *entries, unsigned count){
 	uint16_t plen;
 	if(!prefs_block_valid(block, len, NULL, &plen)){return 0;}
-
 	const uint8_t *p = block + PREFS_HEADER_LEN;
 	const uint8_t *end = p + plen;
 	unsigned applied = 0;
