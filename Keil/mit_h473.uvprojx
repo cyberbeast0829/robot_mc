@@ -400,6 +400,31 @@
               <FilePath>..\Core\Src\can.c</FilePath>
             </File>
             <File>
+              <FileName>endpoint.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Core\Src\endpoint.c</FilePath>
+            </File>
+            <File>
+              <FileName>endpoint_defs.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Core\Src\endpoint_defs.c</FilePath>
+            </File>
+            <File>
+              <FileName>endpoint_serial.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Core\Src\endpoint_serial.c</FilePath>
+            </File>
+            <File>
+              <FileName>prefs_codec.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Core\Src\prefs_codec.c</FilePath>
+            </File>
+            <File>
+              <FileName>prefs_defs.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Core\Src\prefs_defs.c</FilePath>
+            </File>
+            <File>
               <FileName>flash_writer.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\Core\Src\flash_writer.c</FilePath>

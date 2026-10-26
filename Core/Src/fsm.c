@@ -19,7 +19,7 @@
 
 extern uint32_t _reboot_cookie;
 
- static void save_preferences(void);
+ static int save_preferences(void);
 
  void run_fsm(FSMStruct * fsmstate){
 	 /* run_fsm is run every commutation interrupt cycle */
@@ -339,6 +339,16 @@ extern uint32_t _reboot_cookie;
 	    myprintf("VALUES NOT ACTIVE UNTIL POWER CYCLE! \n\r\n\r");
  }
 
+ void request_fsm_state(FSMStruct * fsmstate, uint8_t next){
+	 /* Main-loop callers (endpoint action.*) must not race run_fsm()'s read of
+	  * next_state/ready: apply both under one critical section. */
+	 uint32_t primask = __get_PRIMASK();
+	 __disable_irq();
+	 fsmstate->next_state = next;
+	 fsmstate->ready = 0;
+	 if(!primask){__enable_irq();}
+ }
+
  void process_user_input(FSMStruct * fsmstate){
 	 /* Collects user input from serial (maybe eventually CAN) and updates settings */
 
@@ -417,24 +427,29 @@ extern uint32_t _reboot_cookie;
 		 }
 
 	 /* Write new settings to flash */
-	 save_preferences();
+	 fsmstate->save_status = save_preferences() ? 1 : 3;
 
 	 /* cmd_id / cmd_buff belong to the caller's snapshot, so the ISR-side buffer
 	  * is cleared by run_fsm_slow() (before this runs) rather than here */
 	 enter_setup_state();
  }
 
- static void save_preferences(void){
+ static int save_preferences(void){
 	 /* Write settings to flash.  preference_writer_save() masks interrupts for
 	  * the whole erase + program sequence (the N32 flash dead-locks the CPU if an
 	  * interrupt lands between the two stores of a 64-bit program) and kicks the
-	  * watchdog itself while that lasts, so nothing here may print or block.  Only
-	  * call this from the main loop, in states where the gate drive is off. */
+	  * watchdog itself while that lasts, so nothing here may print or block before
+	  * it returns.  Only call this from the main loop, in states where the gate
+	  * drive is off.  Returns 1 on success so the caller can report it through
+	  * system.save_status. */
+	 int ok;
 	 IWDG_ReloadKey();
-	 if(!preference_writer_save(&prefs)){
+	 ok = preference_writer_save(&prefs);
+	 if(!ok){
 		 myprintf("\n\r!!! Preference save failed - config unchanged in flash !!!\r\n");
 	 }
 	 IWDG_ReloadKey();
+	 return ok;
  }
 
  void run_fsm_slow(FSMStruct * fsmstate){
@@ -480,12 +495,26 @@ extern uint32_t _reboot_cookie;
 		 if(fsmstate->state == SETUP_MODE){process_user_input(&cmd_snapshot);}
 	 }
 
+	 /* endpoint action.save：只在门极关闭时写 flash。ISR/中断里只置标志，
+	  * 真正的擦写在主循环里做 */
+	 if(fsmstate->save_pending){
+		 fsmstate->save_pending = 0;
+		 if(!controller.gate_drive_enabled){
+			 fsmstate->save_status = save_preferences() ? 1 : 3;
+			 if(fsmstate->save_status == 1){myprintf("\r\n  Preferences saved\r\n");}
+		 }
+		 else{
+			 fsmstate->save_status = 2;
+			 myprintf("\r\n  Save skipped: gate drive is enabled\r\n");
+		 }
+	 }
+
 	 /* Zero the mechanical position and save it */
 	 if(fsmstate->zero_pending){
 		 fsmstate->zero_pending = 0;
 		 if(fsmstate->state == MENU_MODE){	// only with the gate drive off
 			 M_ZERO = comm_encoder.count;
-			 save_preferences();
+			 fsmstate->save_status = save_preferences() ? 1 : 3;
 			 myprintf("\n\r  Saved new zero position:  %d\n\r\n\r", M_ZERO);
 		 }
 	 }
@@ -516,7 +545,7 @@ extern uint32_t _reboot_cookie;
 			 comm_encoder.m_zero = M_ZERO;
 			 memcpy(&comm_encoder.offset_lut, comm_encoder_cal.lut_arr, sizeof(comm_encoder.offset_lut));
 			 memcpy(&ENCODER_LUT, comm_encoder_cal.lut_arr, sizeof(comm_encoder_cal.lut_arr));
-			 save_preferences();
+			 fsmstate->save_status = save_preferences() ? 1 : 3;
 			 myprintf("E_ZERO: %d  %f\r\n", E_ZERO, TWO_PI_F*fmodf((comm_encoder.ppairs*(float)(-E_ZERO))/((float)ENC_CPR), 1.0f));
 			 for(int i = 0; i<N_LUT; i++){myprintf("%d %d\r\n", i, comm_encoder_cal.lut_arr[i]);}
 			 comm_encoder_cal.done_cal = 0;		// consume, so this only runs once

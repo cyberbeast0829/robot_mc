@@ -1,0 +1,985 @@
+{
+  "protocol_version": 1,
+  "endpoints": [
+    {
+      "name": "config.i_bw",
+      "type": "float",
+      "access": "rw",
+      "ref": "I_BW",
+      "min": 100.0,
+      "max": 2000.0,
+      "unit": "Hz",
+      "brief": "电流环带宽",
+      "persist": true,
+      "default": 1000.0
+    },
+    {
+      "name": "config.i_max",
+      "type": "float",
+      "access": "rw",
+      "ref": "I_MAX",
+      "min": 0.0,
+      "max": 4.0,
+      "max_expr": "I_MAX_LIMIT",
+      "unit": "A",
+      "brief": "相电流限幅（硬上限 4A）",
+      "persist": true,
+      "default": "I_MAX_LIMIT"
+    },
+    {
+      "name": "config.i_fw_max",
+      "type": "float",
+      "access": "rw",
+      "ref": "I_FW_MAX",
+      "min": 0.0,
+      "max": 33.0,
+      "unit": "A",
+      "brief": "弱磁电流上限",
+      "persist": true,
+      "default": 0.0
+    },
+    {
+      "name": "config.i_max_cont",
+      "type": "float",
+      "access": "rw",
+      "ref": "I_MAX_CONT",
+      "min": 0.0,
+      "max": 40.0,
+      "unit": "A",
+      "brief": "连续电流上限",
+      "persist": true,
+      "default": 14.0
+    },
+    {
+      "name": "config.i_cal",
+      "type": "float",
+      "access": "rw",
+      "ref": "I_CAL",
+      "min": 0.0,
+      "max": 20.0,
+      "unit": "A",
+      "brief": "编码器标定电流",
+      "persist": true,
+      "default": 5.0
+    },
+    {
+      "name": "config.theta_min",
+      "type": "float",
+      "access": "rw",
+      "ref": "THETA_MIN",
+      "unit": "rad",
+      "brief": "机械角下限",
+      "persist": true,
+      "default": 0.0
+    },
+    {
+      "name": "config.theta_max",
+      "type": "float",
+      "access": "rw",
+      "ref": "THETA_MAX",
+      "unit": "rad",
+      "brief": "机械角上限",
+      "persist": true,
+      "default": 0.0
+    },
+    {
+      "name": "config.p_max",
+      "type": "float",
+      "access": "rw",
+      "ref": "P_MAX",
+      "min": 0.0,
+      "unit": "rad",
+      "brief": "位置设定值上限；写入同时更新 p_min = -p_max",
+      "set": "P_MAX = v; P_MIN = -v;",
+      "persist": true,
+      "default": 12.5
+    },
+    {
+      "name": "config.p_min",
+      "type": "float",
+      "access": "rw",
+      "get": "P_MIN",
+      "ref": "P_MIN",
+      "unit": "rad",
+      "brief": "位置设定值下限（通常由 p_max 联动，也可单独写入以便备份恢复）",
+      "persist": true,
+      "default": -12.5,
+      "max": 0.0
+    },
+    {
+      "name": "config.v_max",
+      "type": "float",
+      "access": "rw",
+      "ref": "V_MAX",
+      "min": 0.0,
+      "unit": "rad/s",
+      "brief": "速度设定值上限；写入同时更新 v_min = -v_max",
+      "set": "V_MAX = v; V_MIN = -v;",
+      "persist": true,
+      "default": 65.0
+    },
+    {
+      "name": "config.v_min",
+      "type": "float",
+      "access": "rw",
+      "get": "V_MIN",
+      "ref": "V_MIN",
+      "unit": "rad/s",
+      "brief": "速度设定值下限（通常由 v_max 联动，也可单独写入以便备份恢复）",
+      "persist": true,
+      "default": -65.0,
+      "max": 0.0
+    },
+    {
+      "name": "config.kp_max",
+      "type": "float",
+      "access": "rw",
+      "ref": "KP_MAX",
+      "min": 0.0,
+      "brief": "位置增益上限",
+      "persist": true,
+      "default": 500.0
+    },
+    {
+      "name": "config.kd_max",
+      "type": "float",
+      "access": "rw",
+      "ref": "KD_MAX",
+      "min": 0.0,
+      "brief": "速度增益上限",
+      "persist": true,
+      "default": 5.0
+    },
+    {
+      "name": "config.gr",
+      "type": "float",
+      "access": "rw",
+      "ref": "GR",
+      "min": 0.001,
+      "brief": "减速比（门极关闭时才允许写）",
+      "require": "!controller.gate_drive_enabled",
+      "persist": true,
+      "default": 7.75
+    },
+    {
+      "name": "config.kt",
+      "type": "float",
+      "access": "rw",
+      "ref": "KT",
+      "min": 0.0001,
+      "unit": "N-m/A",
+      "brief": "转矩常数（门极关闭时才允许写）",
+      "require": "!controller.gate_drive_enabled",
+      "persist": true,
+      "default": 1.0
+    },
+    {
+      "name": "config.ppairs",
+      "type": "float",
+      "access": "rw",
+      "ref": "PPAIRS",
+      "min": 1.0,
+      "max": 64.0,
+      "brief": "极对数（标定得出；门极关闭时才允许写）",
+      "require": "!controller.gate_drive_enabled",
+      "set": "PPAIRS = v; comm_encoder.ppairs = v;",
+      "persist": true,
+      "default": 14.0
+    },
+    {
+      "name": "config.r_phase",
+      "type": "float",
+      "access": "rw",
+      "ref": "R_PHASE",
+      "unit": "Ohm",
+      "brief": "单相电阻",
+      "persist": true,
+      "default": 0.0
+    },
+    {
+      "name": "config.r_nominal",
+      "type": "float",
+      "access": "rw",
+      "ref": "R_NOMINAL",
+      "unit": "Ohm",
+      "brief": "标称电机电阻",
+      "persist": true,
+      "default": 0.0
+    },
+    {
+      "name": "config.r_th",
+      "type": "float",
+      "access": "rw",
+      "ref": "R_TH",
+      "unit": "C/W",
+      "brief": "热阻",
+      "persist": true,
+      "default": 0.0
+    },
+    {
+      "name": "config.c_th",
+      "type": "float",
+      "access": "rw",
+      "ref": "C_TH",
+      "unit": "J/C",
+      "brief": "热容",
+      "persist": true,
+      "default": 0.0
+    },
+    {
+      "name": "config.temp_max",
+      "type": "float",
+      "access": "rw",
+      "ref": "TEMP_MAX",
+      "min": 0.0,
+      "max": 150.0,
+      "unit": "C",
+      "brief": "过温保护阈值（0 = 关闭）",
+      "persist": true,
+      "default": 125.0
+    },
+    {
+      "name": "config.phase_order",
+      "type": "int32",
+      "access": "rw",
+      "ref": "PHASE_ORDER",
+      "min": 0,
+      "max": 1,
+      "brief": "相序（标定得出；门极关闭时才允许写）",
+      "require": "!controller.gate_drive_enabled",
+      "persist": true,
+      "default": 0
+    },
+    {
+      "name": "config.can_id",
+      "type": "int32",
+      "access": "rw",
+      "ref": "CAN_ID",
+      "min": 0,
+      "max": 127,
+      "brief": "CAN 节点 ID",
+      "persist": true,
+      "default": 1
+    },
+    {
+      "name": "config.can_master",
+      "type": "int32",
+      "access": "rw",
+      "ref": "CAN_MASTER",
+      "min": 0,
+      "max": 127,
+      "brief": "CAN 主站 ID",
+      "persist": true,
+      "default": 0
+    },
+    {
+      "name": "config.can_timeout",
+      "type": "int32",
+      "access": "rw",
+      "ref": "CAN_TIMEOUT",
+      "min": 0,
+      "max": 100000,
+      "brief": "CAN 命令超时（控制周期数，0 = 关闭）",
+      "persist": true,
+      "default": 1000
+    },
+    {
+      "name": "config.m_zero",
+      "type": "int32",
+      "access": "rw",
+      "ref": "M_ZERO",
+      "brief": "机械零位编码器计数（门极关闭时才允许写）",
+      "require": "!controller.gate_drive_enabled",
+      "set": "M_ZERO = v; comm_encoder.m_zero = v;",
+      "persist": true,
+      "default": 0
+    },
+    {
+      "name": "config.e_zero",
+      "type": "int32",
+      "access": "rw",
+      "ref": "E_ZERO",
+      "brief": "电角度零点编码器计数（门极关闭时才允许写）",
+      "require": "!controller.gate_drive_enabled",
+      "set": "E_ZERO = v; comm_encoder.e_zero = v;",
+      "persist": true,
+      "default": 0
+    },
+    {
+      "name": "telemetry.v_bus",
+      "type": "float",
+      "access": "r",
+      "get": "controller.v_bus_filt",
+      "unit": "V",
+      "brief": "母线电压（滤波后）"
+    },
+    {
+      "name": "telemetry.v_bus_raw",
+      "type": "float",
+      "access": "r",
+      "get": "controller.v_bus",
+      "unit": "V",
+      "brief": "母线电压（原始）"
+    },
+    {
+      "name": "telemetry.i_a",
+      "type": "float",
+      "access": "r",
+      "get": "controller.i_a",
+      "unit": "A"
+    },
+    {
+      "name": "telemetry.i_b",
+      "type": "float",
+      "access": "r",
+      "get": "controller.i_b",
+      "unit": "A"
+    },
+    {
+      "name": "telemetry.i_c",
+      "type": "float",
+      "access": "r",
+      "get": "controller.i_c",
+      "unit": "A"
+    },
+    {
+      "name": "telemetry.i_d",
+      "type": "float",
+      "access": "r",
+      "get": "controller.i_d",
+      "unit": "A"
+    },
+    {
+      "name": "telemetry.i_q",
+      "type": "float",
+      "access": "r",
+      "get": "controller.i_q",
+      "unit": "A"
+    },
+    {
+      "name": "telemetry.i_d_filt",
+      "type": "float",
+      "access": "r",
+      "get": "controller.i_d_filt",
+      "unit": "A"
+    },
+    {
+      "name": "telemetry.i_q_filt",
+      "type": "float",
+      "access": "r",
+      "get": "controller.i_q_filt",
+      "unit": "A"
+    },
+    {
+      "name": "telemetry.v_d",
+      "type": "float",
+      "access": "r",
+      "get": "controller.v_d",
+      "unit": "V"
+    },
+    {
+      "name": "telemetry.v_q",
+      "type": "float",
+      "access": "r",
+      "get": "controller.v_q",
+      "unit": "V"
+    },
+    {
+      "name": "telemetry.theta_mech",
+      "type": "float",
+      "access": "r",
+      "get": "controller.theta_mech",
+      "unit": "rad",
+      "brief": "机械角（电机侧）"
+    },
+    {
+      "name": "telemetry.theta_elec",
+      "type": "float",
+      "access": "r",
+      "get": "controller.theta_elec",
+      "unit": "rad",
+      "brief": "电角度"
+    },
+    {
+      "name": "telemetry.dtheta_mech",
+      "type": "float",
+      "access": "r",
+      "get": "controller.dtheta_mech",
+      "unit": "rad/s",
+      "brief": "机械角速度（电机侧）"
+    },
+    {
+      "name": "telemetry.dtheta_elec",
+      "type": "float",
+      "access": "r",
+      "get": "controller.dtheta_elec",
+      "unit": "rad/s",
+      "brief": "电角速度"
+    },
+    {
+      "name": "telemetry.position",
+      "type": "float",
+      "access": "r",
+      "get": "comm_encoder.angle_multiturn / GR",
+      "unit": "rad",
+      "brief": "输出轴多圈位置"
+    },
+    {
+      "name": "telemetry.position_motor",
+      "type": "float",
+      "access": "r",
+      "get": "comm_encoder.angle_multiturn",
+      "unit": "rad",
+      "brief": "电机侧多圈位置"
+    },
+    {
+      "name": "telemetry.velocity",
+      "type": "float",
+      "access": "r",
+      "get": "comm_encoder.velocity / GR",
+      "unit": "rad/s",
+      "brief": "输出轴速度"
+    },
+    {
+      "name": "telemetry.velocity_motor",
+      "type": "float",
+      "access": "r",
+      "get": "comm_encoder.velocity",
+      "unit": "rad/s",
+      "brief": "电机侧速度"
+    },
+    {
+      "name": "telemetry.count",
+      "type": "int32",
+      "access": "r",
+      "get": "comm_encoder.count",
+      "brief": "编码器多圈计数"
+    },
+    {
+      "name": "telemetry.torque",
+      "type": "float",
+      "access": "r",
+      "get": "controller.i_q_filt * KT * GR",
+      "unit": "N-m",
+      "brief": "输出轴转矩估计"
+    },
+    {
+      "name": "telemetry.p_des",
+      "type": "float",
+      "access": "r",
+      "get": "controller.p_des",
+      "unit": "rad",
+      "brief": "当前位置设定值（输出轴）"
+    },
+    {
+      "name": "telemetry.v_des",
+      "type": "float",
+      "access": "r",
+      "get": "controller.v_des",
+      "unit": "rad/s",
+      "brief": "当前速度设定值（输出轴）"
+    },
+    {
+      "name": "telemetry.kp",
+      "type": "float",
+      "access": "r",
+      "get": "controller.kp",
+      "brief": "当前位置增益"
+    },
+    {
+      "name": "telemetry.kd",
+      "type": "float",
+      "access": "r",
+      "get": "controller.kd",
+      "brief": "当前速度增益"
+    },
+    {
+      "name": "telemetry.t_ff",
+      "type": "float",
+      "access": "r",
+      "get": "controller.t_ff",
+      "unit": "N-m",
+      "brief": "前馈转矩"
+    },
+    {
+      "name": "telemetry.i_q_des",
+      "type": "float",
+      "access": "r",
+      "get": "controller.i_q_des",
+      "unit": "A",
+      "brief": "q 轴电流给定"
+    },
+    {
+      "name": "telemetry.fw_int",
+      "type": "float",
+      "access": "r",
+      "get": "controller.fw_int",
+      "unit": "A",
+      "brief": "弱磁积分量"
+    },
+    {
+      "name": "telemetry.fault",
+      "type": "uint32",
+      "access": "r",
+      "get": "controller.fault",
+      "brief": "锁存的故障位（FAULT_x）"
+    },
+    {
+      "name": "telemetry.gate_drive",
+      "type": "bool",
+      "access": "r",
+      "get": "controller.gate_drive_enabled",
+      "brief": "门极是否使能"
+    },
+    {
+      "name": "telemetry.mode",
+      "type": "uint8",
+      "access": "r",
+      "get": "state.state",
+      "brief": "当前 FSM 状态（MENU_MODE 等）"
+    },
+    {
+      "name": "telemetry.loop_count",
+      "type": "uint32",
+      "access": "r",
+      "get": "controller.loop_count",
+      "brief": "控制周期计数"
+    },
+    {
+      "name": "telemetry.can_timeout_count",
+      "type": "int32",
+      "access": "r",
+      "get": "controller.timeout",
+      "brief": "CAN 命令超时计数器"
+    },
+    {
+      "name": "telemetry.temperature",
+      "type": "float",
+      "access": "r",
+      "get": "observer.temp_measured",
+      "unit": "C",
+      "brief": "温度观测器估计值"
+    },
+    {
+      "name": "telemetry.resistance",
+      "type": "float",
+      "access": "r",
+      "get": "observer.resistance",
+      "unit": "Ohm",
+      "brief": "温度观测器估计电阻"
+    },
+    {
+      "name": "telemetry.can_tec",
+      "type": "uint8",
+      "access": "r",
+      "get": "(FDCAN2->ECR & FDCAN_ECR_TEC)",
+      "brief": "CAN 发送错误计数"
+    },
+    {
+      "name": "telemetry.can_rec",
+      "type": "uint8",
+      "access": "r",
+      "get": "((FDCAN2->ECR & FDCAN_ECR_REC) >> 8)",
+      "brief": "CAN 接收错误计数"
+    },
+    {
+      "name": "telemetry.can_lec",
+      "type": "uint8",
+      "access": "r",
+      "get": "(FDCAN2->PSR & FDCAN_PSR_LEC)",
+      "brief": "CAN 最后错误码"
+    },
+    {
+      "name": "telemetry.encoder_ppairs",
+      "type": "float",
+      "access": "r",
+      "get": "comm_encoder.ppairs",
+      "brief": "编码器当前使用的极对数"
+    },
+    {
+      "name": "telemetry.encoder_lost_frames",
+      "type": "int32",
+      "access": "r",
+      "get": "comm_encoder.lost_frames",
+      "brief": "编码器丢帧计数"
+    },
+    {
+      "name": "telemetry.encoder_raw",
+      "type": "int32",
+      "access": "r",
+      "get": "comm_encoder.raw",
+      "brief": "编码器原始读数"
+    },
+    {
+      "name": "telemetry.encoder_turns",
+      "type": "int32",
+      "access": "r",
+      "get": "comm_encoder.turns",
+      "brief": "编码器多圈数"
+    },
+    {
+      "name": "telemetry.encoder_elec_angle",
+      "type": "float",
+      "access": "r",
+      "get": "comm_encoder.elec_angle",
+      "unit": "rad",
+      "brief": "编码器电角度"
+    },
+    {
+      "name": "telemetry.encoder_elec_velocity",
+      "type": "float",
+      "access": "r",
+      "get": "comm_encoder.elec_velocity",
+      "unit": "rad/s",
+      "brief": "编码器电角速度"
+    },
+    {
+      "name": "telemetry.dtc_u",
+      "type": "float",
+      "access": "r",
+      "get": "controller.dtc_u",
+      "brief": "U 相占空比"
+    },
+    {
+      "name": "telemetry.dtc_v",
+      "type": "float",
+      "access": "r",
+      "get": "controller.dtc_v",
+      "brief": "V 相占空比"
+    },
+    {
+      "name": "telemetry.dtc_w",
+      "type": "float",
+      "access": "r",
+      "get": "controller.dtc_w",
+      "brief": "W 相占空比"
+    },
+    {
+      "name": "telemetry.i_mag_max",
+      "type": "float",
+      "access": "r",
+      "get": "controller.i_mag_max",
+      "unit": "A",
+      "brief": "电流矢量幅值上限"
+    },
+    {
+      "name": "telemetry.i_scale",
+      "type": "float",
+      "access": "r",
+      "get": "controller.i_scale",
+      "unit": "A/count",
+      "brief": "相电流标定系数"
+    },
+    {
+      "name": "telemetry.flux_linkage",
+      "type": "float",
+      "access": "r",
+      "get": "controller.flux_linkage",
+      "brief": "磁链估计"
+    },
+    {
+      "name": "telemetry.adc_a_offset",
+      "type": "int32",
+      "access": "r",
+      "get": "controller.adc_a_offset",
+      "brief": "A 相电流零偏"
+    },
+    {
+      "name": "telemetry.adc_b_offset",
+      "type": "int32",
+      "access": "r",
+      "get": "controller.adc_b_offset",
+      "brief": "B 相电流零偏"
+    },
+    {
+      "name": "telemetry.adc_c_offset",
+      "type": "int32",
+      "access": "r",
+      "get": "controller.adc_c_offset",
+      "brief": "C 相电流零偏"
+    },
+    {
+      "name": "telemetry.adc_a_raw",
+      "type": "int32",
+      "access": "r",
+      "get": "controller.adc_a_raw",
+      "brief": "A 相电流 ADC 原始值"
+    },
+    {
+      "name": "telemetry.adc_b_raw",
+      "type": "int32",
+      "access": "r",
+      "get": "controller.adc_b_raw",
+      "brief": "B 相电流 ADC 原始值"
+    },
+    {
+      "name": "telemetry.adc_c_raw",
+      "type": "int32",
+      "access": "r",
+      "get": "controller.adc_c_raw",
+      "brief": "C 相电流 ADC 原始值"
+    },
+    {
+      "name": "telemetry.observer_qd_in",
+      "type": "float",
+      "access": "r",
+      "get": "observer.qd_in",
+      "brief": "温度观测器热输入"
+    },
+    {
+      "name": "telemetry.observer_qd_out",
+      "type": "float",
+      "access": "r",
+      "get": "observer.qd_out",
+      "brief": "温度观测器热输出"
+    },
+    {
+      "name": "telemetry.observer_k",
+      "type": "float",
+      "access": "r",
+      "get": "observer.k",
+      "brief": "温度观测器增益"
+    },
+    {
+      "name": "telemetry.observer_trust",
+      "type": "float",
+      "access": "r",
+      "get": "observer.trust",
+      "brief": "温度观测器置信度"
+    },
+    {
+      "name": "telemetry.observer_delta_t",
+      "type": "float",
+      "access": "r",
+      "get": "observer.delta_t",
+      "unit": "C",
+      "brief": "温度观测器温升"
+    },
+    {
+      "name": "timing.isr_period",
+      "type": "uint32",
+      "access": "r",
+      "get": "isr_timing.isr_period",
+      "brief": "控制中断周期（CPU cycles）"
+    },
+    {
+      "name": "timing.count",
+      "type": "uint32",
+      "access": "r",
+      "get": "isr_timing.n",
+      "brief": "已统计的中断周期数"
+    },
+    {
+      "name": "timing.overrun",
+      "type": "uint32",
+      "access": "r",
+      "get": "isr_timing.overrun",
+      "brief": "错过的控制周期数"
+    },
+    {
+      "name": "timing.period_last",
+      "type": "uint32",
+      "access": "r",
+      "get": "isr_timing.period_last",
+      "brief": "上一次中断周期"
+    },
+    {
+      "name": "timing.period_min",
+      "type": "uint32",
+      "access": "r",
+      "get": "isr_timing.period_min",
+      "brief": "最小中断周期"
+    },
+    {
+      "name": "timing.period_max",
+      "type": "uint32",
+      "access": "r",
+      "get": "isr_timing.period_max",
+      "brief": "最大中断周期"
+    },
+    {
+      "name": "timing.total_last",
+      "type": "uint32",
+      "access": "r",
+      "get": "isr_timing.total_last",
+      "brief": "上次中断总耗时"
+    },
+    {
+      "name": "timing.total_min",
+      "type": "uint32",
+      "access": "r",
+      "get": "isr_timing.total_min",
+      "brief": "最小中断总耗时"
+    },
+    {
+      "name": "timing.total_max",
+      "type": "uint32",
+      "access": "r",
+      "get": "isr_timing.total_max",
+      "brief": "最大中断总耗时"
+    },
+    {
+      "name": "timing.seg_adc_max",
+      "type": "uint32",
+      "access": "r",
+      "get": "isr_timing.seg_max[ISR_SEG_ADC]",
+      "brief": "ADC 采样段最大耗时"
+    },
+    {
+      "name": "timing.seg_enc_max",
+      "type": "uint32",
+      "access": "r",
+      "get": "isr_timing.seg_max[ISR_SEG_ENC]",
+      "brief": "编码器读取段最大耗时"
+    },
+    {
+      "name": "timing.seg_faults_max",
+      "type": "uint32",
+      "access": "r",
+      "get": "isr_timing.seg_max[ISR_SEG_FAULTS]",
+      "brief": "故障检查段最大耗时"
+    },
+    {
+      "name": "timing.seg_fsm_max",
+      "type": "uint32",
+      "access": "r",
+      "get": "isr_timing.seg_max[ISR_SEG_FSM]",
+      "brief": "FSM/FOC 段最大耗时"
+    },
+    {
+      "name": "timing.seg_can_max",
+      "type": "uint32",
+      "access": "r",
+      "get": "isr_timing.seg_max[ISR_SEG_CAN]",
+      "brief": "CAN 收发段最大耗时"
+    },
+    {
+      "name": "timing.ext_enc_wait_max",
+      "type": "uint32",
+      "access": "r",
+      "get": "isr_timing.ext_max[ISR_EXT_ENC_WAIT]",
+      "brief": "编码器 SPI/DMA 等待最大耗时"
+    },
+    {
+      "name": "timing.ext_adc_wait_max",
+      "type": "uint32",
+      "access": "r",
+      "get": "isr_timing.ext_max[ISR_EXT_ADC_WAIT]",
+      "brief": "注入 ADC 等待最大耗时"
+    },
+    {
+      "name": "system.version",
+      "type": "float",
+      "access": "r",
+      "get": "VERSION_NUM",
+      "brief": "固件版本号"
+    },
+    {
+      "name": "system.prefs_sequence",
+      "type": "uint32",
+      "access": "r",
+      "get": "prefs.sequence",
+      "brief": "当前配置块的序号"
+    },
+    {
+      "name": "system.config_schema",
+      "type": "uint16",
+      "access": "r",
+      "get": "prefs.schema",
+      "brief": "配置记录的格式版本（PREFS_SCHEMA），用于升级迁移"
+    },
+    {
+      "name": "system.prefs_loaded",
+      "type": "bool",
+      "access": "r",
+      "get": "prefs.loaded",
+      "brief": "是否从 flash 成功加载过配置"
+    },
+    {
+      "name": "system.save_status",
+      "type": "uint8",
+      "access": "r",
+      "get": "state.save_status",
+      "brief": "最近一次 action.save 的结果：0 未执行、1 成功、2 因门极使能跳过、3 写失败"
+    },
+    {
+      "name": "action.save",
+      "type": "void",
+      "access": "w",
+      "brief": "把当前配置写入 flash（要求门极关闭）",
+      "require": "!controller.gate_drive_enabled",
+      "call": "state.save_status = 0; state.save_pending = 1;"
+    },
+    {
+      "name": "action.zero",
+      "type": "void",
+      "access": "w",
+      "brief": "把当前位置设为零点并保存（仅菜单状态）",
+      "require": "state.state == MENU_MODE",
+      "call": "state.zero_pending = 1;"
+    },
+    {
+      "name": "action.enter_menu",
+      "type": "void",
+      "access": "w",
+      "brief": "回到菜单（同时清除锁存故障）",
+      "call": "request_fsm_state(&state, MENU_MODE);"
+    },
+    {
+      "name": "action.clear_fault",
+      "type": "void",
+      "access": "w",
+      "brief": "清除锁存故障（等价于回菜单）",
+      "call": "request_fsm_state(&state, MENU_MODE);"
+    },
+    {
+      "name": "action.motor_mode",
+      "type": "void",
+      "access": "w",
+      "brief": "进入电机模式（仅菜单状态）",
+      "require": "state.state == MENU_MODE",
+      "call": "request_fsm_state(&state, MOTOR_MODE);"
+    },
+    {
+      "name": "action.calibrate",
+      "type": "void",
+      "access": "w",
+      "brief": "进入编码器标定（仅菜单状态）",
+      "require": "state.state == MENU_MODE",
+      "call": "request_fsm_state(&state, CALIBRATION_MODE);"
+    },
+    {
+      "name": "action.encoder_mode",
+      "type": "void",
+      "access": "w",
+      "brief": "进入编码器显示模式（仅菜单状态）",
+      "require": "state.state == MENU_MODE",
+      "call": "request_fsm_state(&state, ENCODER_MODE);"
+    },
+    {
+      "name": "action.setup_mode",
+      "type": "void",
+      "access": "w",
+      "brief": "进入参数设置菜单（仅菜单状态）",
+      "require": "state.state == MENU_MODE",
+      "call": "request_fsm_state(&state, SETUP_MODE);"
+    },
+    {
+      "name": "action.reset_timing",
+      "type": "void",
+      "access": "w",
+      "brief": "清零 ISR 耗时统计",
+      "call": "isr_timing.reset_req = 1;"
+    },
+    {
+      "name": "internal.encoder_lut",
+      "type": "blob",
+      "hidden": true,
+      "persist": true,
+      "ref": "ENCODER_LUT",
+      "size": 512,
+      "assert": "N_LUT * sizeof(int) == 512",
+      "brief": "编码器查找表（128 × int32），标定后写入，持久化但不对外暴露"
+    }
+  ]
+}

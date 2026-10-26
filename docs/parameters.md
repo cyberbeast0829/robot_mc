@@ -1,0 +1,150 @@
+<!-- 由 tools/gen_endpoints.py 从 params.json 生成，请勿手工修改。 -->
+# 参数手册
+
+ID 由 `tools/endpoint_ids.json` 锁定，固件升级不会改变；`access` 为 `r` 的只能读，
+`w` 的只能写/执行，`rw` 可读写。写入值在固件里做 NaN 检查和上下限限幅。
+`function` 就是 `action.*` 动作端点。`默认` 列偶尔是固件宏（如 `I_MAX_LIMIT`），
+以固件为准。
+
+## config：可写参数
+
+| 名称 | ID | 类型 | 访问 | 单位 | 范围 | 默认 | 持久化 | 说明 |
+|---|---|---|---|---|---|---|---|---|
+| `config.i_bw` | 1 | float | rw | Hz | 100.0 .. 2000.0 | 1000.0 | 是 | 电流环带宽 |
+| `config.i_max` | 2 | float | rw | A | 0.0 .. `I_MAX_LIMIT` | I_MAX_LIMIT | 是 | 相电流限幅（硬上限 4A） |
+| `config.i_fw_max` | 3 | float | rw | A | 0.0 .. 33.0 | 0.0 | 是 | 弱磁电流上限 |
+| `config.i_max_cont` | 4 | float | rw | A | 0.0 .. 40.0 | 14.0 | 是 | 连续电流上限 |
+| `config.i_cal` | 5 | float | rw | A | 0.0 .. 20.0 | 5.0 | 是 | 编码器标定电流 |
+| `config.theta_min` | 6 | float | rw | rad | — | 0.0 | 是 | 机械角下限 |
+| `config.theta_max` | 7 | float | rw | rad | — | 0.0 | 是 | 机械角上限 |
+| `config.p_max` | 8 | float | rw | rad | ≥ 0.0 | 12.5 | 是 | 位置设定值上限；写入同时更新 p_min = -p_max |
+| `config.p_min` | 9 | float | rw | rad | ≤ 0.0 | -12.5 | 是 | 位置设定值下限（通常由 p_max 联动，也可单独写入以便备份恢复） |
+| `config.v_max` | 10 | float | rw | rad/s | ≥ 0.0 | 65.0 | 是 | 速度设定值上限；写入同时更新 v_min = -v_max |
+| `config.v_min` | 11 | float | rw | rad/s | ≤ 0.0 | -65.0 | 是 | 速度设定值下限（通常由 v_max 联动，也可单独写入以便备份恢复） |
+| `config.kp_max` | 12 | float | rw |  | ≥ 0.0 | 500.0 | 是 | 位置增益上限 |
+| `config.kd_max` | 13 | float | rw |  | ≥ 0.0 | 5.0 | 是 | 速度增益上限 |
+| `config.gr` | 14 | float | rw |  | ≥ 0.001 | 7.75 | 是 | 减速比（门极关闭时才允许写） |
+| `config.kt` | 15 | float | rw | N-m/A | ≥ 0.0001 | 1.0 | 是 | 转矩常数（门极关闭时才允许写） |
+| `config.ppairs` | 16 | float | rw |  | 1.0 .. 64.0 | 14.0 | 是 | 极对数（标定得出；门极关闭时才允许写） |
+| `config.r_phase` | 17 | float | rw | Ohm | — | 0.0 | 是 | 单相电阻 |
+| `config.r_nominal` | 18 | float | rw | Ohm | — | 0.0 | 是 | 标称电机电阻 |
+| `config.r_th` | 19 | float | rw | C/W | — | 0.0 | 是 | 热阻 |
+| `config.c_th` | 20 | float | rw | J/C | — | 0.0 | 是 | 热容 |
+| `config.temp_max` | 21 | float | rw | C | 0.0 .. 150.0 | 125.0 | 是 | 过温保护阈值（0 = 关闭） |
+| `config.phase_order` | 22 | int32 | rw |  | 0 .. 1 | 0 | 是 | 相序（标定得出；门极关闭时才允许写） |
+| `config.can_id` | 23 | int32 | rw |  | 0 .. 127 | 1 | 是 | CAN 节点 ID |
+| `config.can_master` | 24 | int32 | rw |  | 0 .. 127 | 0 | 是 | CAN 主站 ID |
+| `config.can_timeout` | 25 | int32 | rw |  | 0 .. 100000 | 1000 | 是 | CAN 命令超时（控制周期数，0 = 关闭） |
+| `config.m_zero` | 26 | int32 | rw |  | — | 0 | 是 | 机械零位编码器计数（门极关闭时才允许写） |
+| `config.e_zero` | 27 | int32 | rw |  | — | 0 | 是 | 电角度零点编码器计数（门极关闭时才允许写） |
+
+## telemetry：实时测量（只读）
+
+| 名称 | ID | 类型 | 访问 | 单位 | 范围 | 默认 | 持久化 | 说明 |
+|---|---|---|---|---|---|---|---|---|
+| `telemetry.v_bus` | 28 | float | r | V | — | — | 否 | 母线电压（滤波后） |
+| `telemetry.v_bus_raw` | 29 | float | r | V | — | — | 否 | 母线电压（原始） |
+| `telemetry.i_a` | 30 | float | r | A | — | — | 否 |  |
+| `telemetry.i_b` | 31 | float | r | A | — | — | 否 |  |
+| `telemetry.i_c` | 32 | float | r | A | — | — | 否 |  |
+| `telemetry.i_d` | 33 | float | r | A | — | — | 否 |  |
+| `telemetry.i_q` | 34 | float | r | A | — | — | 否 |  |
+| `telemetry.i_d_filt` | 35 | float | r | A | — | — | 否 |  |
+| `telemetry.i_q_filt` | 36 | float | r | A | — | — | 否 |  |
+| `telemetry.v_d` | 37 | float | r | V | — | — | 否 |  |
+| `telemetry.v_q` | 38 | float | r | V | — | — | 否 |  |
+| `telemetry.theta_mech` | 39 | float | r | rad | — | — | 否 | 机械角（电机侧） |
+| `telemetry.theta_elec` | 40 | float | r | rad | — | — | 否 | 电角度 |
+| `telemetry.dtheta_mech` | 41 | float | r | rad/s | — | — | 否 | 机械角速度（电机侧） |
+| `telemetry.dtheta_elec` | 42 | float | r | rad/s | — | — | 否 | 电角速度 |
+| `telemetry.position` | 43 | float | r | rad | — | — | 否 | 输出轴多圈位置 |
+| `telemetry.position_motor` | 44 | float | r | rad | — | — | 否 | 电机侧多圈位置 |
+| `telemetry.velocity` | 45 | float | r | rad/s | — | — | 否 | 输出轴速度 |
+| `telemetry.velocity_motor` | 46 | float | r | rad/s | — | — | 否 | 电机侧速度 |
+| `telemetry.count` | 47 | int32 | r |  | — | — | 否 | 编码器多圈计数 |
+| `telemetry.torque` | 48 | float | r | N-m | — | — | 否 | 输出轴转矩估计 |
+| `telemetry.p_des` | 49 | float | r | rad | — | — | 否 | 当前位置设定值（输出轴） |
+| `telemetry.v_des` | 50 | float | r | rad/s | — | — | 否 | 当前速度设定值（输出轴） |
+| `telemetry.kp` | 51 | float | r |  | — | — | 否 | 当前位置增益 |
+| `telemetry.kd` | 52 | float | r |  | — | — | 否 | 当前速度增益 |
+| `telemetry.t_ff` | 53 | float | r | N-m | — | — | 否 | 前馈转矩 |
+| `telemetry.i_q_des` | 54 | float | r | A | — | — | 否 | q 轴电流给定 |
+| `telemetry.fw_int` | 55 | float | r | A | — | — | 否 | 弱磁积分量 |
+| `telemetry.fault` | 56 | uint32 | r |  | — | — | 否 | 锁存的故障位（FAULT_x） |
+| `telemetry.gate_drive` | 57 | bool | r |  | — | — | 否 | 门极是否使能 |
+| `telemetry.mode` | 58 | uint8 | r |  | — | — | 否 | 当前 FSM 状态（MENU_MODE 等） |
+| `telemetry.loop_count` | 59 | uint32 | r |  | — | — | 否 | 控制周期计数 |
+| `telemetry.can_timeout_count` | 60 | int32 | r |  | — | — | 否 | CAN 命令超时计数器 |
+| `telemetry.temperature` | 61 | float | r | C | — | — | 否 | 温度观测器估计值 |
+| `telemetry.resistance` | 62 | float | r | Ohm | — | — | 否 | 温度观测器估计电阻 |
+| `telemetry.can_tec` | 63 | uint8 | r |  | — | — | 否 | CAN 发送错误计数 |
+| `telemetry.can_rec` | 64 | uint8 | r |  | — | — | 否 | CAN 接收错误计数 |
+| `telemetry.can_lec` | 65 | uint8 | r |  | — | — | 否 | CAN 最后错误码 |
+| `telemetry.encoder_ppairs` | 66 | float | r |  | — | — | 否 | 编码器当前使用的极对数 |
+| `telemetry.encoder_lost_frames` | 67 | int32 | r |  | — | — | 否 | 编码器丢帧计数 |
+| `telemetry.encoder_raw` | 79 | int32 | r |  | — | — | 否 | 编码器原始读数 |
+| `telemetry.encoder_turns` | 80 | int32 | r |  | — | — | 否 | 编码器多圈数 |
+| `telemetry.encoder_elec_angle` | 81 | float | r | rad | — | — | 否 | 编码器电角度 |
+| `telemetry.encoder_elec_velocity` | 82 | float | r | rad/s | — | — | 否 | 编码器电角速度 |
+| `telemetry.dtc_u` | 83 | float | r |  | — | — | 否 | U 相占空比 |
+| `telemetry.dtc_v` | 84 | float | r |  | — | — | 否 | V 相占空比 |
+| `telemetry.dtc_w` | 85 | float | r |  | — | — | 否 | W 相占空比 |
+| `telemetry.i_mag_max` | 86 | float | r | A | — | — | 否 | 电流矢量幅值上限 |
+| `telemetry.i_scale` | 87 | float | r | A/count | — | — | 否 | 相电流标定系数 |
+| `telemetry.flux_linkage` | 88 | float | r |  | — | — | 否 | 磁链估计 |
+| `telemetry.adc_a_offset` | 89 | int32 | r |  | — | — | 否 | A 相电流零偏 |
+| `telemetry.adc_b_offset` | 90 | int32 | r |  | — | — | 否 | B 相电流零偏 |
+| `telemetry.adc_c_offset` | 91 | int32 | r |  | — | — | 否 | C 相电流零偏 |
+| `telemetry.adc_a_raw` | 92 | int32 | r |  | — | — | 否 | A 相电流 ADC 原始值 |
+| `telemetry.adc_b_raw` | 93 | int32 | r |  | — | — | 否 | B 相电流 ADC 原始值 |
+| `telemetry.adc_c_raw` | 94 | int32 | r |  | — | — | 否 | C 相电流 ADC 原始值 |
+| `telemetry.observer_qd_in` | 95 | float | r |  | — | — | 否 | 温度观测器热输入 |
+| `telemetry.observer_qd_out` | 96 | float | r |  | — | — | 否 | 温度观测器热输出 |
+| `telemetry.observer_k` | 97 | float | r |  | — | — | 否 | 温度观测器增益 |
+| `telemetry.observer_trust` | 98 | float | r |  | — | — | 否 | 温度观测器置信度 |
+| `telemetry.observer_delta_t` | 99 | float | r | C | — | — | 否 | 温度观测器温升 |
+
+## timing：ISR 耗时统计（只读）
+
+| 名称 | ID | 类型 | 访问 | 单位 | 范围 | 默认 | 持久化 | 说明 |
+|---|---|---|---|---|---|---|---|---|
+| `timing.isr_period` | 100 | uint32 | r |  | — | — | 否 | 控制中断周期（CPU cycles） |
+| `timing.count` | 101 | uint32 | r |  | — | — | 否 | 已统计的中断周期数 |
+| `timing.overrun` | 102 | uint32 | r |  | — | — | 否 | 错过的控制周期数 |
+| `timing.period_last` | 103 | uint32 | r |  | — | — | 否 | 上一次中断周期 |
+| `timing.period_min` | 104 | uint32 | r |  | — | — | 否 | 最小中断周期 |
+| `timing.period_max` | 105 | uint32 | r |  | — | — | 否 | 最大中断周期 |
+| `timing.total_last` | 106 | uint32 | r |  | — | — | 否 | 上次中断总耗时 |
+| `timing.total_min` | 107 | uint32 | r |  | — | — | 否 | 最小中断总耗时 |
+| `timing.total_max` | 108 | uint32 | r |  | — | — | 否 | 最大中断总耗时 |
+| `timing.seg_adc_max` | 109 | uint32 | r |  | — | — | 否 | ADC 采样段最大耗时 |
+| `timing.seg_enc_max` | 110 | uint32 | r |  | — | — | 否 | 编码器读取段最大耗时 |
+| `timing.seg_faults_max` | 111 | uint32 | r |  | — | — | 否 | 故障检查段最大耗时 |
+| `timing.seg_fsm_max` | 112 | uint32 | r |  | — | — | 否 | FSM/FOC 段最大耗时 |
+| `timing.seg_can_max` | 113 | uint32 | r |  | — | — | 否 | CAN 收发段最大耗时 |
+| `timing.ext_enc_wait_max` | 114 | uint32 | r |  | — | — | 否 | 编码器 SPI/DMA 等待最大耗时 |
+| `timing.ext_adc_wait_max` | 115 | uint32 | r |  | — | — | 否 | 注入 ADC 等待最大耗时 |
+
+## system：状态与版本（只读）
+
+| 名称 | ID | 类型 | 访问 | 单位 | 范围 | 默认 | 持久化 | 说明 |
+|---|---|---|---|---|---|---|---|---|
+| `system.version` | 68 | float | r |  | — | — | 否 | 固件版本号 |
+| `system.prefs_sequence` | 69 | uint32 | r |  | — | — | 否 | 当前配置块的序号 |
+| `system.config_schema` | 117 | uint16 | r |  | — | — | 否 | 配置记录的格式版本（PREFS_SCHEMA），用于升级迁移 |
+| `system.prefs_loaded` | 70 | bool | r |  | — | — | 否 | 是否从 flash 成功加载过配置 |
+| `system.save_status` | 119 | uint8 | r |  | — | — | 否 | 最近一次 action.save 的结果：0 未执行、1 成功、2 因门极使能跳过、3 写失败 |
+
+## action：动作（只写）
+
+| 名称 | ID | 类型 | 访问 | 单位 | 范围 | 默认 | 持久化 | 说明 |
+|---|---|---|---|---|---|---|---|---|
+| `action.save` | 71 | function | w |  | — | — | 否 | 把当前配置写入 flash（要求门极关闭） |
+| `action.zero` | 72 | function | w |  | — | — | 否 | 把当前位置设为零点并保存（仅菜单状态） |
+| `action.enter_menu` | 73 | function | w |  | — | — | 否 | 回到菜单（同时清除锁存故障） |
+| `action.clear_fault` | 74 | function | w |  | — | — | 否 | 清除锁存故障（等价于回菜单） |
+| `action.motor_mode` | 75 | function | w |  | — | — | 否 | 进入电机模式（仅菜单状态） |
+| `action.calibrate` | 76 | function | w |  | — | — | 否 | 进入编码器标定（仅菜单状态） |
+| `action.encoder_mode` | 77 | function | w |  | — | — | 否 | 进入编码器显示模式（仅菜单状态） |
+| `action.setup_mode` | 78 | function | w |  | — | — | 否 | 进入参数设置菜单（仅菜单状态） |
+| `action.reset_timing` | 116 | function | w |  | — | — | 否 | 清零 ISR 耗时统计 |

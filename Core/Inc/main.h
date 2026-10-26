@@ -53,6 +53,7 @@ extern "C" {
 
 /* Exported functions prototypes ---------------------------------------------*/
 void myprintf(const char *fmt, ...);
+void console_write_raw(const uint8_t *buf, uint32_t len);
 void Error_Handler(void);
 
 /* USER CODE BEGIN EFP */

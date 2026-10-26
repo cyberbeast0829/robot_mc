@@ -132,6 +132,41 @@ size: $(BUILD_DIR)/$(TARGET).elf
 	$(SZ) $<
 
 ######################################
+# endpoint table
+#
+# params.json 是参数表/持久化表的唯一真源；生成的 endpoint_defs.c/h 与
+# prefs_defs.c/h 提交进仓库，这样 Keil 构建和没装 Python 的机器也能直接编译。
+# 改了 params.json 后运行 `make endpoints`；`make check` 检查 C 表和文档是否过期
+# （CI/提交前跑这个）。PYTHON 可覆盖：`make check PYTHON=python3`。
+# Windows 用 `py -3`：MSYS2 的 PATH 里通常没有 python.exe，但 py 启动器在。
+######################################
+ifeq ($(OS),Windows_NT)
+PYTHON ?= py -3
+else
+PYTHON ?= python3
+endif
+
+endpoints:
+	$(PYTHON) tools/gen_endpoints.py --params params.json --ids tools/endpoint_ids.json --out .
+
+endpoints-check:
+	$(PYTHON) tools/gen_endpoints.py --params params.json --ids tools/endpoint_ids.json --out . --check
+
+check: endpoints-check
+
+######################################
+# host tests
+#
+# 纯逻辑模块（prefs_codec）不需要目标板，主机 gcc 就能跑。
+######################################
+HOSTCC ?= gcc
+HOSTTEST = $(BUILD_DIR)/test_prefs_codec
+
+hosttest: $(BUILD_DIR)
+	$(HOSTCC) -std=gnu11 -O1 -Wall -Wextra -ICore/Inc tools/test_prefs_codec.c Core/Src/prefs_codec.c -lm -o $(HOSTTEST)
+	./$(HOSTTEST)
+
+######################################
 # flash
 #
 # The Keil project debugs over J-Link (see Keil/JLinkSettings.ini), so `flash`
@@ -172,4 +207,4 @@ clean:
 
 -include $(OBJECTS:.o=.d)
 
-.PHONY: all clean flash flash-pyocd flash-openocd size
+.PHONY: all clean flash flash-pyocd flash-openocd size endpoints endpoints-check check hosttest

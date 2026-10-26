@@ -47,11 +47,17 @@ typedef struct{
 	volatile uint8_t print_pending;			// print the menu/setup screen for the current state
 	volatile uint8_t cmd_pending;			// a setup command is waiting in cmd_buff
 	volatile uint8_t zero_pending;			// zero the mechanical position and save it
+	volatile uint8_t save_pending;			// write the current config to flash (endpoint action.save)
+	volatile uint8_t save_status;			// result of the last save: 1 ok, 2 skipped, 3 failed
 }FSMStruct;
 
 void run_fsm(FSMStruct* fsmstate);
 void run_fsm_slow(FSMStruct* fsmstate);
 void update_fsm(FSMStruct * fsmstate, char fsm_input);
+/* Request a state transition from non-ISR context (endpoint actions).  Writes
+ * next_state/ready as one critical section, because run_fsm() reads them from
+ * the control interrupt.  update_fsm() remains the serial/CAN input path. */
+void request_fsm_state(FSMStruct * fsmstate, uint8_t next);
 void fsm_enter_state(FSMStruct * fsmstate);
 void fsm_exit_state(FSMStruct * fsmstate);
 void enter_menu_state(void);

@@ -12,3 +12,5 @@ Keil/*.scvd
 Keil/*.txt
 Keil/*.ini
 build/
+__pycache__/
+*.pyc

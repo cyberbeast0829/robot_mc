@@ -53,6 +53,8 @@
 #include "timing.h"
 #include "usb.h"
 #include "usb_pwr.h"
+#include "endpoint_serial.h"
+#include "prefs_defs.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -411,58 +413,12 @@ int main(void)
    * ~4 s timeout */
   watchdog_init();
 
-  /* Load settings from flash */
+  /* 默认值 -> 覆盖 flash 里的有效记录 -> 统一限幅。
+   * 记录以 endpoint ID 为 key，所以新增参数缺记录时会保持这里写的默认值；
+   * 不再需要 NaN/-1 哨兵，也不需要在这里逐个列默认值（都在 params.json）。 */
+  config_apply_defaults();
   preference_writer_load(&prefs);
-
-  /* On an erased chip nothing was loaded and the registers are still zero from
-   * BSS - and zero is a legal-looking value for most of them, so the checks
-   * below cannot tell "never set" from "set to zero".  That matters: a zero
-   * I_MAX makes the overcurrent threshold zero, so current-sense noise latches
-   * a fault on the first control cycle and the FSM is forced back to
-   * FAULT_MODE before the menu can be used to fix it.  Mark everything unset
-   * so the sanitization supplies real defaults.
-   *
-   * ENCODER_LUT is deliberately left zeroed: zero is the correct "no
-   * correction" state until calibration runs. */
-  if(!prefs.loaded){
-	  for(int i = 0; i < 64; i++){__float_reg[i] = NAN;}
-	  E_ZERO = -1;
-	  M_ZERO = -1;
-	  CAN_ID = -1;
-	  CAN_MASTER = -1;
-	  CAN_TIMEOUT = -1;
-	  PHASE_ORDER = 0;
-  }
-
-  /* Sanitize configs in case flash is empty*/
-  if(E_ZERO==-1){E_ZERO = 0;}
-  if(M_ZERO==-1){M_ZERO = 0;}
-  if(isnan(I_BW) || I_BW==-1){I_BW = 1000;}
-  if(isnan(I_MAX) || I_MAX ==-1){I_MAX=I_MAX_LIMIT;}
-  if(I_MAX > I_MAX_LIMIT){I_MAX = I_MAX_LIMIT;}	// also clamp settings saved with the old current scale
-  if(isnan(I_FW_MAX) || I_FW_MAX ==-1){I_FW_MAX=0;}
-  if((CAN_ID < 0) || (CAN_ID > 127)){CAN_ID = 1;}			// 7-bit node ID - the upper 4 CAN ID bits are the opcode
-  if((CAN_MASTER < 0) || (CAN_MASTER > 127)){CAN_MASTER = 0;}
-  if(CAN_TIMEOUT==-1){CAN_TIMEOUT = 1000;}
-  if(isnan(R_NOMINAL) || R_NOMINAL==-1){R_NOMINAL = 0.0f;}
-  if(isnan(TEMP_MAX) || TEMP_MAX==-1){TEMP_MAX = 125.0f;}
-  if(isnan(I_MAX_CONT) || I_MAX_CONT==-1){I_MAX_CONT = 14.0f;}
-  if(isnan(I_CAL)||I_CAL==-1){I_CAL = 5.0f;}
-  if(isnan(PPAIRS) || PPAIRS==-1){PPAIRS = 14.0f;}
-  if(isnan(GR) || GR==-1){GR = 7.75f;}
-  if(isnan(KT) || KT==-1){KT = 1.0f;}
-  if(isnan(KP_MAX) || KP_MAX==-1){KP_MAX = 500.0f;}
-  if(isnan(KD_MAX) || KD_MAX==-1){KD_MAX = 5.0f;}
-  if(isnan(P_MAX)){P_MAX = 12.5f;}
-  if(isnan(P_MIN)){P_MIN = -12.5f;}
-  if(isnan(V_MAX)){V_MAX = 65.0f;}
-  if(isnan(V_MIN)){V_MIN = -65.0f;}
-  /* Not used by the control loop today, but must not be left as NaN */
-  if(isnan(R_PHASE)){R_PHASE = 0.0f;}
-  if(isnan(R_TH)){R_TH = 0.0f;}
-  if(isnan(C_TH)){C_TH = 0.0f;}
-  if(isnan(THETA_MIN)){THETA_MIN = 0.0f;}
-  if(isnan(THETA_MAX)){THETA_MAX = 0.0f;}
+  config_apply_limits();
 
   myprintf("\r\nFirmware Version Number: %.2f\r\n", VERSION_NUM);
   if(watchdog_reset_flag){
@@ -608,6 +564,10 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
+	  /* endpoint 请求的解析和应答（USB 中断只负责收帧）。放在打印/存 flash
+	   * 之前，避免应答被菜单输出拖慢 */
+	  endpoint_serial_poll();
+
 	  /* Slow state machine work: printing, flash saves.  All of it was moved
 	   * out of the interrupts so it can't stall commutation */
 	  run_fsm_slow(&state);
@@ -624,7 +584,11 @@ static uint8_t usb_rx_buffer[64];
 void usb_rx_process_packet(uint16_t bufaddr, uint32_t len, uint8_t endpoint_pair) {
   USB_CopyPMAToUserBuf(usb_rx_buffer, bufaddr, len);
   for (uint8_t i = 0; i < len; i++) {
-    update_fsm(&state, (char)usb_rx_buffer[i]);
+    /* 二进制 endpoint 帧和 ASCII 菜单共用同一条 CDC 数据流：feed() 吃掉
+     * 属于帧的字节，剩下的才是菜单输入 */
+    if (!endpoint_serial_feed(usb_rx_buffer[i])) {
+      update_fsm(&state, (char)usb_rx_buffer[i]);
+    }
   }
   USB_Receive_DATA(endpoint_pair);
 }
@@ -642,18 +606,17 @@ void usb_rx_process_packet(uint16_t bufaddr, uint32_t len, uint8_t endpoint_pair
 // }
 
 char printf_buf[256];
-void myprintf(const char *fmt, ...)
+
+/* 原始字节输出：USB CDC 已配置时走 USB，否则轮询 USART3。
+ * myprintf() 和 endpoint 应答共用这一条路径。只能在主循环调用。 */
+void console_write_raw(const uint8_t *buf, uint32_t len)
 {
-  va_list args;
-  va_start(args, fmt);
-  vsnprintf(printf_buf, sizeof(printf_buf), fmt, args);
   if (bDeviceState == CONFIGURED) {
-    int bytes_to_be_sent = strlen(printf_buf);
-    uint8_t *send_ptr = (uint8_t *)printf_buf;
-    while (bytes_to_be_sent > 0) {
-      int bytes_to_send = (bytes_to_be_sent > 32) ? 32 : bytes_to_be_sent; // 每次发送32字节
+    uint8_t *send_ptr = (uint8_t *)buf;
+    while (len > 0) {
+      uint32_t bytes_to_send = (len > 32) ? 32 : len; // 每次发送32字节
       packet_sent = false;
-      USB_Send_DATA(send_ptr, bytes_to_send, ENDP1);
+      USB_Send_DATA(send_ptr, (uint8_t)bytes_to_send, ENDP1);
       int timeout_cnt = 0;
       while (!packet_sent) {
         for (int i = 0; i < 1000; i++) {
@@ -663,17 +626,25 @@ void myprintf(const char *fmt, ...)
           break; // 超时退出
         }
       }
-      bytes_to_be_sent -= bytes_to_send;
+      len -= bytes_to_send;
       send_ptr += bytes_to_send;
     }
     packet_sent = false;
   } else {
-    for (int i = 0; i < strlen(printf_buf); i++) {
-      USART_SendData(USART3, printf_buf[i]);
+    for (uint32_t i = 0; i < len; i++) {
+      USART_SendData(USART3, buf[i]);
       while (USART_GetFlagStatus(USART3, USART_FLAG_TXC) == RESET);
     }
   }
+}
+
+void myprintf(const char *fmt, ...)
+{
+  va_list args;
+  va_start(args, fmt);
+  vsnprintf(printf_buf, sizeof(printf_buf), fmt, args);
   va_end(args);
+  console_write_raw((const uint8_t *)printf_buf, (uint32_t)strlen(printf_buf));
 }
 
 /**

@@ -10,25 +10,30 @@
 
 #include <stdint.h>
 
-/* Flash-backed config storage.
+/* Flash-backed config storage (ID-keyed TLV, see prefs_codec.h).
  *
- * The user config registers (user_config.h: 256 ints + 64 floats) are stored
- * as a block with a magic number, layout version, sequence counter, and CRC,
- * ping-ponged between two flash sectors.  Each save erases and rewrites the
- * sector NOT holding the newest valid block, so a power loss during a save
- * can never lose the previous config.  At load time, the valid block with
- * the highest sequence number wins.  Legacy (pre-CRC) configs are imported
- * automatically on first boot after a firmware upgrade. */
+ * Records are stored in the top two 8 KB flash pages, ping-ponged with a
+ * sequence counter and CRC-32.  Each save erases and rewrites the page NOT
+ * holding the newest valid block, so a power loss during a save never loses
+ * the previous config.
+ *
+ * The record key is the endpoint ID, NOT the __float_reg/__int_reg index:
+ * adding/reordering RAM parameters cannot invalidate stored values.  Missing
+ * records keep the defaults that main() writes with config_apply_defaults();
+ * records whose IDs are no longer known are carried through on save.
+ *
+ * The application linker region ends at 0x0807C000, so the image can never
+ * grow into these pages.  The bootloader must only erase the app region. */
 
 typedef struct{
 	uint32_t sequence;			// sequence number of the loaded / last-saved block
 	uint32_t active_sector;		// 0 or 1: which sector holds the newest valid block
-	int loaded;					// 1 if a config was found, 0 if the chip is erased.
-								// The registers are zero-initialised, and zero is a
-								// legal-looking value for most of them, so "erased"
-								// cannot be detected from their contents alone
+	uint16_t schema;			// PREFS_SCHEMA of the loaded block
+	int loaded;					// 1 if a config was found, 0 if erased
 }PreferenceWriter;
 
+/* Call config_apply_defaults() BEFORE this: the loader only overwrites the
+ * records that exist in flash. */
 void preference_writer_load(PreferenceWriter *pr);
 int preference_writer_save(PreferenceWriter *pr);	// 1 on success, verified by CRC read-back
 

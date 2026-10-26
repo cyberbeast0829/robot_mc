@@ -4,12 +4,14 @@
  * NO_INIT region at the top of SRAM that holds variables which must survive a
  * soft reset (_reboot_cookie, see main.c / the .bss.NO_INIT section).
  *
- *   FLASH : 0x08000000, 512 KB  (application)
+ *   FLASH : 0x08000000, 0x7C000 (application, 496 KB)
  *   SRAM  : 0x20000000, 0x23FF0 (application RW/ZI + stack)
  *   NOINIT: 0x20023FF0, 0x10    (not zero-initialised on startup)
  *
- * Note: the configuration pages used by preference_writer.c live in the top two
- * 8 KB flash pages (0x0807C000 / 0x0807E000); keep the image well clear of them.
+ * The top two 8 KB pages (0x0807C000 / 0x0807E000) hold the ping-ponged config
+ * records used by preference_writer.c.  The FLASH region deliberately stops at
+ * 0x0807C000 so the image can never grow into them; the bootloader must only
+ * erase the application region.
  */
 
 ENTRY(Reset_Handler)
@@ -22,7 +24,7 @@ _Min_Stack_Size = 0x1000;   /* required amount of stack */
 
 MEMORY
 {
-  FLASH  (rx)  : ORIGIN = 0x08000000, LENGTH = 512K
+  FLASH  (rx)  : ORIGIN = 0x08000000, LENGTH = 0x7C000
   RAM    (xrw) : ORIGIN = 0x20000000, LENGTH = 0x23FF0
   NOINIT (xrw) : ORIGIN = 0x20023FF0, LENGTH = 0x10
 }
