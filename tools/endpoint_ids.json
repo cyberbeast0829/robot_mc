@@ -1,5 +1,5 @@
 {
-  "next_id": 126,
+  "next_id": 133,
   "map": {
     "config.i_bw": 1,
     "config.i_max": 2,
@@ -73,7 +73,7 @@
     "system.prefs_loaded": 70,
     "action.save": 71,
     "action.zero": 72,
-    "action.enter_menu": 73,
+    "action.idle_mode": 73,
     "action.clear_fault": 74,
     "action.motor_mode": 75,
     "action.calibrate": 76,
@@ -125,6 +125,13 @@
     "config.can_hb_ms": 122,
     "system.can_prot_active": 123,
     "system.can_fd": 124,
-    "system.can_baud_active": 125
+    "system.can_baud_active": 125,
+    "action.reset_config": 126,
+    "action.reboot": 127,
+    "command.t_ff": 128,
+    "command.p_des": 129,
+    "command.v_des": 130,
+    "command.kp": 131,
+    "command.kd": 132
   }
 }

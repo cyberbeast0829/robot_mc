@@ -41,6 +41,16 @@ ID 由 `tools/endpoint_ids.json` 锁定，固件升级不会改变；`access` �
 | `config.m_zero` | 26 | int32 | rw |  | — | 0 | 是 | 机械零位编码器计数（门极关闭时才允许写） |
 | `config.e_zero` | 27 | int32 | rw |  | — | 0 | 是 | 电角度零点编码器计数（门极关闭时才允许写） |
 
+## command：运行命令（电机模式下有效）
+
+| 名称 | ID | 类型 | 访问 | 单位 | 范围 | 默认 | 持久化 | 说明 |
+|---|---|---|---|---|---|---|---|---|
+| `command.t_ff` | 128 | float | rw | N-m | 运行期：`-I_MAX*KT*GR` .. `I_MAX*KT*GR` | — | 否 | 前馈转矩（输出轴 N·m）；写入会刷新命令租约，进入 MOTOR_MODE 时清零 |
+| `command.p_des` | 129 | float | rw | rad | 运行期：`P_MIN` .. `P_MAX` | — | 否 | 位置设定值（输出轴 rad）；范围由 config.p_max 决定，进入 MOTOR_MODE 时清零 |
+| `command.v_des` | 130 | float | rw | rad/s | 运行期：`V_MIN` .. `V_MAX` | — | 否 | 速度设定值（输出轴 rad/s）；范围由 config.v_max 决定，进入 MOTOR_MODE 时清零 |
+| `command.kp` | 131 | float | rw |  | 运行期：0.0 .. `KP_MAX` | — | 否 | 位置增益；上限由 config.kp_max 决定，进入 MOTOR_MODE 时清零 |
+| `command.kd` | 132 | float | rw |  | 运行期：0.0 .. `KD_MAX` | — | 否 | 速度增益；上限由 config.kd_max 决定，进入 MOTOR_MODE 时清零 |
+
 ## telemetry：实时测量（只读）
 
 | 名称 | ID | 类型 | 访问 | 单位 | 范围 | 默认 | 持久化 | 说明 |
@@ -132,14 +142,14 @@ ID 由 `tools/endpoint_ids.json` 锁定，固件升级不会改变；`access` �
 
 | 名称 | ID | 类型 | 访问 | 单位 | 范围 | 默认 | 持久化 | 说明 |
 |---|---|---|---|---|---|---|---|---|
-| `system.can_prot_active` | 123 | int32 | r |  | — | — | 否 | 当前生效的 CAN 协议（0=旧 11-bit，1=CYBERBEAST） |
-| `system.can_fd` | 124 | bool | r |  | — | — | 否 | 当前是否以 CAN FD 运行 |
-| `system.can_baud_active` | 125 | int32 | r | bit/s | — | — | 否 | 当前生效的 CAN 速率（Classic 为位速率；FD 为数据域速率） |
 | `system.version` | 68 | float | r |  | — | — | 否 | 固件版本号 |
 | `system.prefs_sequence` | 69 | uint32 | r |  | — | — | 否 | 当前配置块的序号 |
 | `system.config_schema` | 117 | uint16 | r |  | — | — | 否 | 配置记录的格式版本（PREFS_SCHEMA），用于升级迁移 |
 | `system.prefs_loaded` | 70 | bool | r |  | — | — | 否 | 是否从 flash 成功加载过配置 |
-| `system.save_status` | 119 | uint8 | r |  | — | — | 否 | 最近一次 action.save 的结果：0 未执行、1 成功、2 因门极使能跳过、3 写失败 |
+| `system.save_status` | 119 | uint8 | r |  | — | — | 否 | 最近一次写 flash 的结果（save/zero/reset_config）：0 未执行、1 成功、2 因门极使能跳过、3 写失败 |
+| `system.can_prot_active` | 123 | int32 | r |  | — | — | 否 | 当前生效的 CAN 协议（0=旧 11-bit，1=CYBERBEAST） |
+| `system.can_fd` | 124 | bool | r |  | — | — | 否 | 当前是否以 CAN FD 运行 |
+| `system.can_baud_active` | 125 | int32 | r | bit/s | — | — | 否 | 当前生效的 CAN 速率（Classic 为位速率；FD 为数据域速率） |
 
 ## action：动作（只写）
 
@@ -147,10 +157,10 @@ ID 由 `tools/endpoint_ids.json` 锁定，固件升级不会改变；`access` �
 |---|---|---|---|---|---|---|---|---|
 | `action.save` | 71 | function | w |  | — | — | 否 | 把当前配置写入 flash（要求门极关闭） |
 | `action.zero` | 72 | function | w |  | — | — | 否 | 把当前位置设为零点并保存（仅菜单状态） |
-| `action.enter_menu` | 73 | function | w |  | — | — | 否 | 回到菜单（同时清除锁存故障） |
-| `action.clear_fault` | 74 | function | w |  | — | — | 否 | 清除锁存故障（等价于回菜单） |
+| `action.idle_mode` | 73 | function | w |  | — | — | 否 | 空闲/停机：关门极、清锁存故障、回到菜单（退出电机模式、急停用） |
+| `action.clear_fault` | 74 | function | w |  | — | — | 否 | 清除锁存故障（等价于 action.idle_mode） |
 | `action.motor_mode` | 75 | function | w |  | — | — | 否 | 进入电机模式（仅菜单状态） |
-| `action.calibrate` | 76 | function | w |  | — | — | 否 | 进入编码器标定（仅菜单状态） |
-| `action.encoder_mode` | 77 | function | w |  | — | — | 否 | 进入编码器显示模式（仅菜单状态） |
-| `action.setup_mode` | 78 | function | w |  | — | — | 否 | 进入参数设置菜单（仅菜单状态） |
+| `action.calibrate` | 76 | function | w |  | — | — | 否 | 进入标定（相序/极对数、编码器零位与 LUT、R/L/Ld-Lq/磁链；仅菜单状态） |
+| `action.reset_config` | 126 | function | w |  | — | — | 否 | 恢复出厂默认值并写入 flash（要求门极关闭；会清掉标定，需重新标定并重启） |
+| `action.reboot` | 127 | function | w |  | — | — | 否 | 重启控制器（应答发出后约 0.5 s 复位，配置按已保存的值重新加载） |
 | `action.reset_timing` | 116 | function | w |  | — | — | 否 | 清零 ISR 耗时统计 |

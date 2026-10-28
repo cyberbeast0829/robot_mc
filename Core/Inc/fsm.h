@@ -48,6 +48,8 @@ typedef struct{
 	volatile uint8_t cmd_pending;			// a setup command is waiting in cmd_buff
 	volatile uint8_t zero_pending;			// zero the mechanical position and save it
 	volatile uint8_t save_pending;			// write the current config to flash (endpoint action.save)
+	volatile uint8_t reset_config_pending;		// restore factory defaults + save (endpoint action.reset_config)
+	volatile uint8_t reboot_pending;		// reboot after the reply went out (endpoint action.reboot)
 	volatile uint8_t save_status;			// result of the last save: 1 ok, 2 skipped, 3 failed
 }FSMStruct;
 

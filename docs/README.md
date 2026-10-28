@@ -36,7 +36,7 @@ python tools/mc_ep.py --port COM7 get system.save_status    # 1 = 保存成功
 ```
 
 改完参数要 `action.save` 才写 flash；门极使能时保存会被拒绝（先
-`call action.enter_menu`）。细节见 [USER.md](USER.md)。
+`call action.idle_mode`）。细节见 [USER.md](USER.md)。
 
 ## 一页纸数据流
 

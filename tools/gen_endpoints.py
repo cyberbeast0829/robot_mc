@@ -185,6 +185,14 @@ def load_params(path):
         if "min" in ep and "max" in ep and ep["min"] > ep["max"]:
             fail("%s: min > max" % where)
 
+        # range_dynamic 只影响线上描述符：C 侧仍然用 min/max(+expr) 限幅，
+        # 所以两者必须都在，否则既没有描述符范围也没有限幅。
+        if ep.get("range_dynamic"):
+            if "min" not in ep or "max" not in ep:
+                fail("%s: range_dynamic 仍需要 min/max（C 侧限幅用）" % where)
+            if not (("min_expr" in ep) or ("max_expr" in ep)):
+                fail("%s: range_dynamic 需要 min_expr/max_expr 说明运行期范围" % where)
+
     return doc, endpoints
 
 
@@ -256,8 +264,13 @@ def descriptor_json(endpoints):
         # 中文 brief 会变成 \uXXXX 转义，而 JointSDK/ODrive 的轻量 JSON 解析器
         # 只支持基础转义（不支持 \u），会直接解析失败。
         for key in ("unit", "min", "max"):
-            if key in ep:
-                item[key] = ep[key]
+            if key not in ep:
+                continue
+            # range_dynamic：真实范围由固件宏/用户配置在运行期决定，JSON 里的数字
+            # 只是给 C 限幅用的名义值，不能发给上位机（否则 UI 会按错的范围缩放）。
+            if ep.get("range_dynamic") and key in ("min", "max"):
+                continue
+            item[key] = ep[key]
         if ep.get("persist"):
             item["persist"] = True      # 上位机 backup/restore 用；SDK 会忽略未知字段
         out.append(item)
@@ -652,6 +665,7 @@ def generate_prefs_source(endpoints, lim):
 
 PREFIX_TITLES = [
     ("config", "config：可写参数"),
+    ("command", "command：运行命令（电机模式下有效）"),
     ("telemetry", "telemetry：实时测量（只读）"),
     ("timing", "timing：ISR 耗时统计（只读）"),
     ("system", "system：状态与版本（只读）"),
@@ -669,6 +683,18 @@ def fmt_value(ep, key):
 
 
 def fmt_range(ep):
+    if ep.get("range_dynamic"):
+        lo = ("`%s`" % ep["min_expr"]) if "min_expr" in ep else \
+             (fmt_value(ep, "min") if "min" in ep else "")
+        hi = ("`%s`" % ep["max_expr"]) if "max_expr" in ep else \
+             (fmt_value(ep, "max") if "max" in ep else "")
+        if lo and hi:
+            return "运行期：%s .. %s" % (lo, hi)
+        if hi:
+            return "运行期：≤ %s" % hi
+        if lo:
+            return "运行期：≥ %s" % lo
+        return "运行期"
     lo = fmt_value(ep, "min") if "min" in ep else ""
     hi = fmt_value(ep, "max") if "max" in ep else ""
     if lo and hi:

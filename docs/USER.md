@@ -36,6 +36,7 @@ python tools/mc_ep.py --port COM7 monitor <name>... --rate 20
 | 前缀 | 内容 | 权限 |
 |---|---|---|
 | `config.*` | 电流/位置/速度/电机/编码器/CAN/零点 | `rw` |
+| `command.*` | 运行命令：`t_ff`/`p_des`/`v_des`/`kp`/`kd`（不持久化） | `rw` |
 | `telemetry.*` | 实时测量 | `r` |
 | `timing.*` | ISR 耗时统计 | `r` |
 | `system.*` | 版本、配置序号、schema、保存状态 | `r` |
@@ -88,16 +89,77 @@ python tools/mc_ep.py --port COM7 get system.prefs_sequence   # 成功时 +1
 ## 4. 动作与模式
 
 ```bash
-python tools/mc_ep.py --port COM7 call action.enter_menu    # 回菜单，清锁存故障
+python tools/mc_ep.py --port COM7 call action.idle_mode    # 空闲/停机：关门极、清锁存故障
 python tools/mc_ep.py --port COM7 call action.motor_mode    # 进入电机模式
 python tools/mc_ep.py --port COM7 call action.calibrate     # 编码器标定
 python tools/mc_ep.py --port COM7 call action.zero          # 当前位置设为零点并保存
-python tools/mc_ep.py --port COM7 call action.setup_mode    # 参数设置界面
-python tools/mc_ep.py --port COM7 call action.encoder_mode  # 编码器显示
-python tools/mc_ep.py --port COM7 call action.clear_fault   # 等价于回菜单
+python tools/mc_ep.py --port COM7 call action.clear_fault   # 等价于 action.idle_mode
+python tools/mc_ep.py --port COM7 call action.reboot        # 重启（应答发出后 ~0.5 s 复位）
+python tools/mc_ep.py --port COM7 call action.reset_config  # 恢复出厂默认值并保存
 ```
 
-`action.enter_menu` 会停机并清故障，是正常的"急停"用法。
+`action.idle_mode` 会停机并清故障，是正常的"急停"用法。
+
+### 纯力矩加载测试
+
+`command.*` 是运行命令，只在 MOTOR_MODE 里被控制环使用，**不持久化**：
+
+| 名称 | 含义 |
+|---|---|
+| `command.t_ff` | 前馈力矩（输出轴 N·m），固件限幅到 ±`I_MAX*KT*GR` |
+| `command.p_des` / `command.v_des` | 位置/速度设定值（输出轴） |
+| `command.kp` / `command.kd` | 位置/速度增益 |
+
+纯力矩：`kp = kd = 0`，只改 `command.t_ff`。
+
+**命令租约**：`command.*` 的每次写入都会把 `controller.timeout` 清零，和 CAN 帧一样。
+`config.can_timeout`（毫秒，默认 100）内没有新的写入，控制 ISR 就会把所有命令清零
+——这是**保护**，不是麻烦：主机掉线/脚本崩溃时电机自动卸力。所以不要为了"设一次
+就一直保持"去关它；要么按超时窗口持续刷新（≥3 次/窗口），要么把
+`config.can_timeout` 调大到你想接受的失联时间（例如 500 ms）。
+
+进入 MOTOR_MODE 时固件会先 `zero_commands()`，所以**门极一打开命令就是 0**：
+在空闲态写 `command.*` 不会在使能瞬间生效，必须在电机模式下重新写。
+
+⚠ 纯力矩没有速度环：**空载会一直加速**。必须接负载/测功机，并随时准备
+`action.idle_mode` 或断电。
+
+```bash
+python tools/torque_test.py --port COM7 --torques 0,2,4,6 --dwell 5
+```
+
+脚本会：按 `can_timeout` 自动选刷新率 → 进 MOTOR_MODE → 逐档施加 `t_ff` 并在每轮
+重写（刷新租约）→ 打印 `i_q`/`torque`/`v_bus` → 结束或 Ctrl+C 时卸力并回菜单。
+故障位非 0 立即停机；链路断开时脚本会明确提示"力矩可能仍在输出"。
+单档手动操作就是：
+
+```bash
+python tools/mc_ep.py --port COM7 call action.idle_mode
+python tools/mc_ep.py --port COM7 call action.motor_mode
+python tools/mc_ep.py --port COM7 get telemetry.gate_drive     # 应为 true
+python tools/mc_ep.py --port COM7 set command.kp 0
+python tools/mc_ep.py --port COM7 set command.kd 0
+python tools/mc_ep.py --port COM7 set command.t_ff 3
+python tools/mc_ep.py --port COM7 get telemetry.torque
+python tools/mc_ep.py --port COM7 set command.t_ff 0
+python tools/mc_ep.py --port COM7 call action.idle_mode
+```
+
+（手动分批敲命令时，两条之间可能超过 `can_timeout`，固件会先把命令清零——这是
+正常的，重新写一次即可；要连续保持就用脚本。）
+
+**`action.reset_config`（恢复出厂默认值）**：会连标定一起清掉——`ppairs`、零点、
+编码器 LUT 全部回默认，必须**重新标定**；`CAN_ID / CAN_PROT / CAN_BAUD` 也会回默认
+（`can_prot = 0` 即旧 11-bit 协议），所以复位后要**重新配 CAN**，否则主站可能再也
+连不上。为避免"改了 CAN 设置却不重启"造成的失联和混合状态，**保存成功后固件会自动
+重启**（约 0.5 s，门极先关闭）。和 `action.save` 一样，门极使能时会被直接拒绝
+（`mc_ep.py` 报 `status 6` = `EP_ERR_STATE`，配置一个字都不动）；受理之后的结果看
+`system.save_status`（1 成功 / 3 写失败，写失败时**不会**重启，默认值只在 RAM 里）。
+运行中的编码器副本仍用
+旧标定，直到重启才换成默认值——这是故意的（拿全零 LUT 去换相不安全）。
+
+**`action.reboot`**：先回菜单（关门极）再在 0.5 s 后复位，配置按 flash 里已保存的值
+重新加载。没保存过的改动会丢——先 `action.save` 再 `action.reboot`。
 
 ## 5. 标定
 
@@ -107,7 +169,7 @@ python tools/mc_ep.py --port COM7 call action.clear_fault   # 等价于回菜单
 可降到 1–2 A）；门极关闭（菜单）。
 
 ```bash
-python tools/mc_ep.py --port COM7 call action.enter_menu
+python tools/mc_ep.py --port COM7 call action.idle_mode
 python tools/mc_ep.py --port COM7 set config.i_cal 2.0
 python tools/mc_ep.py --port COM7 call action.calibrate
 ```
@@ -121,7 +183,7 @@ python tools/mc_ep.py --port COM7 get system.prefs_sequence   # 比标定前 +1
 ```
 
 失败（电机卡住、动力电不足、`i_cal` 不合适）会自动回菜单；随时
-`call action.enter_menu` 中止。
+`call action.idle_mode` 中止。
 
 标定结果里 `E_ZERO`/`PPAIRS`/零点在 `config.*`，128 点 LUT 在隐藏记录里，
 **都持久化、都随 OTA 保留**；LUT 不可通过 endpoint 备份。

@@ -16,8 +16,12 @@
 #include "foc.h"
 #include "math_ops.h"
 #include "position_sensor.h"
+#include "prefs_defs.h"		// config_apply_defaults() / config_apply_limits()
 
 extern uint32_t _reboot_cookie;
+
+/* 重启前给上位机留的窗口（等 USB/CAN 应答发出去）。控制环 40 kHz ⇒ 20000 拍 = 0.5 s */
+#define REBOOT_DELAY_CYCLES     20000u
 
  static int save_preferences(void);
 
@@ -131,6 +135,11 @@ extern uint32_t _reboot_cookie;
 				//myprintf("Entering Motor Mode\r\n");
 				GPIO_WriteBits(LED, Bit_SET );
 				reset_foc(&controller);
+				/* 门极打开 ⇒ 命令必须从零开始：endpoint 的 command.* 可以在任何状态
+				 * 写入，若不清，空闲时设的 t_ff/kp/kd/p_des/v_des 会在使能的第一拍就
+				 * 生效，表现为"一进电机模式就窜车"。CAN 是持续推流、下一帧就会覆盖，
+				 * endpoint 是"设一次"，所以这里必须兜住。 */
+				zero_commands(&controller);
 				// drv_enable_gd(drv);
 				/* Enable the six outputs.  AutomaticOutput is disabled in tim.c, so
 				 * MOE is software-only and AOE must stay 0 - with AOE set, a break
@@ -460,6 +469,8 @@ extern uint32_t _reboot_cookie;
 
 	 static int cal_samples_printed = 0;
 	 static int encoder_print_count = 0;
+	 static uint8_t reboot_armed = 0;		// 1 = a reset is queued
+	 static uint32_t reboot_deadline = 0;	// loop_count threshold (valid when reboot_armed)
 
 	 /* Print any calibration milestone messages queued by the ISR (calibration
 	  * runs in the control interrupt and must not print there) */
@@ -519,6 +530,51 @@ extern uint32_t _reboot_cookie;
 			 fsmstate->save_status = save_preferences() ? 1 : 3;
 			 myprintf("\n\r  Saved new zero position:  %d\n\r\n\r", M_ZERO);
 		 }
+	 }
+
+	 /* endpoint action.reset_config：恢复出厂默认值并写 flash。
+	  * 会连标定（PPAIRS / E_ZERO / M_ZERO / ENCODER_LUT）一起清掉，所以同样只在主循环、
+	  * 门极关闭时做。运行中的 comm_encoder 副本故意不动：重启前继续用旧标定，
+	  * 比拿全零 LUT 去换相安全。
+	  * 保存成功后自动重启：CAN_ID / CAN_PROT / CAN_BAUD 是运行期读取的，改了却不重启
+	  * 会让主站立刻失联；而且 config.* 与 comm_encoder.* 会处于混合状态。 */
+	 if(fsmstate->reset_config_pending){
+		 fsmstate->reset_config_pending = 0;
+		 if(!controller.gate_drive_enabled){
+			 config_apply_defaults();
+			 config_apply_limits();
+			 fsmstate->save_status = save_preferences() ? 1 : 3;
+			 myprintf("\r\n  Config reset to defaults (calibration cleared)\r\n");
+			 if(fsmstate->save_status == 1){
+				 myprintf("  Rebooting; recalibrate afterwards\r\n");
+				 fsmstate->reboot_pending = 1;	// 下面的 reboot 块处理（关栅 + 0.5 s 后复位）
+			 }
+			 else{
+				 myprintf("  ...but writing flash failed, defaults are RAM-only\r\n");
+			 }
+		 }
+		 else{
+			 fsmstate->save_status = 2;
+			 myprintf("\r\n  Reset skipped: gate drive is enabled\r\n");
+		 }
+	 }
+
+	 /* endpoint action.reboot：应答已经发完（调用者已返回）才复位。
+	  * 用控制 ISR 的 loop_count 计时，不在主循环里阻塞。
+	  * 不动 _reboot_cookie：正常启动之后它本来就是 42，而 main.c 的
+	  * "启动状态不确定就再复位一次"（!= 42）是故意留的保险，不该由这里关掉。 */
+	 if(fsmstate->reboot_pending){
+		 fsmstate->reboot_pending = 0;
+		 /* 先回菜单：由控制 ISR 走 fsm_enter_state() 把门极关掉，0.5 s 后才真正复位，
+		  * 避免带着 PWM 直接掉电（引脚复位成输入，功率级状态不确定） */
+		 request_fsm_state(fsmstate, MENU_MODE);
+		 reboot_deadline = (uint32_t)controller.loop_count + REBOOT_DELAY_CYCLES;
+		 reboot_armed = 1;
+	 }
+	 if(reboot_armed && ((int32_t)((uint32_t)controller.loop_count - reboot_deadline) >= 0)){
+		 reboot_armed = 0;
+		 __disable_irq();
+		 NVIC_SystemReset();
 	 }
 
 	 if(fsmstate->state == CALIBRATION_MODE){

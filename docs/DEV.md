@@ -4,7 +4,7 @@
 
 目录：[架构与不变式](#架构与不变式) · [endpoint 协议](#endpoint-协议) ·
 [params.json 与代码生成](#paramsjson-与代码生成) · [配置持久化](#配置持久化) ·
-[Flash 布局与 OTA 契约](#flash-布局与-ota-契约) · [CAN / CyberBeast 移植](#can--cyberbeast-移植) ·
+[Flash 布局与 OTA 契约](#flash-布局与-ota-契约) · [CAN：协议选择与 CYBERBEAST](#can协议选择与-cyberbeast) ·
 [测试](#测试) · [发布检查表](#发布检查表) · [接口变更规则](#接口变更规则)
 
 ## 架构与不变式
@@ -111,7 +111,7 @@ seq|0x8000(2) | status(1) | data...
 - 类型名用 `bool/uint8/int8/uint16/int16/uint32/int32/uint64/int64/float/double/
   object/endpoint_ref/json/function`；
 - 动作端点写 `"type":"function"` + 空 `inputs`/`outputs`，**不能写 `void`**；
-- 总长 ≤ 65535（当前约 9 KB）。
+- 总长 ≤ 65535（当前约 10.2 KB）。
 
 例子（读 `config.i_max`，ID 2）：
 
@@ -125,6 +125,40 @@ frame   = AA 08 <crc8> 01 00 02 80 04 00 56 34 <crc16_hi> <crc16_lo>
 ```
 payload = 03 00 | 47 40 | 00 00 | 56 34      ; 0x4047 = 71 | EP_REQ_WRITE
 ```
+
+动作端点里与运维相关的两个（都只置标志，真正的工作在 `run_fsm_slow()`）：
+
+| 端点 | ID | 行为 |
+|---|---|---|
+| `action.reboot` | 127 | `state.reboot_pending = 1` → 先 `request_fsm_state(MENU_MODE)`（关栅），0.5 s 后（`REBOOT_DELAY_CYCLES`）`NVIC_SystemReset()`。**不动 `_reboot_cookie`**：正常启动后它本来就是 42，而 `main.c` 的 `!= 42 → 再复位一次` 是"启动状态不确定"的保险，不该由这里关掉。没保存的改动会丢 |
+| `action.reset_config` | 126 | `state.reset_config_pending = 1` → `config_apply_defaults()` + `config_apply_limits()` + `save_preferences()`，**保存成功后自动 `reboot_pending = 1`**（`CAN_ID/CAN_PROT/CAN_BAUD` 是运行期读取的，改了不重启会让主站失联，而且 `config.*` 与 `comm_encoder.*` 会处于混合状态）；`require` 要求门极关闭（否则端点返回 `EP_ERR_STATE=6`），主循环里再加一道 `save_status = 2` 兜底。写 flash 失败时**不**重启 |
+
+**`action.encoder_mode`(77) / `action.setup_mode`(78) 已退役**：固件不再提供它们
+（串口菜单里的 `e`/`s` 入口仍然保留）。按“ID 只增不改”的规则，这两个 ID 仍在
+`tools/endpoint_ids.json` 的 map 里占位，**永远不要重新分配给别的参数**；新动作取
+126/127。
+
+**一次性例外**：`action.enter_menu` 曾原地改名为 `action.idle_mode` 但**保留 ID 73**
+（工程尚未交付客户，不欠外部兼容）。今后再改名必须走"新名字 = 新 ID，旧 ID 留空号"。
+
+`action.*` 会写 `system.save_status` 的路径共有四条（`action.save`、`action.zero`、
+`action.reset_config`、标定完成、setup 退出），它的含义是"最近一次写 flash 的结果"。
+
+### command.*（运行命令）
+
+五个 `command.*` 端点直接写 `controller.t_ff/p_des/v_des/kp/kd`，**不持久化**，
+描述符里也不给 `min`/`max`（`range_dynamic: true`：真实范围由 `config.i_max/kt/gr/
+p_max/v_max/kp_max/kd_max` 在运行期决定，写死一个数字会让上位机按错范围缩放）。
+
+两条必须保持的语义：
+
+- **写入会刷新命令租约**（`"set": "... = v; controller.timeout = 0;"`）。CAN 帧一直是
+  这么做的；endpoint 必须一致，否则默认 `config.can_timeout = 100 ms` 一到，
+  `run_fsm` 的 MOTOR_MODE 分支就会 `zero_commands()`，USB 写进去的力矩活不过 100 ms。
+  刷新的好处是"主机掉线 ⇒ 自动卸力"。**不要靠把 `can_timeout` 置 0 来绕过**，
+  那等于永久关掉失效保护（而且会被 `action.save` 存进 flash）。
+- **进入 MOTOR_MODE 先 `zero_commands()`**（`fsm_enter_state`）。`command.*` 在任何
+  状态都能写，若不在使能前清零，空闲态设的 `t_ff` 会在门极打开的第一拍生效。
 
 ## params.json 与代码生成
 
@@ -153,7 +187,8 @@ payload = 03 00 | 47 40 | 00 00 | 56 34      ; 0x4047 = 71 | EP_REQ_WRITE
 | `call` | 动作语句，只能置标志/写变量 |
 | `require` | 为假时 `EP_ERR_STATE`；支持以 `!` 开头 |
 | `min`/`max` | 描述符范围 + 限幅依据 |
-| `min_expr`/`max_expr` | C 侧限幅用宏（如 `I_MAX_LIMIT`），避免两处数字漂移 |
+| `min_expr`/`max_expr` | C 侧限幅用宏（如 `I_MAX_LIMIT`、`P_MIN`），避免两处数字漂移 |
+| `range_dynamic` | 真实范围由固件宏/用户配置在运行期决定 → **不发** `min`/`max` 给上位机（仍用它们做 C 限幅）；生成器要求同时有 `min/max` 和 `*_expr` |
 | `unit`/`brief` | 只进文档/描述符。**`brief` 是中文字符串，不进线上描述符** |
 | `persist`/`default` | 进持久化表；`default` 必填（擦除芯片时用） |
 | `hidden` | 不进描述符/handler，只进持久化表（编码器 LUT） |
@@ -289,7 +324,13 @@ bootloader 契约（本仓库不含 bootloader，app 链接在 `0x08000000`）�
 任何一项不符，先查 bootloader 擦除范围，不要先怀疑 TLV 代码。
 
 失败恢复：保存掉电用另一页；擦写失败 `save_status = 3` 且旧页保留；两页都坏
-→ 默认值 + `prefs_loaded = 0`，需要重新设置 + 标定。没有自动"恢复出厂"。
+→ 默认值 + `prefs_loaded = 0`，需要重新设置 + 标定。
+
+主动“恢复出厂”：`call action.reset_config`（需门极关闭）——它 = `config_apply_defaults()`
+、`config_apply_limits()`、保存一页，**会连标定一起清掉**（`ppairs`/零点/LUT 回默认），
+`CAN_ID/CAN_PROT/CAN_BAUD` 也回默认（`can_prot=0` ⇒ 旧 11-bit），所以保存成功后
+固件会自动重启（0.5 s），之后要重新配 CAN 并重新标定。运行中的 `comm_encoder` 副本
+故意不跟着改：重启前继续用旧标定，比拿全零 LUT 去换相安全。
 
 ## CAN：协议选择与 CYBERBEAST
 
@@ -366,7 +407,7 @@ CubeMX 的 SysInit 段移到了配置加载之后
 7 个 ODrive 路径。**本工程刻意不加这些别名**（客户将改 JointSDK 适配），
 所以现阶段用 `jsdk_context_desc_fetch()` + `jsdk_joint_param_get/set()` 访问参数，
 控制用 `0x00/0x03/0x04`。描述符仍是纯 ASCII、动作端点为 `function` 类型，
-可直接被 SDK 的 `cb_jsondesc_parse` 解析（124 个可见端点，约 9.9 KB）。
+可直接被 SDK 的 `cb_jsondesc_parse` 解析（129 个可见端点，约 10.2 KB）。
 
 ### 台架注意
 
@@ -448,6 +489,11 @@ make -j8
 | 11 | 保存瞬间断电（重复几次） | 上电后是上一次的完整配置 |
 | 12 | CRC 错的帧 | 设备不应答，后续通信正常 |
 | 13 | 旧描述符 CRC | 状态 7 |
+| 14 | `call action.reboot` | 应答先返回，~0.5 s 后重启；门极在复位前已关闭 |
+| 15 | `call action.reset_config`（先记下 `prefs_sequence`） | `save_status = 1`、序号 +1；`config.e_zero/ppairs` 回默认；**随后自动重启**，重启后 `prefs_loaded = true`、`config.can_prot = 0`（记得切回需要的协议）并重新标定 |
+| 16 | 门极使能时 `call action.reset_config` | `status 6`（`EP_ERR_STATE`），`save_status` 不变，配置不动 |
+| 17 | 空闲态 `set command.t_ff 5` 后 `call action.motor_mode` | 门极使能后 `telemetry.t_ff = 0`（进入模式时清零），电机不窜动 |
+| 18 | 电机模式下写 `command.t_ff`，然后停发 3×`can_timeout` | 命令自动清零（租约到期），`telemetry.i_q_des → 0` |
 
 ## 发布检查表
 

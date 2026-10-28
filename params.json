@@ -320,31 +320,6 @@
       "default": 100
     },
     {
-      "name": "system.can_prot_active",
-      "type": "int32",
-      "access": "r",
-      "get": "can_active_prot()",
-      "brief": "当前生效的 CAN 协议（0=旧 11-bit，1=CYBERBEAST）",
-      "persist": false
-    },
-    {
-      "name": "system.can_fd",
-      "type": "bool",
-      "access": "r",
-      "get": "can_is_fd()",
-      "brief": "当前是否以 CAN FD 运行",
-      "persist": false
-    },
-    {
-      "name": "system.can_baud_active",
-      "type": "int32",
-      "access": "r",
-      "get": "can_active_baud()",
-      "unit": "bit/s",
-      "brief": "当前生效的 CAN 速率（Classic 为位速率；FD 为数据域速率）",
-      "persist": false
-    },
-    {
       "name": "config.m_zero",
       "type": "int32",
       "access": "rw",
@@ -365,6 +340,72 @@
       "set": "E_ZERO = v; comm_encoder.e_zero = v;",
       "persist": true,
       "default": 0
+    },
+    {
+      "name": "command.t_ff",
+      "type": "float",
+      "access": "rw",
+      "ref": "controller.t_ff",
+      "unit": "N-m",
+      "min": -40.0,
+      "max": 40.0,
+      "min_expr": "-I_MAX*KT*GR",
+      "max_expr": "I_MAX*KT*GR",
+      "range_dynamic": true,
+      "set": "controller.t_ff = v; controller.timeout = 0;",
+      "brief": "前馈转矩（输出轴 N·m）；写入会刷新命令租约，进入 MOTOR_MODE 时清零"
+    },
+    {
+      "name": "command.p_des",
+      "type": "float",
+      "access": "rw",
+      "ref": "controller.p_des",
+      "unit": "rad",
+      "min": -40.0,
+      "max": 40.0,
+      "min_expr": "P_MIN",
+      "max_expr": "P_MAX",
+      "range_dynamic": true,
+      "set": "controller.p_des = v; controller.timeout = 0;",
+      "brief": "位置设定值（输出轴 rad）；范围由 config.p_max 决定，进入 MOTOR_MODE 时清零"
+    },
+    {
+      "name": "command.v_des",
+      "type": "float",
+      "access": "rw",
+      "ref": "controller.v_des",
+      "unit": "rad/s",
+      "min": -100.0,
+      "max": 100.0,
+      "min_expr": "V_MIN",
+      "max_expr": "V_MAX",
+      "range_dynamic": true,
+      "set": "controller.v_des = v; controller.timeout = 0;",
+      "brief": "速度设定值（输出轴 rad/s）；范围由 config.v_max 决定，进入 MOTOR_MODE 时清零"
+    },
+    {
+      "name": "command.kp",
+      "type": "float",
+      "access": "rw",
+      "ref": "controller.kp",
+      "min": 0.0,
+      "max": 500.0,
+      "max_expr": "KP_MAX",
+      "range_dynamic": true,
+      "set": "controller.kp = v; controller.timeout = 0;",
+      "brief": "位置增益；上限由 config.kp_max 决定，进入 MOTOR_MODE 时清零"
+    },
+    {
+      "name": "command.kd",
+      "type": "float",
+      "access": "rw",
+      "ref": "controller.kd",
+      "min": 0.0,
+      "max": 5.0,
+      "max_expr": "KD_MAX",
+      "range_dynamic": true,
+      "set": "controller.kd = v; controller.timeout = 0;",
+      "brief": "速度增益；上限由 config.kd_max 决定，进入 MOTOR_MODE 时清零"
     },
     {
       "name": "telemetry.v_bus",
@@ -961,7 +1002,32 @@
       "type": "uint8",
       "access": "r",
       "get": "state.save_status",
-      "brief": "最近一次 action.save 的结果：0 未执行、1 成功、2 因门极使能跳过、3 写失败"
+      "brief": "最近一次写 flash 的结果（save/zero/reset_config）：0 未执行、1 成功、2 因门极使能跳过、3 写失败"
+    },
+    {
+      "name": "system.can_prot_active",
+      "type": "int32",
+      "access": "r",
+      "get": "can_active_prot()",
+      "brief": "当前生效的 CAN 协议（0=旧 11-bit，1=CYBERBEAST）",
+      "persist": false
+    },
+    {
+      "name": "system.can_fd",
+      "type": "bool",
+      "access": "r",
+      "get": "can_is_fd()",
+      "brief": "当前是否以 CAN FD 运行",
+      "persist": false
+    },
+    {
+      "name": "system.can_baud_active",
+      "type": "int32",
+      "access": "r",
+      "get": "can_active_baud()",
+      "unit": "bit/s",
+      "brief": "当前生效的 CAN 速率（Classic 为位速率；FD 为数据域速率）",
+      "persist": false
     },
     {
       "name": "action.save",
@@ -980,17 +1046,17 @@
       "call": "state.zero_pending = 1;"
     },
     {
-      "name": "action.enter_menu",
+      "name": "action.idle_mode",
       "type": "void",
       "access": "w",
-      "brief": "回到菜单（同时清除锁存故障）",
+      "brief": "空闲/停机：关门极、清锁存故障、回到菜单（退出电机模式、急停用）",
       "call": "request_fsm_state(&state, MENU_MODE);"
     },
     {
       "name": "action.clear_fault",
       "type": "void",
       "access": "w",
-      "brief": "清除锁存故障（等价于回菜单）",
+      "brief": "清除锁存故障（等价于 action.idle_mode）",
       "call": "request_fsm_state(&state, MENU_MODE);"
     },
     {
@@ -1005,25 +1071,24 @@
       "name": "action.calibrate",
       "type": "void",
       "access": "w",
-      "brief": "进入编码器标定（仅菜单状态）",
+      "brief": "进入标定（相序/极对数、编码器零位与 LUT、R/L/Ld-Lq/磁链；仅菜单状态）",
       "require": "state.state == MENU_MODE",
       "call": "request_fsm_state(&state, CALIBRATION_MODE);"
     },
     {
-      "name": "action.encoder_mode",
+      "name": "action.reset_config",
       "type": "void",
       "access": "w",
-      "brief": "进入编码器显示模式（仅菜单状态）",
-      "require": "state.state == MENU_MODE",
-      "call": "request_fsm_state(&state, ENCODER_MODE);"
+      "brief": "恢复出厂默认值并写入 flash（要求门极关闭；会清掉标定，需重新标定并重启）",
+      "require": "!controller.gate_drive_enabled",
+      "call": "state.save_status = 0; state.reset_config_pending = 1;"
     },
     {
-      "name": "action.setup_mode",
+      "name": "action.reboot",
       "type": "void",
       "access": "w",
-      "brief": "进入参数设置菜单（仅菜单状态）",
-      "require": "state.state == MENU_MODE",
-      "call": "request_fsm_state(&state, SETUP_MODE);"
+      "brief": "重启控制器（应答发出后约 0.5 s 复位，配置按已保存的值重新加载）",
+      "call": "state.reboot_pending = 1;"
     },
     {
       "name": "action.reset_timing",

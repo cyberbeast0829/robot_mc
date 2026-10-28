@@ -170,14 +170,14 @@ CYBERBEAST (`can_cyberbeast.c`) gotchas verified on the bench:
   却忘了重新生成，描述符和固件就会静默错配，提交前必须跑。
 - **endpoint ID 由 `tools/endpoint_ids.json` 锁定，只增不改**。改名等于新增
   （旧 ID 保留但不响应）；不要手工重排 ID。
-- 设备把一份紧凑 JSON 描述符烧进 flash（当前约 9.3 KB），通过 **endpoint 0**
+- 设备把一份紧凑 JSON 描述符烧进 flash（当前约 10.2 KB），通过 **endpoint 0**
   分块下载；描述符的 CRC16 同时是“接口版本”（每次增删参数都会变），除
   endpoint 0 外的每个请求都必须在 payload 末尾带这个 CRC，否则返回
   `EP_ERR_VERSION`，避免新旧固件静默错配。
 - **读和写必须显式区分**：请求 `id` 字段的 bit14 是 `EP_REQ_WRITE`，bit15 是
   `EP_REQ_REPLY`，低 14 位是 ID。handler 按描述符的 `access` 校验（`r` 拒绝写、
   `w` 拒绝读）。**不要**退回“payload 为空就当读”的写法：那样一次读
-  `action.enter_menu` 就会停机。USB 侧由 `mc_ep.py` 置位；CAN 侧由
+  `action.idle_mode` 就会停机。USB 侧由 `mc_ep.py` 置位；CAN 侧由
   `PARAM_READ(0x20)`/`PARAM_WRITE(0x21)` 操作码映射。协议版本已升到 2。
 - 传输目前只有 **USB CDC**：二进制帧和 ASCII 菜单共用同一条数据流，
   `0xAA` 帧头之外的字节仍然交给 `update_fsm()`。帧格式和状态码见
@@ -192,7 +192,16 @@ CYBERBEAST (`can_cyberbeast.c`) gotchas verified on the bench:
   `EP_OK` 只表示“已受理”，结果读 `system.save_status`（1 成功 / 2 因门极使能
   跳过 / 3 写失败）或看 `system.prefs_sequence` 是否增加。
   状态切换用 `request_fsm_state()`（带临界区），不要在 handler 里直接调
-  `update_fsm()`——后者是串口/CAN 输入路径。
+  `update_fsm()`——后者是串口/CAN 输入路径。`action.reset_config` 保存成功后
+  会自动置 `reboot_pending`（`CAN_ID/CAN_PROT/CAN_BAUD` 运行期生效，改了不重启
+  会让主站失联）；`action.reboot` 不要动 `_reboot_cookie`（`main.c` 的
+  `!= 42 → 再复位一次` 是启动状态不确定时的保险）。
+- **`command.*`（t_ff/p_des/v_des/kp/kd）有两条硬语义**：写入必须刷新命令租约
+  （`"set": "... = v; controller.timeout = 0;"`，与 CAN 帧一致，否则默认 100 ms
+  的 `config.can_timeout` 一到就会被 `zero_commands()` 清掉；**不要**用把
+  `can_timeout` 置 0 来绕过）；**进入 MOTOR_MODE 必须先 `zero_commands()`**
+  （`fsm_enter_state`），否则空闲态写入的 `t_ff` 会在门极打开的第一拍生效。
+  它们的范围是运行期决定的（`range_dynamic: true`），描述符里不发 `min`/`max`。
 - 上位机：`python tools/mc_ep.py --port COMx tree|get|set|call|dump|monitor`
   （需要 `pip install pyserial`）。工具会先下载描述符，再按名字收发。
 - **线上描述符必须是纯 ASCII，且类型名必须是 ODrive/Fibre 认得的**：
