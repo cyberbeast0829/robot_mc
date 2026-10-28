@@ -131,6 +131,30 @@ Invariants carried from upstream — keep them:
 - `fault_shutdown()` (in `n32h47x_48x_it.c`) must stay register-writes-only: gate drive off
   via the ATIM1 BKDT bits (never SPI, never assume the bus is usable).
 
+## 标定
+
+`CALIBRATION_MODE` 的 ISR 链路是 `order_phases()` → `calibrate_encoder()` →
+`measure_lr()`（`calibration.c`）。`measure_lr()` 是 ODrive
+`measure_phase_resistance` / `measure_phase_inductance` / `measure_ld_lq` /
+`measure_flux_linkage` 的移植，用两段直流外推 R、±2 V 翻转测 L、锁住转子测
+Ld/Lq、开环升速测磁链并令 `KT = 1.5·PPAIRS·λ`。测试电流 = `min(I_CAL, I_MAX)`。
+
+- 结果写 `R_PHASE`/`L_D`/`L_Q`/`KT`（`__float_reg[13]/[11]/[12]/[14]`，都持久化；
+  L_D/L_Q 已从 `hw_config.h` 常量改成配置寄存器）。新增 endpoint 是
+  `config.l_d`/`config.l_q`（133/134）和只读的 `telemetry.ld_lq_diff`（135）。
+- **两类电压上限别混用**：`CAL_V_MAX`(2 V) 是电感翻转幅值，`CAL_LOCK_V_MAX`(12 V)
+  是 R / 锁转子的直流钳位；R 用两步**实测电流**算 `(V2-V1)/(I2-I1)`，所以第二步
+  被钳位也不影响结果（电流差太小才失败）。`CAL_KI_R`/`CAL_KI_LOCK` 用 4.0 而不是
+  ODrive 的 1.0（1 Ω 级电机 1.5 s 内要能稳定）。
+- 电感公式用 `|delta_i|`（`cal_ripple_inductance()`）：PWM 比较值预装载，ISR 里
+  ADC 采到的电流滞后写入的占空比两个周期，有符号写法会得到负 delta 而误判失败；
+  分子里也不要加 R·I 项。
+- 控制环里的 dq 电压不是物理伏特：`svm()` 的换算给出
+  `CAL_V_PER_CMD = 0.5/((DTC_MAX-DTC_MIN)·√(1/3))`（约 1.237）。测量结果在存盘前
+  乘上它；**改 `svm()`/`DTC_MAX`/`DTC_MIN` 时必须同步改 `CAL_V_PER_CMD`**。
+- 任一段失败就置 `comm_encoder_cal.failed` → 回菜单且不写 flash；`run_fsm_slow()`
+  只在 `done_ordering && done_cal && done_rl` 后保存。细节见 `docs/DEV.md`。
+
 ## Custom printf
 
 `myprintf()` (declared in `main.h`, defined in `main.c`) replaces `printf`: it sends over
@@ -170,7 +194,7 @@ CYBERBEAST (`can_cyberbeast.c`) gotchas verified on the bench:
   却忘了重新生成，描述符和固件就会静默错配，提交前必须跑。
 - **endpoint ID 由 `tools/endpoint_ids.json` 锁定，只增不改**。改名等于新增
   （旧 ID 保留但不响应）；不要手工重排 ID。
-- 设备把一份紧凑 JSON 描述符烧进 flash（当前约 10.2 KB），通过 **endpoint 0**
+- 设备把一份紧凑 JSON 描述符烧进 flash（当前约 10.5 KB），通过 **endpoint 0**
   分块下载；描述符的 CRC16 同时是“接口版本”（每次增删参数都会变），除
   endpoint 0 外的每个请求都必须在 payload 末尾带这个 CRC，否则返回
   `EP_ERR_VERSION`，避免新旧固件静默错配。

@@ -91,7 +91,7 @@ python tools/mc_ep.py --port COM7 get system.prefs_sequence   # 成功时 +1
 ```bash
 python tools/mc_ep.py --port COM7 call action.idle_mode    # 空闲/停机：关门极、清锁存故障
 python tools/mc_ep.py --port COM7 call action.motor_mode    # 进入电机模式
-python tools/mc_ep.py --port COM7 call action.calibrate     # 编码器标定
+python tools/mc_ep.py --port COM7 call action.calibrate     # 标定（相序/编码器/R/L/磁链）
 python tools/mc_ep.py --port COM7 call action.zero          # 当前位置设为零点并保存
 python tools/mc_ep.py --port COM7 call action.clear_fault   # 等价于 action.idle_mode
 python tools/mc_ep.py --port COM7 call action.reboot        # 重启（应答发出后 ~0.5 s 复位）
@@ -166,7 +166,7 @@ python tools/mc_ep.py --port COM7 call action.idle_mode
 第一次使用、换电机/编码器、整片擦除后要做一次。**OTA 升级不需要重新标定。**
 
 前置：电机轴能自由转动；动力电已上；`config.i_cal` 合适（默认 5 A，小电机
-可降到 1–2 A）；门极关闭（菜单）。
+可降到 1–2 A，R/L/磁链测量时会自动限制在 `config.i_max` 以内）；门极关闭（菜单）。
 
 ```bash
 python tools/mc_ep.py --port COM7 call action.idle_mode
@@ -174,19 +174,38 @@ python tools/mc_ep.py --port COM7 set config.i_cal 2.0
 python tools/mc_ep.py --port COM7 call action.calibrate
 ```
 
-电机会先对齐相序，再正反转各一圈采样。完成后自动回菜单、应用结果并保存
-（LUT 写入隐藏记录 `internal.encoder_lut`）。核对：
+标定分四个阶段，全部自动完成（14 极对时约 30 s，串口会打印每一步的结果）：
+
+1. **相序/极对数**：对齐后正转一个电周期，再按 `2π / 机械行程` 求极对数；
+2. **编码器**：正反转各一圈采样，得到电角度零位 `E_ZERO` 和 128 点 LUT；
+3. **R / L / Ld / Lq**：先用两段直流（`i_cal/2` 和 `i_cal`）外推相电阻，
+   再用 ±2 V 电压翻转测电感；然后在 alpha、beta 两个方向分别锁住转子，
+   测出 `Ld` 与 `Lq`（感差 `Ld-Lq`）；
+4. **磁链 / Kt**：开环升速到 60 rad/s（电角度）后由稳态 q 轴电压方程算出
+   磁链 `λ`，并令 `Kt = 1.5 × 极对数 × λ`。
+
+完成后自动回菜单、应用结果并保存（LUT 写入隐藏记录 `internal.encoder_lut`）。核对：
 
 ```bash
 python tools/mc_ep.py --port COM7 get system.save_status      # 1
 python tools/mc_ep.py --port COM7 get system.prefs_sequence   # 比标定前 +1
+python tools/mc_ep.py --port COM7 get config.r_phase          # 欧姆
+python tools/mc_ep.py --port COM7 get config.l_d              # 亨利
+python tools/mc_ep.py --port COM7 get config.l_q
+python tools/mc_ep.py --port COM7 get config.kt               # N-m/A
+python tools/mc_ep.py --port COM7 get telemetry.ld_lq_diff    # Ld-Lq
 ```
 
-失败（电机卡住、动力电不足、`i_cal` 不合适）会自动回菜单；随时
+串口会在 R 阶段两步之间打印 `R step 1: <V> @ <A>`。相电阻大时第二步电压会被
+`CAL_LOCK_V_MAX` 钳位，固件用**实测电流**计算 R，不会因此失败；只有两步电流差
+太小（开路、母线电压太低）才失败。失败（电机卡住、动力电不足、`i_cal` 不合适、
+电流跟不上）会自动回菜单，**不写 flash**；可先降低 `config.i_cal` 再试，随时
 `call action.idle_mode` 中止。
 
-标定结果里 `E_ZERO`/`PPAIRS`/零点在 `config.*`，128 点 LUT 在隐藏记录里，
-**都持久化、都随 OTA 保留**；LUT 不可通过 endpoint 备份。
+标定结果里 `E_ZERO`/`PPAIRS`/零点/`r_phase`/`l_d`/`l_q`/`kt` 都在 `config.*`，
+128 点 LUT 在隐藏记录里，**都持久化、都随 OTA 保留**；LUT 不可通过 endpoint 备份。
+`telemetry.flux_linkage` 是 `kt` 与极对数换算出来的只读值（λ = Kt/(1.5·极对数)），
+因此重启后仍能读到标定得到的磁链。
 
 ## 6. 备份与恢复
 

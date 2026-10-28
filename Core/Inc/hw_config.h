@@ -136,7 +136,7 @@
 #define I_SCALE 			0.005035400390625f  // Nominal amps per A/D count with 5 mOhm shunts
 // V_SCALE = (3.3 * VBUS_S_DIVIDER) / (2^12) 其中 VBUS_S_DIVIDER = 93.91 / 3.01
 #define V_SCALE 			0.02513618342504f    // Bus volts per A/D Count
-#define DTC_MAX 			0.7f          	// Max duty cycle
+#define DTC_MAX 			0.7f          	// Max duty cycle (calibration converts its voltages with CAL_V_PER_CMD - see calibration.c)
 #define DTC_MIN 			0.0f          	// Min duty cycle
 #define DTC_COMP 			0.000f          // deadtime compensation (100 ns / 25 us)
 #define DT					.000025f		// Loop period
@@ -149,12 +149,10 @@
  * around the measured midscale offsets.  The previous 40 A limit no longer
  * fits the corrected measurement range.  Raising this requires checking
  * both the analogue sense range and the power-stage/shunt ratings. */
-#define I_MAX_LIMIT			4.0f			// Hard upper bound for I_MAX (A)
+#define I_MAX_LIMIT			20.0f			// Hard upper bound for I_MAX (A)
 #define I_OC_FAULT_FACTOR	1.5f			// Overcurrent latch threshold = factor * I_MAX
 
 /* Current controller */
-#define L_D     95e-6f				// D axis inductance
-#define L_Q     124e-6f				// Q axis inductance
 #define K_D     .1f                    // Loop gain,  Volts/Amp
 #define K_Q     .1f                    // Loop gain,  Volts/Amp
 #define K_SCALE 0.00012f             // K_loop/Loop BW (Hz) 0.0042

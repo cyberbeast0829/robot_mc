@@ -2,7 +2,8 @@
 
 面向修改固件的人。用户侧用法见 [USER.md](USER.md)。
 
-目录：[架构与不变式](#架构与不变式) · [endpoint 协议](#endpoint-协议) ·
+目录：[架构与不变式](#架构与不变式) · [标定](#标定) ·
+[endpoint 协议](#endpoint-协议) ·
 [params.json 与代码生成](#paramsjson-与代码生成) · [配置持久化](#配置持久化) ·
 [Flash 布局与 OTA 契约](#flash-布局与-ota-契约) · [CAN：协议选择与 CYBERBEAST](#can协议选择与-cyberbeast) ·
 [测试](#测试) · [发布检查表](#发布检查表) · [接口变更规则](#接口变更规则)
@@ -48,6 +49,62 @@ ADC，采样点在 PWM 峰值、低侧采样窗口内。
 
 加一个参数：`params.json` 加条目（要持久化再加 `persist: true` + `default`）→
 `make endpoints` → `make check` → `make` → `make hosttest`。
+
+## 标定
+
+`CALIBRATION_MODE` 的 ISR 链路是 `order_phases()` → `calibrate_encoder()` →
+`measure_lr()`（`Core/Src/calibration.c`），全程在 40 kHz 控制中断里跑，所以
+**不能 printf**；阶段进度用 `cal_msg_push()` 交给主循环的 `cal_print_flush()`。
+`run_fsm_slow()` 只在 `done_ordering && done_cal && done_rl` 都置位后退出到菜单
+并保存。
+
+`measure_lr()` 是 ODrive `Motor::measure_phase_resistance` /
+`measure_phase_inductance` / `measure_ld_lq` / `measure_flux_linkage` 及其
+控制律的 C 移植：
+
+| 阶段 | 方法 | 时长 |
+|---|---|---|
+| R | alpha 轴积分电流源，两步 `I_CAL/2` → `I_CAL`；用**实测的**两步电流和电压做 `R = (V2-V1)/(I2-I1)`，死区项相消 | 2 × 1.5 s |
+| L | alpha 轴每拍翻转 ±2 V，累加带符号的 ΔIα 并取幅值 | 1.25 s |
+| Ld / Lq | 先在 alpha/beta 上锁住转子，再翻转电压测该轴电感 | 2 × 1.25 s |
+| 磁链 | 开环升速到 60 rad/s（电角度），稳态采样 `Vq/Id/Iq`：`λ = (Vq - R·Iq - ω·Ld·Id)/ω`，再 `Kt = 1.5·pole_pairs·λ` | 4.5 s |
+
+- **两类电压上限要分开**：`CAL_V_MAX`（2 V）是电感测量的翻转幅值，决定电流纹波；
+  `CAL_LOCK_V_MAX`（12 V）只是 R 积分器和 Ld/Lq 锁转子的直流钳位。用小钳位会让
+  高阻电机（1 Ω 级：4 A × 1 Ω ≈ 4 V 物理电压）永远到不了测试电流 —— 台架上
+  4.00 A 时 R 阶段在 2 V 饱和就是这么发生的。
+- R 用**实测电流**而不是目标电流，所以高阻电机第二步即使被 12 V 钳位、或积分器
+  还没完全稳定，只要两步电流差足够大（≥ 0.2·I_low）结果仍然成立；两步电流差
+  太小（开路、母线过低）才失败。`CAL_KI_R`/`CAL_KI_LOCK` 用 4.0 而不是 ODrive 的
+  1.0：ODrive 的 1.0 对 50 mΩ 电机没问题，但对 1 Ω 电机 1.5 s 只能稳定到约
+  84 %（R 会低 17 %）。
+- **电感公式用幅值**：PWM 比较值是预装载的，ISR 里 ADC 采到的电流对应两个控制
+  周期前写入的占空比，比本周期 `test_voltage` 的翻转晚一拍，所以台架上用有符号
+  累加会得到负 delta。`cal_ripple_inductance()` 用 `|delta_i|`（`L = V·dt/|ΔI|`），
+  不要"修正"回有符号形式，也不要在分子里加 R·I 项（采样点在纹波拐点，Ld/Lq 锁
+  转子的直流压降已被 lock 电压抵消，剩余阻尼是二阶小量）。
+- 串口会在两步之间打印 `R step 1: <V> @ <A>`，失败信息带阶段名、失败值和辅助值
+  （R 阶段是两步电流差），便于判断是"电流没到"还是"接线/母线问题"。
+- 测试电流 = `min(config.i_cal, config.i_max)`（`i_cal` 和编码器标定共用；
+  这几段要持续通直流，不能超过板级限流）。过流硬件/软件保护照常在
+  `check_faults()` 里生效。
+- 结果直接写 `R_PHASE` / `L_D` / `L_Q` / `KT`（都持久化，ID 17/133/134/15）。
+  `L_D`/`L_Q` 从 `hw_config.h` 的固定宏改成了 `user_config.h` 的 `__float_reg[11]/[12]`。
+  `controller.flux_linkage` 在 `init_controller_params()` 里按 `KT/(1.5·PPAIRS)`
+  重算，所以重启后 `telemetry.flux_linkage` 仍能反映标定值；
+  `telemetry.ld_lq_diff = L_D - L_Q` 是只读计算值。
+- **电压单位换算**：控制环里的 dq 电压并不是物理伏特。`svm()` 把
+  `(u - v_offset)` 变成 `0.5/v_scale` 的占空比偏移，而
+  `v_scale = v_bus·(DTC_MAX-DTC_MIN)·√(1/3)`，所以实际相电压 = `CAL_V_PER_CMD ×
+  指令电压`，`CAL_V_PER_CMD = 0.5/((DTC_MAX-DTC_MIN)·√(1/3))`（当前 DTC 0…0.7
+  时约 1.237）。`measure_lr()` 在计算 R/L/λ 前把电压项乘上这个因子，落盘的都是
+  SI 值；**改 `svm()`、`DTC_MAX/DTC_MIN` 或 `OVERMODULATION` 时必须一起改它**，
+  否则 R/L/Kt 会按比例失准。台架上可用万用表量相电阻做一次核对。
+- 任何一段失败（电流差太小、母线/过调制限制、`Iβ` 不平衡、λ 超范围）都会置
+  `comm_encoder_cal.failed`，回到菜单并且**不写 flash**；已有参数保持不变。
+- 标定顺序有依赖：Ld/Lq 用同一测试电流把转子锁在 alpha/beta 上，磁链公式要用
+  刚测出的 R 和 L_D（以及极对数算 Kt）。因此 `measure_lr()` 必须排在
+  `order_phases()` 之后；失败会中止整轮标定。
 
 ## endpoint 协议
 
@@ -111,7 +168,7 @@ seq|0x8000(2) | status(1) | data...
 - 类型名用 `bool/uint8/int8/uint16/int16/uint32/int32/uint64/int64/float/double/
   object/endpoint_ref/json/function`；
 - 动作端点写 `"type":"function"` + 空 `inputs`/`outputs`，**不能写 `void`**；
-- 总长 ≤ 65535（当前约 10.2 KB）。
+- 总长 ≤ 65535（当前约 10.5 KB）。
 
 例子（读 `config.i_max`，ID 2）：
 
@@ -407,7 +464,8 @@ CubeMX 的 SysInit 段移到了配置加载之后
 7 个 ODrive 路径。**本工程刻意不加这些别名**（客户将改 JointSDK 适配），
 所以现阶段用 `jsdk_context_desc_fetch()` + `jsdk_joint_param_get/set()` 访问参数，
 控制用 `0x00/0x03/0x04`。描述符仍是纯 ASCII、动作端点为 `function` 类型，
-可直接被 SDK 的 `cb_jsondesc_parse` 解析（129 个可见端点，约 10.2 KB）。
+可直接被 SDK 的 `cb_jsondesc_parse` 解析（当前 132 个可见端点、约 10.5 KB；
+改 `params.json` 后需在 SDK 环境重跑一次确认）。
 
 ### 台架注意
 

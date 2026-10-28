@@ -1,5 +1,5 @@
 {
-  "next_id": 133,
+  "next_id": 136,
   "map": {
     "config.i_bw": 1,
     "config.i_max": 2,
@@ -132,6 +132,9 @@
     "command.p_des": 129,
     "command.v_des": 130,
     "command.kp": 131,
-    "command.kd": 132
+    "command.kd": 132,
+    "config.l_d": 133,
+    "config.l_q": 134,
+    "telemetry.ld_lq_diff": 135
   }
 }

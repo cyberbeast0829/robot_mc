@@ -45,6 +45,8 @@ const prefs_entry_t prefs_entries[] = {
 	{120, PREFS_T_I32, 4, (void *)&(CAN_PROT)},
 	{121, PREFS_T_I32, 4, (void *)&(CAN_BAUD)},
 	{122, PREFS_T_I32, 4, (void *)&(CAN_HB_MS)},
+	{133, PREFS_T_F32, 4, (void *)&(L_D)},
+	{134, PREFS_T_F32, 4, (void *)&(L_Q)},
 };
 const unsigned prefs_entry_count = sizeof(prefs_entries) / sizeof(prefs_entries[0]);
 
@@ -84,6 +86,8 @@ void config_apply_defaults(void){
 	CAN_PROT = 0;
 	CAN_BAUD = 500000;
 	CAN_HB_MS = 100;
+	L_D = 9.5e-05f;
+	L_Q = 0.000124f;
 }
 
 void config_apply_limits(void){
@@ -144,4 +148,10 @@ void config_apply_limits(void){
 	if(CAN_BAUD > 5000000){CAN_BAUD = 5000000;}
 	if(CAN_HB_MS < 0){CAN_HB_MS = 0;}
 	if(CAN_HB_MS > 10000){CAN_HB_MS = 10000;}
+	if(!isfinite(L_D)){L_D = 9.5e-05f;}
+	if(L_D < 1e-06f){L_D = 1e-06f;}
+	if(L_D > 0.01f){L_D = 0.01f;}
+	if(!isfinite(L_Q)){L_Q = 0.000124f;}
+	if(L_Q < 1e-06f){L_Q = 1e-06f;}
+	if(L_Q > 0.01f){L_Q = 0.01f;}
 }

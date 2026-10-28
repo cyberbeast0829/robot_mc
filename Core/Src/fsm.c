@@ -58,6 +58,11 @@ extern uint32_t _reboot_cookie;
 			 else if(!comm_encoder_cal.done_cal){
 				 calibrate_encoder(&comm_encoder, &controller, &comm_encoder_cal, controller.loop_count);
 			 }
+			 else if(!comm_encoder_cal.done_rl){
+				 /* R / L / Ld-Lq / flux linkage + Kt, using the phase order and
+				  * pole pairs measured above (see measure_lr()) */
+				 measure_lr(&comm_encoder, &controller, &comm_encoder_cal, controller.loop_count);
+			 }
 			//  else{
 			// 	 /* Exit calibration mode when done */
 			// 	 E_ZERO = comm_encoder_cal.ezero;
@@ -163,11 +168,13 @@ extern uint32_t _reboot_cookie;
 
 				comm_encoder_cal.done_cal = 0;
 				comm_encoder_cal.done_ordering = 0;
+				comm_encoder_cal.done_rl = 0;
 				comm_encoder_cal.started = 0;
 				comm_encoder_cal.failed = 0;
 				comm_encoder_cal.sample_count = 0;	// so the main loop doesn't stream samples left over from a previous calibration
 				comm_encoder_cal.msg_head = 0;		// drop milestone messages left unprinted by a previous run
 				comm_encoder_cal.msg_tail = 0;
+				memset(&comm_encoder_cal.rl, 0, sizeof(comm_encoder_cal.rl));	// restart the R/L/Ld-Lq/flux chain
 				comm_encoder.e_zero = 0;
 				memset(&comm_encoder.offset_lut, 0, sizeof(comm_encoder.offset_lut));
 				// drv_enable_gd(drv);
@@ -587,7 +594,7 @@ extern uint32_t _reboot_cookie;
 
 		 /* When calibration finishes, exit to the menu first (the state transition
 		  * in the ISR disables the gate drive), then save the results to flash */
-		 if(comm_encoder_cal.done_ordering && comm_encoder_cal.done_cal){
+		 if(comm_encoder_cal.done_ordering && comm_encoder_cal.done_cal && comm_encoder_cal.done_rl){
 			 update_fsm(fsmstate, MENU_CMD);
 			 /* Wait for the commutation ISR to run the transition out of
 			  * calibration mode (a couple of 25 us cycles) before saving the
@@ -608,6 +615,7 @@ extern uint32_t _reboot_cookie;
 			 for(int i = 0; i<N_LUT; i++){myprintf("%d %d\r\n", i, comm_encoder_cal.lut_arr[i]);}
 			 comm_encoder_cal.done_cal = 0;		// consume, so this only runs once
 			 comm_encoder_cal.done_ordering = 0;
+			 comm_encoder_cal.done_rl = 0;
 		 }
 	 }
 	 else{

@@ -14,7 +14,7 @@ ID 由 `tools/endpoint_ids.json` 锁定，固件升级不会改变；`access` �
 | `config.i_max` | 2 | float | rw | A | 0.0 .. `I_MAX_LIMIT` | I_MAX_LIMIT | 是 | 相电流限幅（硬上限 4A） |
 | `config.i_fw_max` | 3 | float | rw | A | 0.0 .. 33.0 | 0.0 | 是 | 弱磁电流上限 |
 | `config.i_max_cont` | 4 | float | rw | A | 0.0 .. 40.0 | 14.0 | 是 | 连续电流上限 |
-| `config.i_cal` | 5 | float | rw | A | 0.0 .. 20.0 | 5.0 | 是 | 编码器标定电流 |
+| `config.i_cal` | 5 | float | rw | A | 0.0 .. 20.0 | 5.0 | 是 | 标定电流（编码器/R/L/Ld-Lq/磁链共用；测量时限制在 i_max 以内） |
 | `config.theta_min` | 6 | float | rw | rad | — | 0.0 | 是 | 机械角下限 |
 | `config.theta_max` | 7 | float | rw | rad | — | 0.0 | 是 | 机械角上限 |
 | `config.p_max` | 8 | float | rw | rad | ≥ 0.0 | 12.5 | 是 | 位置设定值上限；写入同时更新 p_min = -p_max |
@@ -24,9 +24,11 @@ ID 由 `tools/endpoint_ids.json` 锁定，固件升级不会改变；`access` �
 | `config.kp_max` | 12 | float | rw |  | ≥ 0.0 | 500.0 | 是 | 位置增益上限 |
 | `config.kd_max` | 13 | float | rw |  | ≥ 0.0 | 5.0 | 是 | 速度增益上限 |
 | `config.gr` | 14 | float | rw |  | ≥ 0.001 | 7.75 | 是 | 减速比（门极关闭时才允许写） |
-| `config.kt` | 15 | float | rw | N-m/A | ≥ 0.0001 | 1.0 | 是 | 转矩常数（门极关闭时才允许写） |
+| `config.kt` | 15 | float | rw | N-m/A | ≥ 0.0001 | 1.0 | 是 | 转矩常数（标定得出；门极关闭时才允许写） |
 | `config.ppairs` | 16 | float | rw |  | 1.0 .. 64.0 | 14.0 | 是 | 极对数（标定得出；门极关闭时才允许写） |
-| `config.r_phase` | 17 | float | rw | Ohm | — | 0.0 | 是 | 单相电阻 |
+| `config.r_phase` | 17 | float | rw | Ohm | — | 0.0 | 是 | 单相电阻（标定得出） |
+| `config.l_d` | 133 | float | rw | H | 1e-06 .. 0.01 | 9.5e-05 | 是 | D 轴电感（标定得出；门极关闭时才允许写） |
+| `config.l_q` | 134 | float | rw | H | 1e-06 .. 0.01 | 0.000124 | 是 | Q 轴电感（标定得出；门极关闭时才允许写） |
 | `config.r_nominal` | 18 | float | rw | Ohm | — | 0.0 | 是 | 标称电机电阻 |
 | `config.r_th` | 19 | float | rw | C/W | — | 0.0 | 是 | 热阻 |
 | `config.c_th` | 20 | float | rw | J/C | — | 0.0 | 是 | 热容 |
@@ -104,7 +106,8 @@ ID 由 `tools/endpoint_ids.json` 锁定，固件升级不会改变；`access` �
 | `telemetry.dtc_w` | 85 | float | r |  | — | — | 否 | W 相占空比 |
 | `telemetry.i_mag_max` | 86 | float | r | A | — | — | 否 | 电流矢量幅值上限 |
 | `telemetry.i_scale` | 87 | float | r | A/count | — | — | 否 | 相电流标定系数 |
-| `telemetry.flux_linkage` | 88 | float | r |  | — | — | 否 | 磁链估计 |
+| `telemetry.flux_linkage` | 88 | float | r | Wb | — | — | 否 | 磁链 λ（标定得出；由 KT 与极对数换算） |
+| `telemetry.ld_lq_diff` | 135 | float | r | H | — | — | 否 | 感差 Ld-Lq（标定得出；凸极电机为负） |
 | `telemetry.adc_a_offset` | 89 | int32 | r |  | — | — | 否 | A 相电流零偏 |
 | `telemetry.adc_b_offset` | 90 | int32 | r |  | — | — | 否 | B 相电流零偏 |
 | `telemetry.adc_c_offset` | 91 | int32 | r |  | — | — | 否 | C 相电流零偏 |
@@ -146,7 +149,7 @@ ID 由 `tools/endpoint_ids.json` 锁定，固件升级不会改变；`access` �
 | `system.prefs_sequence` | 69 | uint32 | r |  | — | — | 否 | 当前配置块的序号 |
 | `system.config_schema` | 117 | uint16 | r |  | — | — | 否 | 配置记录的格式版本（PREFS_SCHEMA），用于升级迁移 |
 | `system.prefs_loaded` | 70 | bool | r |  | — | — | 否 | 是否从 flash 成功加载过配置 |
-| `system.save_status` | 119 | uint8 | r |  | — | — | 否 | 最近一次写 flash 的结果（save/zero/reset_config）：0 未执行、1 成功、2 因门极使能跳过、3 写失败 |
+| `system.save_status` | 119 | uint8 | r |  | — | — | 否 | 最近一次写 flash 的结果（save/zero/reset_config/标定共用）：0 未执行、1 成功、2 因门极使能跳过、3 写失败 |
 | `system.can_prot_active` | 123 | int32 | r |  | — | — | 否 | 当前生效的 CAN 协议（0=旧 11-bit，1=CYBERBEAST） |
 | `system.can_fd` | 124 | bool | r |  | — | — | 否 | 当前是否以 CAN FD 运行 |
 | `system.can_baud_active` | 125 | int32 | r | bit/s | — | — | 否 | 当前生效的 CAN 速率（Classic 为位速率；FD 为数据域速率） |

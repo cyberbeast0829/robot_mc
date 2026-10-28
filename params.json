@@ -58,7 +58,7 @@
       "min": 0.0,
       "max": 20.0,
       "unit": "A",
-      "brief": "编码器标定电流",
+      "brief": "标定电流（编码器/R/L/Ld-Lq/磁链共用；测量时限制在 i_max 以内）",
       "persist": true,
       "default": 5.0
     },
@@ -168,7 +168,7 @@
       "ref": "KT",
       "min": 0.0001,
       "unit": "N-m/A",
-      "brief": "转矩常数（门极关闭时才允许写）",
+      "brief": "转矩常数（标定得出；门极关闭时才允许写）",
       "require": "!controller.gate_drive_enabled",
       "persist": true,
       "default": 1.0
@@ -192,9 +192,35 @@
       "access": "rw",
       "ref": "R_PHASE",
       "unit": "Ohm",
-      "brief": "单相电阻",
+      "brief": "单相电阻（标定得出）",
       "persist": true,
       "default": 0.0
+    },
+    {
+      "name": "config.l_d",
+      "type": "float",
+      "access": "rw",
+      "ref": "L_D",
+      "min": 0.000001,
+      "max": 0.01,
+      "unit": "H",
+      "brief": "D 轴电感（标定得出；门极关闭时才允许写）",
+      "require": "!controller.gate_drive_enabled",
+      "persist": true,
+      "default": 0.000095
+    },
+    {
+      "name": "config.l_q",
+      "type": "float",
+      "access": "rw",
+      "ref": "L_Q",
+      "min": 0.000001,
+      "max": 0.01,
+      "unit": "H",
+      "brief": "Q 轴电感（标定得出；门极关闭时才允许写）",
+      "require": "!controller.gate_drive_enabled",
+      "persist": true,
+      "default": 0.000124
     },
     {
       "name": "config.r_nominal",
@@ -777,7 +803,16 @@
       "type": "float",
       "access": "r",
       "get": "controller.flux_linkage",
-      "brief": "磁链估计"
+      "unit": "Wb",
+      "brief": "磁链 λ（标定得出；由 KT 与极对数换算）"
+    },
+    {
+      "name": "telemetry.ld_lq_diff",
+      "type": "float",
+      "access": "r",
+      "get": "(L_D - L_Q)",
+      "unit": "H",
+      "brief": "感差 Ld-Lq（标定得出；凸极电机为负）"
     },
     {
       "name": "telemetry.adc_a_offset",
@@ -1002,7 +1037,7 @@
       "type": "uint8",
       "access": "r",
       "get": "state.save_status",
-      "brief": "最近一次写 flash 的结果（save/zero/reset_config）：0 未执行、1 成功、2 因门极使能跳过、3 写失败"
+      "brief": "最近一次写 flash 的结果（save/zero/reset_config/标定共用）：0 未执行、1 成功、2 因门极使能跳过、3 写失败"
     },
     {
       "name": "system.can_prot_active",
