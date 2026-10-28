@@ -139,6 +139,9 @@ Invariants carried from upstream — keep them:
 `measure_flux_linkage` 的移植，用两段直流外推 R、±2 V 翻转测 L、锁住转子测
 Ld/Lq、开环升速测磁链并令 `KT = 1.5·PPAIRS·λ`。测试电流 = `min(I_CAL, I_MAX)`。
 
+- 极对数（`order_phases()`）：转一个电周期后**保持末相位 0.75 s 再取角度**，否则
+  转子加速滞后会让 14 极对算成 15（0.95° 机械滞后就够）；两端各平均 0.1 s。
+
 - 结果写 `R_PHASE`/`L_D`/`L_Q`/`KT`（`__float_reg[13]/[11]/[12]/[14]`，都持久化；
   L_D/L_Q 已从 `hw_config.h` 常量改成配置寄存器）。新增 endpoint 是
   `config.l_d`/`config.l_q`（133/134）和只读的 `telemetry.ld_lq_diff`（135）。

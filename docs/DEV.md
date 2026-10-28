@@ -58,6 +58,12 @@ ADC，采样点在 PWM 峰值、低侧采样窗口内。
 `run_fsm_slow()` 只在 `done_ordering && done_cal && done_rl` 都置位后退出到菜单
 并保存。
 
+`order_phases()` 用"电压矢量转一个电周期 ÷ 机械行程"求极对数。斜坡结束后必须
+**保持末相位（`CAL_ORDER_HOLD_S`，与起始同相位）等转子停稳再取角度**：转子加速
+时滞后，14 极对的理想行程只有 0.449 rad，滞后 0.95°（机械）就会舍入成 15；保持
+后静态负载角在 `theta_end − theta_start` 中相消。两端各用 `CAL_ORDER_AVG_S`
+（0.1 s）平均抑制抖动。
+
 `measure_lr()` 是 ODrive `Motor::measure_phase_resistance` /
 `measure_phase_inductance` / `measure_ld_lq` / `measure_flux_linkage` 及其
 控制律的 C 移植：

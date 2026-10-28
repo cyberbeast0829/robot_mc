@@ -19,6 +19,10 @@
 #define SAMPLES_PER_PPAIR N_LUT
 #define N_CAL SAMPLES_PER_PPAIR*PPAIRS_MAX		// Calibration lookup table maximum length, so I don't have to deal with dynamic allocation based on number of pole pairs
 
+/* Pole-pair measurement (order_phases) */
+#define CAL_ORDER_HOLD_S	0.75f		// [s] hold the final electrical phase until the rotor stops
+#define CAL_ORDER_AVG_S		0.1f		// [s] encoder averaging window at both ends
+
 /* ---- R / L / Ld-Lq / flux-linkage measurement ----------------------------
  *
  * Ported from ODrive's Motor::measure_phase_resistance /
@@ -134,7 +138,11 @@ typedef struct{
 	int start_count;								// loop count at cal start
 	uint8_t started;								// has cal started or not?
 	float time;										// cal time
-	float theta_start;								// cal start angle
+	float theta_start;								// cal start angle (averaged)
+	float theta_end;								// settled angle after the rotation
+	float angle_sum;								// encoder averaging accumulator
+	int angle_count;								// encoder averaging samples
+	uint8_t order_stage;							// order_phases() sub-stage: settle / ramp / hold
 	int ezero;
 	uint8_t phase_order;							// phase order correct (0) or swapped (1)
 	uint8_t done_ordering, done_cal, done_rl;		// flags for different cals finished
