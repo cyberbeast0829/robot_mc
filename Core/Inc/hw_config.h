@@ -9,8 +9,8 @@
 #define SPI_MOSI_GPIO_Port              GPIOB
 #define ENC_SPI_NSS_Pin                 GPIO_PIN_15
 #define ENC_SPI_NSS_GPIO_Port           GPIOA
-#define SEC_ENC_SPI_NSS_Pin             GPIO_PIN_10
-#define SEC_ENC_SPI_NSS_GPIO_Port       GPIOC
+#define SEC_ENC_SPI_NSS_Pin             GPIO_PIN_1
+#define SEC_ENC_SPI_NSS_GPIO_Port       GPIOD
 
 #define USB_DM_Pin                      GPIO_PIN_11
 #define USB_DP_Pin                      GPIO_PIN_12
@@ -20,22 +20,22 @@
 #define GHS_V_Pin                       GPIO_PIN_9
 #define GHS_W_Pin                       GPIO_PIN_10
 #define GHS_GPIO_Port                   GPIOA
-#define GLS_U_Pin                       GPIO_PIN_7
-#define GLS_U_GPIO_Port                 GPIOA
-#define GLS_V_Pin                       GPIO_PIN_0
-#define GLS_W_Pin                       GPIO_PIN_1
+#define GLS_U_Pin                       GPIO_PIN_13
+#define GLS_U_GPIO_Port                 GPIOB
+#define GLS_V_Pin                       GPIO_PIN_14
+#define GLS_W_Pin                       GPIO_PIN_15
 #define GLS_VW_GPIO_Port                GPIOB
 
-#define AUX_H_Pin                       GPIO_PIN_8
-#define AUX_L_Pin                       GPIO_PIN_9
-#define AUX_GPIO_Port                   GPIOB
+#define AUX_H_Pin                       GPIO_PIN_0
+#define AUX_L_Pin                       GPIO_PIN_1
+#define AUX_GPIO_Port                   GPIOC
 
-#define VBUS_AD_Pin                     GPIO_PIN_2
-#define VBUS_AD_GPIO_Port               GPIOB
-#define MOS_TEMP_Pin                    GPIO_PIN_15
-#define MOS_TEMP_GPIO_Port              GPIOB
-#define MOT_TEMP_Pin                    GPIO_PIN_4
-#define MOT_TEMP_GPIO_Port              GPIOC
+#define VBUS_AD_Pin                     GPIO_PIN_7
+#define VBUS_AD_GPIO_Port               GPIOE
+#define MOS_TEMP_Pin                    GPIO_PIN_7
+#define MOS_TEMP_GPIO_Port              GPIOA
+#define MOT_TEMP_Pin                    GPIO_PIN_8
+#define MOT_TEMP_GPIO_Port              GPIOE
 
 #define IU_OP1P_Pin                     GPIO_PIN_1
 #define IU_OP1N_Pin                     GPIO_PIN_2
@@ -50,17 +50,17 @@
 #define IV_OP3OUT_COMP_Pin              GPIO_PIN_11
 #define IV_OP3OUT_COMP_GPIO_Port        GPIOB
 
-#define CAN_TX_Pin                      GPIO_PIN_13
+#define CAN_TX_Pin                      GPIO_PIN_6
 #define CAN_TX_GPIO_Port                GPIOB
-#define CAN_RX_Pin                      GPIO_PIN_12
+#define CAN_RX_Pin                      GPIO_PIN_7
 #define CAN_RX_GPIO_Port                GPIOB
 
-#define USART_TX_Pin                    GPIO_PIN_6
+#define USART_TX_Pin                    GPIO_PIN_10
 #define USART_TX_GPIO_Port              GPIOB
-#define USART_RX_Pin                    GPIO_PIN_7
+#define USART_RX_Pin                    GPIO_PIN_11
 #define USART_RX_GPIO_Port              GPIOB
-#define USART_EN_Pin                    GPIO_PIN_11
-#define USART_EN_GPIO_Port              GPIOC
+#define USART_EN_Pin                    GPIO_PIN_2
+#define USART_EN_GPIO_Port              GPIOD
 
 #define EXT_SDA_RX_Pin                  GPIO_PIN_7
 #define EXT_SCL_TX_Pin                  GPIO_PIN_6
@@ -85,7 +85,7 @@
 #define GPIO2_GPIO_Port                 GPIOC
 
 #define LED_Pin                         GPIO_PIN_6
-#define LED_GPIO_Port                   GPIOC
+#define LED_GPIO_Port                   GPIOE
 
 /* Timer and PWM */
 #define TIM_PWM			ATIM1				// PWM/ISR timer handle

@@ -55,10 +55,10 @@ void MX_TIM1_Init(void)
   // PB0 --> GLS_V
   // PB1 --> GLS_W
   GPIO_InitStructure.Pin = GLS_U_Pin;
-  GPIO_InitStructure.GPIO_Alternate = GPIO_AF_ATIM1_CH1N_PA7;
+  GPIO_InitStructure.GPIO_Alternate = GPIO_AF_ATIM1_CH1N_PB13;
   GPIO_InitPeripheral(GLS_U_GPIO_Port, &GPIO_InitStructure);
   GPIO_InitStructure.Pin = GLS_V_Pin | GLS_W_Pin;
-  GPIO_InitStructure.GPIO_Alternate = GPIO_AF_ATIM1_CH2N_PB0; // GPIO_AF_ATIM1_CH3N_PB1
+  GPIO_InitStructure.GPIO_Alternate = GPIO_AF_ATIM1_CH2N_PB14; // GPIO_AF_ATIM1_CH3N_PB1
   GPIO_InitPeripheral(GLS_VW_GPIO_Port, &GPIO_InitStructure);
 
   TIM_InitTimBaseStruct(&TIM_TimeBaseStructure);

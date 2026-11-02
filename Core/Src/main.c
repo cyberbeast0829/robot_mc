@@ -334,10 +334,15 @@ static void watchdog_init(void){
 uint16_t adc_measurements_[3] = { 0 };
 
 void start_general_purpose_adc() {
-    // VBUS, MOS_TEMP, MOT_TEMP
-    DMA_SetCurrDataCounter(DMA1_CH1, 3);
-    DMA1_CH1->MADDR = (uint32_t)(&adc_measurements_[0]);
+    // MOS_TEMP
+    DMA_SetCurrDataCounter(DMA1_CH1, 1);
+    DMA1_CH1->MADDR = (uint32_t)(&adc_measurements_[0]));
     DMA_EnableChannel(DMA1_CH1, ENABLE);
+
+    // VBUS, MOT_TEMP
+    DMA_SetCurrDataCounter(DMA1_CH2, 2);
+    DMA1_CH2->MADDR = (uint32_t)(&adc_measurements_[1]));
+    DMA_EnableChannel(DMA1_CH2, ENABLE);
 }
 
 /* ISR timing instrumentation (see timing.h).  Kept in RAM only - read it from
@@ -494,28 +499,8 @@ int main(void)
   controller.dtc_w = 0.0f;
   set_dtc(&controller);				// command all phases low before the gate driver wakes up
 
-  /* DRV8323 setup */
-  // GPIO_WriteBits(DRV_CS, Bit_SET ); 	// CS high
-  // GPIO_WriteBits(ENABLE_PIN, Bit_SET );
-  // HAL_Delay(1);
-  //drv_calibrate(drv);
-  // HAL_Delay(1);
-  // drv_write_DCR(drv, 0x0, DIS_GDF_EN, 0x0, PWM_MODE_3X, 0x0, 0x0, 0x0, 0x0, 0x1);
-  // HAL_Delay(1);
-  // int CSA_GAIN;
-  // if(I_MAX <= 40.0f){CSA_GAIN = CSA_GAIN_40;}	// Up to 40A use 40X amplifier gain
-  // else{CSA_GAIN = CSA_GAIN_20;}					// From 40-60A use 20X amplifier gain.  (Make this generic in the future)
-  // drv_write_CSACR(drv, 0x0, 0x1, 0x0, CSA_GAIN_40, 0x0, 0x1, 0x1, 0x1, SEN_LVL_0_25);
-  // HAL_Delay(1);
-  // drv_write_CSACR(drv, 0x0, 0x1, 0x0, CSA_GAIN, 0x1, 0x0, 0x0, 0x0, SEN_LVL_0_25);
-  // HAL_Delay(1);
   zero_current(&controller);
-  // HAL_Delay(1);
-  // drv_write_OCPCR(drv, TRETRY_50US, DEADTIME_50NS, OCP_RETRY, OCP_DEG_8US, VDS_LVL_0_45);
-  // HAL_Delay(1);
-  // drv_disable_gd(drv);
-  // HAL_Delay(1);
-  //drv_enable_gd(drv);   */
+
   controller.gate_drive_enabled = 0;
   myprintf("ADC OFFSETS: A %d  B %d  C %d    VBUS: %.1f V\r\n", controller.adc_a_offset, controller.adc_b_offset, controller.adc_c_offset, controller.v_bus);
 
