@@ -15,21 +15,37 @@
 
 uint16_t spi_tx_words[2], spi_rx_words[2];
 
+/* Poll iterations the DMA waits spin before giving up.  An iteration costs about
+ * 20 cycles (the flag read is a function call), so this is ~2000 cycles: about 4x
+ * the 521-cycle frame, so it cannot fire on a healthy encoder that happens to be
+ * harvested a little early, yet far below the 6000-cycle (25 us) slot, so a dead
+ * encoder - or a misconfigured DMA - cannot stall the interrupt or the boot,
+ * which is what it used to do (infinite spin -> watchdog reset loop) */
+#define PS_WAIT_ITERS 100
+
 void ps_warmup(EncoderStruct * encoder, int n){
 	/* Hall position sensors noisy on startup.  Take a bunch of samples to clear this data */
 	spi_tx_words[0] = ENC_READ_WORD;
 	spi_tx_words[1] = 0x0000;
 	for(int i = 0; i<n; i++){
+		/* The DMA counter counts data units, and the channels are configured for
+		 * 16-bit (HALFWORD) transfers, so one 16-bit encoder frame is 1 - not 2 */
 		DMA_ClearFlag(DMA_FLAG_TC1, DMA2);
 		DMA_ClearFlag(DMA_FLAG_TC2, DMA2);
 		GPIO_WriteBits(ENC_CS, Bit_RESET); // CS low
-		SPI_Transmit_DMA((uint8_t *)spi_tx_words, 2);
-		SPI_Receive_DMA((uint8_t *)spi_rx_words, 2);
-		while (DMA_GetFlagStatus(DMA_FLAG_TC2, DMA2) == RESET);
-		while (DMA_GetFlagStatus(DMA_FLAG_TC1, DMA2) == RESET);
+		SPI_Transmit_DMA((uint8_t *)spi_tx_words, 1);
+		SPI_Receive_DMA((uint8_t *)spi_rx_words, 1);
+		/* Bounded like ps_finish_sample: if the flags never arrive (DMA/SPI
+		 * misconfigured, see MX_SPI1_Init) this used to spin forever right here,
+		 * before the FSM ever starts - and with DBG_IWDG_STOP set even the
+		 * watchdog can't rescue it under the debugger */
+		uint32_t wait = PS_WAIT_ITERS;
+		while((DMA_GetFlagStatus(DMA_FLAG_TC2, DMA2) == RESET) && (--wait != 0)){;}
+		while((DMA_GetFlagStatus(DMA_FLAG_TC1, DMA2) == RESET) && (--wait != 0)){;}
 		GPIO_WriteBits(ENC_CS, Bit_SET); // CS high
 		SPI_StopTransmit_DMA();
 		SPI_StopReceive_DMA();
+		if(wait == 0){encoder->lost_frames++;}	// let telemetry show that the encoder never answered during warmup
 	}
 }
 
@@ -46,13 +62,8 @@ void ps_warmup(EncoderStruct * encoder, int n){
  * ps_sample() is the two halves back to back, for a caller that wants the value
  * in the same breath. */
 
-/* Poll iterations ps_finish_sample() waits before calling the frame lost.  An
- * iteration costs about 20 cycles (the flag read is a function call), so this is
- * ~2000 cycles: about 4x the 521-cycle frame, so it cannot fire on a healthy
- * encoder that happens to be harvested a little early, yet far below the
- * 6000-cycle (25 us) slot, so a dead encoder cannot stall the interrupt - which
- * is what it used to do (infinite spin -> watchdog reset loop) */
-#define PS_WAIT_ITERS 100
+/* Poll iterations ps_finish_sample() waits before calling the frame lost (the
+ * value and its rationale live with the definition above) */
 
 void ps_start_read(void){
 	/* The transfer-complete flags have to be cleared before the channels are
