@@ -80,6 +80,16 @@ void MX_SPI1_Init(void)
   GPIO_InitPeripheral(SEC_ENC_SPI_NSS_GPIO_Port, &GPIO_InitStructure);
   GPIO_WriteBits(SEC_ENC_SPI_NSS_GPIO_Port, SEC_ENC_SPI_NSS_Pin, Bit_SET);
 
+  /* 整个结构体必须先初始化，不能只赋值下面用到的字段：DMA_Init() 还会把
+   * BURST_BYPASS / BURST_MODE / BURST_LEN 三个字段写进 CHCFG 的 burst 位，
+   * 并把 BURST_BYPASS 写进整个 DMA2 共享的 BURSTEN 寄存器。漏了这句时这三个
+   * 字段是栈上的残留值（复位后 SRAM 里上一次运行/上电内容，随镜像和上电过程
+   * 变化），一旦残留值把 burst 模式打开、burst 长度又不是 single，那么
+   * 每帧只有 1 个半字的 SPI 传输永远凑不满一次 burst —— 通道不搬运数据、
+   * TC 标志永不置位，ps_warmup 的等待循环就把启动流程卡死。
+   * adc.c 的 DMA 配置一直有这句，spi.c 之前漏了。 */
+  DMA_StructInit(&DMA_InitStructure);
+
   DMA_DeInit(DMA2_CH2);
   DMA_InitStructure.PeriphAddr     = (uint32_t)&SPI1->DAT;
   DMA_InitStructure.MemAddr        = (uint32_t)0; // 会被应用赋值
@@ -92,6 +102,12 @@ void MX_SPI1_Init(void)
   DMA_InitStructure.CircularMode   = DMA_MODE_NORMAL;
   DMA_InitStructure.Priority       = DMA_PRIORITY_MEDIUM;
   DMA_InitStructure.Mem2Mem        = DMA_M2M_DISABLE;
+  /* 显式写死 burst 配置：编码器只用单个 16 bit 帧（TXNUM=1），走 burst 永远
+   * 传不完。BURST_BYPASS=DISABLE 是 SDK 的命名（= BURSTEN 置位 = 关闭 burst，
+   * 与 DMA_StructInit 的默认值一致） */
+  DMA_InitStructure.BURST_BYPASS   = DMA_BURST_BYPASS_DISABLE;
+  DMA_InitStructure.BURST_MODE     = DMA_BURST_MODE_ALMOST;
+  DMA_InitStructure.BURST_LEN      = DMA_BURST_LEN_SINGLE;
   DMA_Init(DMA2_CH2, &DMA_InitStructure);
   DMA_RequestRemap(DMA_REMAP_SPI1_TX, DMA2_CH2, ENABLE);
 
