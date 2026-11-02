@@ -84,13 +84,19 @@ extern uint32_t _reboot_cookie;
 
 		 case MOTOR_MODE:
 			 /* If CAN has timed out, reset all commands.  CAN_TIMEOUT is in ms;
-			  * controller.timeout counts control cycles (25 us each). */
-			 if((CAN_TIMEOUT > 0 ) && (controller.timeout > CAN_TIMEOUT_CYCLES)){
+			  * controller.timeout counts control cycles (25 us each).
+			  * 惯量标定期间不适用：它自己就是命令来源，被 zero_commands() 打断
+			  * 会让状态机停在半个台阶上。pending 的请求同样要放过 —— 否则
+			  * zero_commands() 会在 motion_control() 采纳它之前把标志清掉。 */
+			 if((CAN_TIMEOUT > 0 ) && (controller.timeout > CAN_TIMEOUT_CYCLES)
+			    && (controller.inertia_state == INERTIA_IDLE)
+			    && !controller.inertia_req){
 				 zero_commands(&controller);
 			 }
-			 /* Otherwise, commutate */
-
-			 torque_control(&controller);
+			 /* 控制律分发：CTRL_IMPEDANCE 走原来的 torque_control()（MIT/legacy），
+			  * CTRL_POSITION/CTRL_VELOCITY 走 motion.c 的串级外环。两者都只产生
+			  * i_q_des，电流环（commutate）照旧在 40 kHz 上跑 */
+			 motion_control(&controller, &comm_encoder);
 			 field_weaken(&controller);
 			 commutate(&controller, &comm_encoder);
 
@@ -140,6 +146,9 @@ extern uint32_t _reboot_cookie;
 				//myprintf("Entering Motor Mode\r\n");
 				GPIO_WriteBits(LED, Bit_SET );
 				reset_foc(&controller);
+				/* 外环的速度反馈来自编码器 PLL，进电机模式时播种到当前计数，
+				 * 否则它会从 0 一路追上来（表现为使能瞬间的一下冲车） */
+				ps_reset_pll(&comm_encoder);
 				/* 门极打开 ⇒ 命令必须从零开始：endpoint 的 command.* 可以在任何状态
 				 * 写入，若不清，空闲时设的 t_ff/kp/kd/p_des/v_des 会在使能的第一拍就
 				 * 生效，表现为"一进电机模式就窜车"。CAN 是持续推流、下一帧就会覆盖，
@@ -478,10 +487,70 @@ extern uint32_t _reboot_cookie;
 	 static int encoder_print_count = 0;
 	 static uint8_t reboot_armed = 0;		// 1 = a reset is queued
 	 static uint32_t reboot_deadline = 0;	// loop_count threshold (valid when reboot_armed)
+	 static uint8_t inertia_phase = 0;		// 0 idle / 1 等门极 / 2 等结果 / 3 等回菜单
+	 static uint8_t inertia_started = 0;	// ISR 是否已经把请求转成状态机
+	 static uint32_t inertia_deadline = 0;
 
 	 /* Print any calibration milestone messages queued by the ISR (calibration
 	  * runs in the control interrupt and must not print there) */
 	 cal_print_flush(&comm_encoder_cal);
+
+	 /* 惯量标定的编排：用户只发一条 action.measure_inertia，这里负责
+	  * 进电机模式 → 触发 ISR 里的状态机 → 等它跑完 → 回菜单。
+	  * 为什么必须回菜单：测完如果停在 MOTOR_MODE，门极还是开的、转矩是 0，
+	  * 有重力负载的关节会直接垮下来。回菜单还能让紧接着的 action.save 生效
+	  * （save 要求门极关闭）。 */
+	 if(fsmstate->inertia_pending){
+		 fsmstate->inertia_pending = 0;
+		 controller.inertia_status = 1;
+		 inertia_phase = 1;
+		 inertia_started = 0;
+		 inertia_deadline = controller.loop_count + REBOOT_DELAY_CYCLES / 4;	/* 0.125 s 等到门极 */
+		 request_fsm_state(fsmstate, MOTOR_MODE);
+	 }
+	 switch(inertia_phase){
+		 case 1:
+			 if((fsmstate->state == MOTOR_MODE) && controller.gate_drive_enabled){
+				 controller.inertia_req = 1;
+				 inertia_phase = 2;
+				 inertia_deadline = controller.loop_count + REBOOT_DELAY_CYCLES / 2;	/* 0.25 s 内要启动 */
+			 }
+			 else if(controller.loop_count > inertia_deadline){
+				 controller.inertia_status = 7;		/* 进不了电机模式 */
+				 inertia_phase = 0;
+			 }
+			 break;
+		 case 2:
+			 /* 必须先看到 ISR 把请求转成 INERTIA_SETTLE，才能把"回到 IDLE"当成结束。
+			  * 否则本循环比 ISR 快一拍，会在请求还没被采纳时就宣布测完并回菜单，
+			  * 请求随后被 zero_commands() 清掉 —— 状态永远停在"运行中"。 */
+			 if(controller.inertia_state != INERTIA_IDLE){
+				 if(!inertia_started){
+					 inertia_started = 1;
+					 inertia_deadline = controller.loop_count + 4u * REBOOT_DELAY_CYCLES;
+				 }
+			 }
+			 else if(inertia_started){
+				 request_fsm_state(fsmstate, MENU_MODE);
+				 inertia_phase = 3;
+				 inertia_deadline = controller.loop_count + REBOOT_DELAY_CYCLES / 4;
+			 }
+			 else if(controller.loop_count > inertia_deadline){
+				 controller.inertia_status = 5;		/* 请求没被采纳（没进状态机） */
+				 request_fsm_state(fsmstate, MENU_MODE);
+				 inertia_phase = 3;
+			 }
+			 break;
+		 case 3:
+			 if(fsmstate->state == MENU_MODE || controller.loop_count > inertia_deadline){
+				 inertia_phase = 0;
+				 inertia_started = 0;
+			 }
+			 break;
+		 default:
+			 inertia_phase = 0;
+			 break;
+	 }
 
 	 /* Print the menu/setup screen after a state change */
 	 if(fsmstate->print_pending){
@@ -492,6 +561,7 @@ extern uint32_t _reboot_cookie;
 			 myprintf("\n\r!!! FAULT - gate drive disabled !!!\r\n");
 			 if(controller.fault & FAULT_OV){myprintf("  Overvoltage: bus hit %.2f V (limit %.1f V)\r\n", controller.fault_vbus, V_BUS_FAULT);}
 			 if(controller.fault & FAULT_OC){myprintf("  Overcurrent: phase current hit %.1f A (limit %.1f A)\r\n", controller.fault_iabs, controller.i_oc_limit);}
+			 if(controller.fault & FAULT_POS){myprintf("  Position following error: %.3f rad (limit %.3f rad)\r\n", controller.pos_err, POS_ERROR_FAULT);}
 			 if(controller.fault & FAULT_ESTOP){myprintf("  E-stop requested over CAN\r\n");}
 			 myprintf("  esc (or the CAN menu command) to clear\r\n");
 		 }

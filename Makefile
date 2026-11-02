@@ -162,12 +162,15 @@ check: endpoints-check
 HOSTCC ?= gcc
 HOSTTEST = $(BUILD_DIR)/test_prefs_codec
 HOSTTEST_CAN = $(BUILD_DIR)/test_can_cyberbeast
+HOSTTEST_MOTION = $(BUILD_DIR)/test_motion_law
 
 hosttest: $(BUILD_DIR)
 	$(HOSTCC) -std=gnu11 -O1 -Wall -Wextra -ICore/Inc tools/test_prefs_codec.c Core/Src/prefs_codec.c -lm -o $(HOSTTEST)
 	./$(HOSTTEST)
 	$(HOSTCC) -std=gnu11 -O1 -Wall -Wextra -ICore/Inc tools/test_can_cyberbeast.c -lm -o $(HOSTTEST_CAN)
 	./$(HOSTTEST_CAN)
+	$(HOSTCC) -std=gnu11 -O1 -Wall -Wextra -ICore/Inc tools/test_motion_law.c -lm -o $(HOSTTEST_MOTION)
+	./$(HOSTTEST_MOTION)
 
 ######################################
 # flash

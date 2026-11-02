@@ -70,7 +70,7 @@ void analog_sample (ControllerStruct *controller){
 	controller->adc_b_raw = ADC2->JDAT1;
 	controller->adc_c_raw = ADC3->JDAT1;
 
-	controller->adc_vbus_raw = adc_measurements_[0];	// ADC2 regular channel 12 is VBUS
+	controller->adc_vbus_raw = adc_measurements_[1];	// ADC3 regular channel 4 is VBUS
 	controller->v_bus = (float)controller->adc_vbus_raw*V_SCALE;
 	/* Filtered here rather than in commutate() so it tracks in every state.
 	 * It used to be updated only while commutating, which left it stuck at its
@@ -404,4 +404,32 @@ void zero_commands(ControllerStruct * controller){
 	controller->p_des = 0;
 	controller->v_des = 0;
 	controller->i_q_des = 0;
+
+	/* 外环状态一并复位。CAN 超时、进 MOTOR_MODE、故障都必须回到零转矩，
+	 * 不能把上一个模式的 i_q_ref/积分当成“保持”延续下去；ctrl_mode 回阻抗律，
+	 * 下一拍 motion_control() 会检测到模式变化并按新状态重新播种。 */
+	controller->ctrl_mode = CTRL_IMPEDANCE;
+	controller->i_q_ref = 0;
+	controller->i_cmd_max = I_MAX;
+	controller->v_limit = V_MAX;
+	controller->v_target = 0;
+	controller->v_setpoint = 0;
+	controller->vel_integ = 0;
+	controller->pos_err = 0;
+	controller->vel_err = 0;
+	controller->pos_ff = 0;
+	controller->pos_ff_last = 0;
+	controller->pos_ff_cycle = 0;
+	controller->pos_fault_t = 0;
+
+	/* 正在跑的惯量标定必须中止：离开 MOTOR_MODE 后 motion_control() 不再被调用，
+	 * 状态会停在半路，下次进电机模式时从半个台阶"续跑"，测出来的 J 是错的 */
+	if (controller->inertia_state != INERTIA_IDLE) {
+		controller->inertia_state = INERTIA_IDLE;
+		controller->inertia_status = 3;
+	}
+	controller->inertia_req = 0;
+	controller->inertia_cycles = 0;
+	controller->inertia_i = 0;
+	controller->inertia_v_peak = 0;
 }

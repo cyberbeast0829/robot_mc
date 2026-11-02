@@ -151,6 +151,147 @@
       "default": 5.0
     },
     {
+      "name": "config.pos_gain",
+      "type": "float",
+      "access": "rw",
+      "ref": "POS_GAIN",
+      "min": 0.0,
+      "max": 1000.0,
+      "unit": "(rad/s)/rad",
+      "brief": "CSP 位置环 P 增益（输出轴）。位置误差 × 该值 = 速度指令；0 表示位置环只剩帧间前馈（要完全关闭请把 pos_ff_gain 也设 0）",
+      "persist": true,
+      "default": 15.0
+    },
+    {
+      "name": "config.vel_gain",
+      "type": "float",
+      "access": "rw",
+      "ref": "VEL_GAIN",
+      "min": 0.0,
+      "max": 2000.0,
+      "unit": "A/(rad/s)",
+      "brief": "CSV/CSP 速度环 P 增益（电机端安培 / 输出轴角速度）；0 时速度环只剩积分器（要完全关闭请把 vel_integrator_gain 也设 0）",
+      "persist": true,
+      "default": 3.0
+    },
+    {
+      "name": "config.vel_integrator_gain",
+      "type": "float",
+      "access": "rw",
+      "ref": "VEL_INTEGRATOR_GAIN",
+      "min": 0.0,
+      "max": 200000.0,
+      "unit": "A/(rad/s)/s",
+      "brief": "速度环 I 增益；消掉重力/摩擦下的稳态速度误差（抗饱和：输出限幅时积分按 0.99 衰减）",
+      "persist": true,
+      "default": 25.0
+    },
+    {
+      "name": "config.pos_ff_gain",
+      "type": "float",
+      "access": "rw",
+      "ref": "POS_FF_GAIN",
+      "min": 0.0,
+      "max": 2.0,
+      "brief": "CSP 帧间速度前馈系数（指令差分的比例）；1.0 = 全前馈，0 = 关闭",
+      "persist": true,
+      "default": 1.0
+    },
+    {
+      "name": "config.accel_limit",
+      "type": "float",
+      "access": "rw",
+      "ref": "ACCEL_LIMIT",
+      "min": 0.0,
+      "max": 100000.0,
+      "unit": "rad/s^2",
+      "brief": "速度设定值的斜率限制（输出轴）；0 = 关闭。非零默认值能在指令阶跃时压住电流冲击，对稳态无影响",
+      "persist": true,
+      "default": 10.0
+    },
+    {
+      "name": "config.pos_error_fault",
+      "type": "float",
+      "access": "rw",
+      "ref": "POS_ERROR_FAULT",
+      "min": 0.0,
+      "max": 1000.0,
+      "unit": "rad",
+      "brief": "位置跟随误差故障阈值（输出轴）；0 = 关闭。只在位置环未被速度限幅饱和时判定，需持续 100 ms；必须小于 v_max/pos_gain 才会触发",
+      "persist": true,
+      "default": 0.0
+    },
+    {
+      "name": "config.pll_bandwidth",
+      "type": "float",
+      "access": "rw",
+      "ref": "PLL_BW",
+      "min": 20.0,
+      "max": 5000.0,
+      "unit": "rad/s",
+      "brief": "编码器速度 PLL 带宽（速度环/位置环的反馈来源）；越大相位滞后越小、噪声越大。默认 2000（约 318 Hz），200 Hz 穿越点只吃 -13° 相位",
+      "persist": true,
+      "default": 2000.0
+    },
+    {
+      "name": "config.inertia",
+      "type": "float",
+      "access": "rw",
+      "ref": "INERTIA",
+      "min": 0.0,
+      "max": 100.0,
+      "unit": "kg·m^2",
+      "brief": "输出端惯量（关节折算值）。可由 action.measure_inertia 测得（只写 RAM，不自动保存）；用于推荐增益与 pos_error_fault。0 = 未知",
+      "persist": true,
+      "default": 0.0
+    },
+    {
+      "name": "config.omega_c",
+      "type": "float",
+      "access": "rw",
+      "ref": "OMEGA_C",
+      "min": 50.0,
+      "max": 1200.0,
+      "unit": "rad/s",
+      "brief": "action.tune_gains 的目标穿越频率：决定算出来的 vel_gain / pos_gain 有多激进。受延迟限制，超过约 1000 rad/s 实际是在跟延迟赛跑，建议 300~600 起步",
+      "persist": true,
+      "default": 450.0
+    },
+    {
+      "name": "config.tune_margin",
+      "type": "float",
+      "access": "rw",
+      "ref": "TUNE_MARGIN",
+      "min": 0.2,
+      "max": 5.0,
+      "unit": "x",
+      "brief": "action.tune_gains 对速度环增益的放大系数。线性公式给的是惯性主导时的值，摩擦/齿隙大的关节要放大（台架实测约 2.6）；只放大速度环，pos_gain 不受影响。1 = 纯公式",
+      "persist": true,
+      "default": 1.0
+    },
+    {
+      "name": "config.vel_loop_prescaler",
+      "type": "int32",
+      "access": "rw",
+      "ref": "VEL_LOOP_PRESCALER",
+      "min": 1,
+      "max": 100,
+      "brief": "速度环分频：控制环 40 kHz / 该值 = 速度环频率（默认 5 → 8 kHz）；1 = 全速 40 kHz",
+      "persist": true,
+      "default": 5
+    },
+    {
+      "name": "config.pos_loop_prescaler",
+      "type": "int32",
+      "access": "rw",
+      "ref": "POS_LOOP_PRESCALER",
+      "min": 1,
+      "max": 100,
+      "brief": "位置环分频：速度环 / 该值 = 位置环频率（默认 2 → 4 kHz）；位置环只在速度环执行的拍里执行",
+      "persist": true,
+      "default": 2
+    },
+    {
       "name": "config.gr",
       "type": "float",
       "access": "rw",
@@ -432,6 +573,16 @@
       "range_dynamic": true,
       "set": "controller.kd = v; controller.timeout = 0;",
       "brief": "速度增益；上限由 config.kd_max 决定，进入 MOTOR_MODE 时清零"
+    },
+    {
+      "name": "command.mode",
+      "type": "int32",
+      "access": "rw",
+      "get": "controller.ctrl_mode",
+      "min": 0,
+      "max": 2,
+      "set": "controller.i_cmd_max = I_MAX; controller.v_limit = V_MAX; controller.timeout = 0; controller.ctrl_mode = (uint8_t)v;",
+      "brief": "控制律：0 = 阻抗/MIT（默认，kp·p_des·kd·v_des·t_ff），1 = 速度环（CSV，用 command.v_des），2 = 位置环（CSP，用 command.p_des）。写完刷新命令租约；进入 MOTOR_MODE 时回 0"
     },
     {
       "name": "telemetry.v_bus",
@@ -815,6 +966,54 @@
       "brief": "感差 Ld-Lq（标定得出；凸极电机为负）"
     },
     {
+      "name": "telemetry.v_setpoint",
+      "type": "float",
+      "access": "r",
+      "get": "controller.v_setpoint",
+      "unit": "rad/s",
+      "brief": "速度环实际使用的设定值（已过速度限幅与 accel_limit 斜率限制，输出轴）"
+    },
+    {
+      "name": "telemetry.vel_integral",
+      "type": "float",
+      "access": "r",
+      "get": "controller.vel_integ",
+      "unit": "A",
+      "brief": "速度环积分器状态（电机端安培）；用它判断是积分在顶负载还是增益在振荡"
+    },
+    {
+      "name": "telemetry.pos_err",
+      "type": "float",
+      "access": "r",
+      "get": "controller.pos_err",
+      "unit": "rad",
+      "brief": "位置环误差（输出轴，最近一次位置环更新的值）"
+    },
+    {
+      "name": "telemetry.vel_err",
+      "type": "float",
+      "access": "r",
+      "get": "controller.vel_err",
+      "unit": "rad/s",
+      "brief": "速度环误差（输出轴，最近一次速度环更新的值）"
+    },
+    {
+      "name": "telemetry.velocity_pll",
+      "type": "float",
+      "access": "r",
+      "get": "comm_encoder.pll_velocity / GR",
+      "unit": "rad/s",
+      "brief": "速度环/位置环使用的编码器 PLL 速度（输出轴）；与 telemetry.velocity 对比可看差分估计的噪声"
+    },
+    {
+      "name": "telemetry.pos_error_fault_suggest",
+      "type": "float",
+      "access": "r",
+      "get": "controller.pos_fault_suggest",
+      "unit": "rad",
+      "brief": "config.pos_error_fault 的推荐值 = min(½·a_max·0.1², ½·v_max/pos_gain)，其中 a_max=KT·GR·i_max/inertia；inertia 未知时只用后半项"
+    },
+    {
       "name": "telemetry.adc_a_offset",
       "type": "int32",
       "access": "r",
@@ -891,6 +1090,37 @@
       "get": "observer.delta_t",
       "unit": "C",
       "brief": "温度观测器温升"
+    },
+    {
+      "name": "telemetry.inertia_state",
+      "type": "uint8",
+      "access": "r",
+      "get": "controller.inertia_state",
+      "brief": "惯量标定状态机的阶段（0 空闲 / 2 试探 / 3 刹车 / 4 台阶 LO / 5 台阶 HI / 6 计算 / 7 失败）"
+    },
+    {
+      "name": "telemetry.inertia_break_current",
+      "type": "float",
+      "access": "r",
+      "get": "controller.inertia_i_break",
+      "unit": "A",
+      "brief": "标定试探得到的\"摩擦+重力\"等效电流；台阶电流取它的 1.5×/2.5×"
+    },
+    {
+      "name": "telemetry.inertia_accel_lo",
+      "type": "float",
+      "access": "r",
+      "get": "controller.inertia_acc_lo",
+      "unit": "rad/s^2",
+      "brief": "台阶 LO 的拟合加速度（输出轴）"
+    },
+    {
+      "name": "telemetry.inertia_accel_hi",
+      "type": "float",
+      "access": "r",
+      "get": "controller.inertia_acc_hi",
+      "unit": "rad/s^2",
+      "brief": "台阶 HI 的拟合加速度（输出轴）；与 LO 的差决定 J"
     },
     {
       "name": "timing.isr_period",
@@ -1033,6 +1263,13 @@
       "brief": "是否从 flash 成功加载过配置"
     },
     {
+      "name": "system.inertia_status",
+      "type": "uint8",
+      "access": "r",
+      "get": "controller.inertia_status",
+      "brief": "惯量标定状态：0 未跑 / 1 运行中（约 1.5 s，含进出电机模式）/ 2 成功（结果在 config.inertia）/ 3 关节本来就在动 / 4 突破电流超时（卡住或摩擦过大）/ 5 台阶太短（样本不足）或超时 / 6 激励不足（斜率不可信）/ 7 进不了电机模式"
+    },
+    {
       "name": "system.save_status",
       "type": "uint8",
       "access": "r",
@@ -1131,6 +1368,22 @@
       "access": "w",
       "brief": "清零 ISR 耗时统计",
       "call": "isr_timing.reset_req = 1;"
+    },
+    {
+      "name": "action.measure_inertia",
+      "type": "void",
+      "access": "w",
+      "brief": "一条指令完成惯量标定：自动进电机模式 → 打两个电流台阶测输出端惯量 → 回菜单。约 1.5 s、关节行程 ~0.1 rad。结果写 config.inertia（**只写 RAM，不自动保存**），进度/结果读 system.inertia_status；测完自动回菜单，可直接 action.save",
+      "require": "state.state == MENU_MODE && KT > 0.0f && GR > 0.0f",
+      "call": "state.inertia_pending = 1;"
+    },
+    {
+      "name": "action.tune_gains",
+      "type": "void",
+      "access": "w",
+      "brief": "用 config.inertia 算外环增益并写进 RAM（不自动保存）：vel_gain = tune_margin·J·omega_c/(KT·GR)；vel_integrator_gain = vel_gain·clamp(omega_c/25, 5, 30)；pos_gain = omega_c/20。写完用 csv/csp 子命令验证，满意再 action.save",
+      "require": "state.state == MENU_MODE && INERTIA > 0.0f && KT > 0.0f && GR > 0.0f",
+      "call": "motion_tune_gains(&controller);"
     },
     {
       "name": "internal.encoder_lut",

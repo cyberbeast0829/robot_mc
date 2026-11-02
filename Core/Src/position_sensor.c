@@ -8,6 +8,7 @@
 #include <string.h>
 #include "position_sensor.h"
 #include "math_ops.h"
+#include "motion_law.h"
 #include "hw_config.h"
 #include "user_config.h"
 #include "timing.h"
@@ -109,6 +110,7 @@ int ps_finish_sample(EncoderStruct * encoder, float dt){
 	/* Single-turn count relative to the zero position, wrapped to [0, ENC_CPR) */
 	int count_wrapped = (encoder->count - M_ZERO) % ENC_CPR;
 	if(count_wrapped < 0){count_wrapped += ENC_CPR;}
+	encoder->count_wrapped = count_wrapped;
 	encoder->angle_singleturn = TWO_PI_F*((float)count_wrapped)/((float)ENC_CPR);
 
 	encoder->elec_angle = (encoder->ppairs*(float)(encoder->count-E_ZERO))/((float)ENC_CPR);
@@ -149,6 +151,34 @@ int ps_finish_sample(EncoderStruct * encoder, float dt){
 	encoder->elec_velocity = encoder->ppairs*encoder->velocity;
 
 	return 1;
+}
+
+void ps_update_pll(EncoderStruct * encoder, float dt){
+	/* 编码器速度 PLL（临界阻尼，见 motion_law.h）。速度环/位置环用它当反馈：
+	 * 比下面那条 475 us 整数差分平滑，且带宽可调。只在本周期的帧有效时调用 ——
+	 * 丢帧还继续预测会让估计值一直漂。MIT 与 legacy 遥测仍走 encoder->velocity。 */
+	float kp, ki;
+	ml_pll_gains(PLL_BW, dt, &kp, &ki);
+
+	if(!encoder->pll_seeded){
+		/* 第一个有效样本直接对齐。不能让它从 0（或上一次的旧计数）追上来：
+		 * 半圈的相位差会经 ki 变成几十 rad/s 的速度尖峰，再进电流环就是一
+		 * 下冲车 */
+		encoder->pll_pos = (float)encoder->count_wrapped;
+		encoder->pll_vel_counts = 0.0f;
+		encoder->pll_seeded = 1;
+	}
+
+	ml_pll_step(&encoder->pll_pos, &encoder->pll_vel_counts,
+	            (float)encoder->count_wrapped, (float)ENC_CPR, kp, ki, dt);
+	encoder->pll_velocity = encoder->pll_vel_counts * (TWO_PI_F/((float)ENC_CPR));
+}
+
+void ps_reset_pll(EncoderStruct * encoder){
+	/* 进电机模式时重新播种（下一帧有效样本直接对齐），速度先清零 */
+	encoder->pll_seeded = 0;
+	encoder->pll_vel_counts = 0.0f;
+	encoder->pll_velocity = 0.0f;
 }
 
 void ps_sample(EncoderStruct * encoder, float dt){

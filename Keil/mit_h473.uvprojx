@@ -450,6 +450,11 @@
               <FilePath>..\Core\Src\foc.c</FilePath>
             </File>
             <File>
+              <FileName>motion.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Core\Src\motion.c</FilePath>
+            </File>
+            <File>
               <FileName>fsm.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\Core\Src\fsm.c</FilePath>

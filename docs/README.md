@@ -15,9 +15,9 @@ N32H473CE 三相 FOC 固件。只有三份要读的文档，按"你是谁"选一
 
 | 项目 | 当前值 | 设备上怎么读 |
 |---|---|---|
-| 固件 | `2.00` | `system.version` |
+| 固件 | `2.10` | `system.version` |
 | endpoint 协议 | `2` | endpoint 0 的版本探测（偏移 `0xFFFFFFFF`） |
-| 配置记录 schema | `1` | `system.config_schema` |
+| 配置记录 schema | `2` | `system.config_schema` |
 | 配置块序号 | 每次保存 +1 | `system.prefs_sequence` |
 
 描述符的 CRC 就是接口版本，每次增删参数都会变（具体值用 endpoint 0 探测，或

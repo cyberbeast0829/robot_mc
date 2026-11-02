@@ -140,6 +140,9 @@
 #define DTC_MIN 			0.0f          	// Min duty cycle
 #define DTC_COMP 			0.000f          // deadtime compensation (100 ns / 25 us)
 #define DT					.000025f		// Loop period
+/* 外环分频上限。速度环最低 40 kHz/100 = 400 Hz，仍远高于速度估计的可用带宽；
+ * 再低就只是把相位裕度白白送掉 */
+#define MOTION_PRESCALER_MAX	100
 #define EN_ENC_LINEARIZATION 1				// Enable/disable encoder linearization
 #define V_BUS_MAX			60.0f			// max drive voltage - torque command is cut above this (soft limit)
 #define V_BUS_FAULT			67.0f			// hard overvoltage limit - latches a fault and disables the gate drive

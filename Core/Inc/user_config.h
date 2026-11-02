@@ -31,6 +31,19 @@ extern "C" {
 #define V_MAX					__float_reg[22]									// Velocity setpoint upper bound (rad/s)
 #define KP_MAX					__float_reg[23]									// Max position gain (N-m/rad)
 #define KD_MAX					__float_reg[24]									// Max velocity gain (N-m/rad/s)
+/* 速度环 / 位置环（CSP、CSV）。单位都是**输出轴**量，输出是电机端安培：
+ * 帧里的电流限幅本身就是 A，电流环/弱磁/过流阈值也都在安培域，所以外环直接
+ * 算电流，省掉 KT/GR 的来回换算。 */
+#define POS_GAIN				__float_reg[25]									// 位置环 P：(rad/s)/rad
+#define VEL_GAIN				__float_reg[26]									// 速度环 P：A/(rad/s)
+#define VEL_INTEGRATOR_GAIN		__float_reg[27]									// 速度环 I：A/(rad/s)/s
+#define POS_FF_GAIN				__float_reg[28]									// CSP 帧间速度前馈系数（0 = 关闭）
+#define ACCEL_LIMIT				__float_reg[29]									// 速度设定值斜率限制 rad/s^2（0 = 关闭）
+#define POS_ERROR_FAULT			__float_reg[30]									// 位置跟随误差故障阈值 rad（0 = 关闭）
+#define PLL_BW					__float_reg[31]									// 编码器速度 PLL 带宽 rad/s
+#define INERTIA					__float_reg[32]									// 输出端惯量 kg·m^2（action.measure_inertia 测得，不自动保存）
+#define OMEGA_C					__float_reg[33]									// action.tune_gains 的目标穿越频率 rad/s
+#define TUNE_MARGIN				__float_reg[34]									// action.tune_gains 的速度环放大系数（补摩擦/齿隙造成的低估）
 
 
 #define PHASE_ORDER             __int_reg[0]                                    // Phase swapping during calibration
@@ -48,6 +61,11 @@ extern "C" {
 #define CAN_PROT                __int_reg[134]                                  // CAN protocol: 0 = legacy 11-bit, 1 = CYBERBEAST. Applied at power-up
 #define CAN_BAUD                __int_reg[135]                                  // bit/s. <= 1M: Classic CAN at this rate. > 1M: CAN FD (1M arbitration, data = this)
 #define CAN_HB_MS               __int_reg[136]                                  // CYBERBEAST heartbeat period (ms), 0 = disabled
+/* 外环分频：速度环每 vel_loop_prescaler 个控制周期算一次，位置环再每
+ * pos_loop_prescaler 个速度周期算一次（嵌套，见 motion.c）。默认 40 kHz / 5 = 8 kHz，
+ * 再 / 2 = 4 kHz。设成 1/1 就是两个环都跑 40 kHz。 */
+#define VEL_LOOP_PRESCALER      __int_reg[137]                                  // 控制环 / 该值 = 速度环频率
+#define POS_LOOP_PRESCALER      __int_reg[138]                                  // 速度环 / 该值 = 位置环频率
 
 
 

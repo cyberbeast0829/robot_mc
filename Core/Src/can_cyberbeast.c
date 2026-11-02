@@ -6,14 +6,17 @@
  * 帧格式、字节序与消息语义以 ODrive 仓库 docs/cyberbeast-protocol.md 为准：
  *   - 29-bit 扩展帧 ID: Priority(3) | MsgType(8) | Dest(8) | Source(8) | Seq(2)
  *   - ID 与各帧固定字段：大端；SDO 参数值 / JSON 描述符字段：小端
- *   - 控制：MIT(0x00/0x80)、TORQUE(0x03/0x83)、CURRENT(0x04)
- *     （CSP 0x01 / CSV 0x02 暂不支持：本固件没有独立的轨迹/速度环）
+ *   - 控制：MIT(0x00/0x80)、CSP(0x01/0x81)、CSV(0x02/0x82)、TORQUE(0x03/0x83)、
+ *     CURRENT(0x04)。CSP/CSV 由固件自己的串级外环执行（motion.c），帧里带的
+ *     只是目标值与限幅，增益见 config.pos_gain/vel_gain/vel_integrator_gain。
  *   - 查询 0x40~0x49、心跳 0x48、SDO 0x20/0x21、描述符 0x24/0x25
  *   - 系统 0x22/0x60~0x65、急停 0xC0
  *
  * 单位约定（与客户端一致，最容易出错的地方）：
  *   MIT 命令/响应：位置 rad、速度 rad/s、kp N·m/rad、kd N·m·s/rad、力矩 N·m
  *                  —— 全部是**输出端**，与本工程 torque_control() 同口径，1:1
+ *   CSP：目标位置 deg(输出端) + vel_limit RPM(输出端) + cur_limit A(**电机端**)
+ *   CSV：目标速度 RPM(输出端) + cur_limit A(**电机端**)
  *   TORQUE/CURRENT：线上是**电机端** N·m / A（客户端已除以 gear_ratio），
  *                  本工程 t_ff 是输出端，所以必须 × GR
  *   心跳 pos/vel：**电机端 turns**（× 100 / × 10000 定点）
@@ -85,15 +88,19 @@
 #define CB_MODE_IDLE                2
 #define CB_MODE_CLOSED_LOOP         3
 #define CB_MODE_MIT                 4
+#define CB_MODE_POSITION            5
+#define CB_MODE_VELOCITY            6
 #define CB_MODE_TORQUE              7
 
 /* 心跳的控制环 nibble（ODrive 的 control_mode 编码） */
 #define CB_CM_VOLTAGE               0
 #define CB_CM_TORQUE                1
+#define CB_CM_VELOCITY              2
 #define CB_CM_POSITION              3
 
 /* 错误码 */
 #define CB_ERR_NONE                 0x0
+#define CB_ERR_CONTROLLER           0x3
 #define CB_ERR_VOLTAGE              0x4
 #define CB_ERR_OVER_CURRENT         0x6
 #define CB_ERR_CAN_TIMEOUT          0x9
@@ -207,6 +214,7 @@ static uint8_t cb_error_code(void)
     if (controller.fault & FAULT_ESTOP) { return CB_ERR_CAN_TIMEOUT; }
     if (controller.fault & FAULT_OV)    { return CB_ERR_VOLTAGE; }
     if (controller.fault & FAULT_OC)    { return CB_ERR_OVER_CURRENT; }
+    if (controller.fault & FAULT_POS)   { return CB_ERR_CONTROLLER; }
     if (controller.fault != 0)          { return CB_ERR_MULTIPLE; }
     /* 只有真正在闭环里才可能“命令超时”；出 MOTOR 后 timeout 计数保留旧值，
      * 不能拿它去骗上位机。CAN_TIMEOUT 是毫秒，计数器是控制周期（25 us）。 */
@@ -305,12 +313,112 @@ static void cb_mit_control(const can_frame_t *f)
     controller.kp = kp;
     controller.kd = kd;
     controller.t_ff = tau;
+    controller.ctrl_mode = CTRL_IMPEDANCE;
+    controller.i_cmd_max = I_MAX;
+    controller.v_limit = V_MAX;
     controller.timeout = 0;
 
     cb_mode = CB_MODE_MIT;
     cb_ctrl_mode = CB_CM_POSITION;
 
     if (!bcast && (src != 0)) { cb_send_mit_response(src, cb_get_seq(f->id)); }
+}
+
+/* CSP(0x01)/CSV(0x02) 用固件自己的串级外环，增益来自 config.pos_gain /
+ * vel_gain / vel_integrator_gain，帧里只带目标值与限幅。
+ *
+ * 帧里的 cur_limit 是**电机端安培**（ODrive 侧是 torque_lim = cur * Kt，同为电机端），
+ * 直接作为外环的电流限幅，并且不能超过 I_MAX —— 也不能绕过 OC 阈值。
+ * vel_limit 是**输出端 RPM**；0/NaN 视为“未指定”，退回 config.v_max：
+ * 位置模式配一个 0 限速会让关节在重力下直接垮掉，客户端要“别动”应该发速度模式 0。 */
+static float cb_cur_limit(float amps)
+{
+    if (amps != amps) { return I_MAX; }
+    if (amps < 0.0f) { amps = 0.0f; }
+    if (amps > I_MAX) { amps = I_MAX; }
+    return amps;
+}
+
+static float cb_vel_limit(float rpm)
+{
+    float v = rpm * (TWO_PI_F / 60.0f);
+    if (!(v > 0.0f)) { v = V_MAX; }
+    if (v > V_MAX) { v = V_MAX; }
+    return v;
+}
+
+/* 帧间速度前馈：用控制周期数算精确 dt（心跳用的 cb_now_ms 只有 1 ms 分辨率，
+ * 在 500 Hz 的指令流上误差能达到 50%）。指令跳变一律钳到速度限幅，
+ * 避免一次大跳变变成巨大的前馈。 */
+static void cb_update_pos_ff(float pos_out)
+{
+    uint32_t elapsed = (uint32_t)controller.loop_count - (uint32_t)controller.pos_ff_cycle;
+    float dt = (float)elapsed * DT;
+    float v_ff = 0.0f;
+
+    if ((elapsed != 0u) && (dt < 0.05f)) {
+        v_ff = (pos_out - controller.pos_ff_last) / dt;
+    }
+    controller.pos_ff = fast_fmaxf(fast_fminf(v_ff, controller.v_limit), -controller.v_limit);
+    controller.pos_ff_last = pos_out;
+    controller.pos_ff_cycle = (int32_t)controller.loop_count;
+}
+
+static void cb_pos_control(const can_frame_t *f)
+{
+    float pos_deg, vel_rpm, cur_a;
+
+    if (can_is_fd()) {
+        /* CAN FD 12 字节：float32 × 3 */
+        if (f->len < 12u) { return; }
+        pos_deg = cb_be_get_f32(&f->data[0]);
+        vel_rpm = cb_be_get_f32(&f->data[4]);
+        cur_a   = cb_be_get_f32(&f->data[8]);
+    } else {
+        /* Classic 8 字节：float32 位置 + int16 RPM + int16 0.1A */
+        if (f->len < 8u) { return; }
+        pos_deg = cb_be_get_f32(&f->data[0]);
+        vel_rpm = (float)(int16_t)cb_be_get_u16(&f->data[4]);
+        cur_a   = (float)(int16_t)cb_be_get_u16(&f->data[6]) * 0.1f;
+    }
+    if (pos_deg != pos_deg) { return; }
+
+    float p_des = pos_deg * (PI_F / 180.0f);
+    controller.p_des = fast_fmaxf(fast_fminf(p_des, P_MAX), P_MIN);
+    controller.v_limit = cb_vel_limit(vel_rpm);
+    controller.i_cmd_max = cb_cur_limit(cur_a);
+    controller.ctrl_mode = CTRL_POSITION;
+    cb_update_pos_ff(controller.p_des);
+    controller.timeout = 0;
+
+    cb_mode = CB_MODE_POSITION;
+    cb_ctrl_mode = CB_CM_POSITION;
+
+    if (!cb_is_broadcast(f->id) && (cb_get_source(f->id) != 0)) {
+        cb_send_mit_response(cb_get_source(f->id), cb_get_seq(f->id));
+    }
+}
+
+static void cb_vel_control(const can_frame_t *f)
+{
+    if (f->len < 8u) { return; }
+
+    float vel_rpm = cb_be_get_f32(&f->data[0]);
+    float cur_a   = cb_be_get_f32(&f->data[4]);
+    if (vel_rpm != vel_rpm) { return; }
+
+    controller.v_des = fast_fmaxf(fast_fminf(vel_rpm * (TWO_PI_F / 60.0f), V_MAX), V_MIN);
+    controller.v_limit = V_MAX;
+    controller.i_cmd_max = cb_cur_limit(cur_a);
+    controller.ctrl_mode = CTRL_VELOCITY;
+    controller.timeout = 0;
+
+    cb_mode = CB_MODE_VELOCITY;
+    cb_ctrl_mode = CB_CM_VELOCITY;
+
+    if (!cb_is_broadcast(f->id) && (cb_get_source(f->id) != 0)) {
+        cb_send_mit_response(cb_get_source(f->id), cb_get_seq(f->id));
+    }
 }
 
 /* TORQUE(0x03) / CURRENT(0x04)：线上是电机端量，本工程 t_ff 是输出端。
@@ -328,6 +436,9 @@ static void cb_torque_like(const can_frame_t *f, float tau_out, bool respond)
     controller.kp = 0.0f;
     controller.kd = 0.0f;
     controller.t_ff = tau_out;
+    controller.ctrl_mode = CTRL_IMPEDANCE;
+    controller.i_cmd_max = I_MAX;
+    controller.v_limit = V_MAX;
     controller.timeout = 0;
 
     cb_mode = CB_MODE_TORQUE;
@@ -630,7 +741,7 @@ static void cb_query_error(const can_frame_t *f)
     uint32_t value = 0;
     switch (type) {
     case 0:  value = controller.fault & FAULT_OC; break;                    /* motor */
-    case 3:  value = 0; break;                                              /* controller */
+    case 3:  value = controller.fault & FAULT_POS; break;                   /* controller */
     case 4:  value = controller.fault & FAULT_OV; break;                    /* system */
     case 5:  value = controller.fault; break;                               /* axis */
     default: value = 0; break;
@@ -688,7 +799,15 @@ static void cb_rx(const can_frame_t *f)
         cb_current_control(f);
         break;
 
-    /* CSP/CSV 暂不支持：静默忽略（客户端的 reject_or_clamp 会保证不发）。 */
+    case CB_MSG_POS_CONTROL:
+    case CB_MSG_POS_CONTROL_BCAST:
+        cb_pos_control(f);
+        break;
+
+    case CB_MSG_VEL_CONTROL:
+    case CB_MSG_VEL_CONTROL_BCAST:
+        cb_vel_control(f);
+        break;
 
     case CB_MSG_PARAM_READ:         cb_param_read(f); break;
     case CB_MSG_PARAM_WRITE:        cb_param_write(f); break;

@@ -1,5 +1,5 @@
 {
-  "next_id": 136,
+  "next_id": 162,
   "map": {
     "config.i_bw": 1,
     "config.i_max": 2,
@@ -135,6 +135,32 @@
     "command.kd": 132,
     "config.l_d": 133,
     "config.l_q": 134,
-    "telemetry.ld_lq_diff": 135
+    "telemetry.ld_lq_diff": 135,
+    "config.pos_gain": 136,
+    "config.vel_gain": 137,
+    "config.vel_integrator_gain": 138,
+    "config.pos_ff_gain": 139,
+    "config.accel_limit": 140,
+    "config.pos_error_fault": 141,
+    "config.pll_bandwidth": 142,
+    "config.vel_loop_prescaler": 143,
+    "config.pos_loop_prescaler": 144,
+    "command.mode": 145,
+    "telemetry.v_setpoint": 146,
+    "telemetry.vel_integral": 147,
+    "telemetry.pos_err": 148,
+    "telemetry.vel_err": 149,
+    "telemetry.velocity_pll": 150,
+    "config.inertia": 151,
+    "telemetry.pos_error_fault_suggest": 152,
+    "system.inertia_status": 153,
+    "action.measure_inertia": 154,
+    "telemetry.inertia_state": 155,
+    "telemetry.inertia_break_current": 156,
+    "telemetry.inertia_accel_lo": 157,
+    "telemetry.inertia_accel_hi": 158,
+    "config.omega_c": 159,
+    "config.tune_margin": 160,
+    "action.tune_gains": 161
   }
 }

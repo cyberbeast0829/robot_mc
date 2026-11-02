@@ -20,14 +20,16 @@ ADC，采样点在 PWM 峰值、低侧采样窗口内。
                               └─ 直接读写 params.json 里的 C 变量
 主循环 ──> run_fsm_slow() ──> save_preferences() ──> prefs_codec (TLV+CRC32)
                                                      └─ 0x0807C000 / 0x0807E000 ping-pong
-控制 ISR ──> analog_sample → ps_sample → check_faults → run_fsm → can_tx_rx
+控制 ISR ──> analog_sample → ps_sample(+PLL) → check_faults → run_fsm(motion_control) → can_tx_rx
 ```
 
 | 文件 | 职责 | 可在 ISR 里跑 |
 |---|---|---|
 | `n32h47x_48x_it.c` | 控制 ISR 调度、`fault_shutdown()` | 是 |
-| `foc.c` | 电流环/外环/`check_faults` | 是 |
-| `position_sensor.c` | SPI1+DMA2 读编码器 | 是（唯一允许阻塞等 DMA） |
+| `foc.c` | 电流环/`torque_control`/`check_faults` | 是 |
+| `motion.c` | 控制律分发 + 分频的速度环/位置环（CSP/CSV） | 是 |
+| `motion_law.h` | 外环纯数学（PI/斜率/故障/PLL，可主机测试） | 是（纯计算） |
+| `position_sensor.c` | SPI1+DMA2 读编码器、速度 PLL | 是（唯一允许阻塞等 DMA） |
 | `fsm.c` | 状态机：`run_fsm`（ISR）/`run_fsm_slow`（主循环） | 分开 |
 | `endpoint.c` | CRC、LE 编解码、endpoint 0 描述符 | 是（纯计算） |
 | `endpoint_serial.c` | USB 帧收发 | `feed()` 是，`poll()` 否 |
@@ -111,6 +113,365 @@ ADC，采样点在 PWM 峰值、低侧采样窗口内。
 - 标定顺序有依赖：Ld/Lq 用同一测试电流把转子锁在 alpha/beta 上，磁链公式要用
   刚测出的 R 和 L_D（以及极对数算 Kt）。因此 `measure_lr()` 必须排在
   `order_phases()` 之后；失败会中止整轮标定。
+
+## 速度环与位置环（CSV / CSP）
+
+三条环都跑在控制中断里、相位锁在 PWM 更新（update/TRGO）上：
+
+| 环 | 频率 | 实现 | 周期 |
+|---|---|---|---|
+| 电流环 | **固定 40 kHz** | `commutate()`（`foc.c`） | 25 µs |
+| 速度环 | 40 kHz / `config.vel_loop_prescaler`（默认 5 → **8 kHz**） | `ml_vel_pi()` | 125 µs |
+| 位置环 | 速度环 / `config.pos_loop_prescaler`（默认 2 → **4 kHz**） | `ml_pos_p()` | 250 µs |
+
+`motion_control()`（`motion.c`）在 `MOTOR_MODE` 里取代了原来对 `torque_control()` 的
+直接调用，按 `controller.ctrl_mode` 分发：
+
+| `ctrl_mode` | 来源 | 行为 |
+|---|---|---|
+| `CTRL_IMPEDANCE`（默认） | MIT `0x00/0x80`、旧 11-bit 协议、`0x03`、`0x04`、`command.mode=0` | 原样调用 `torque_control()`，**每拍都算**，与改动前逐字节一致 |
+| `CTRL_VELOCITY` | CSV `0x02/0x82`、`command.mode=1` | 速度 PI → `i_q` |
+| `CTRL_POSITION` | CSP `0x01/0x81`、`command.mode=2` | 位置 P → 速度指令 → 速度 PI → `i_q` |
+
+纯数学部分在 `Core/Inc/motion_law.h`（零固件依赖），host 测试
+`tools/test_motion_law.c` 直接包含它，见“测试”一节。
+
+### 为什么这样不损失电流环带宽
+
+- 外环**只产生 `i_q_des` 这个参考**。`commutate()` 的增益、采样相位、`svm()`
+  预装载顺序、`v_max` 计算、`d/q` 积分器一个字节都没改。
+- 外环在更新拍插在 `commutate()` 之前，多花约 0.3–0.8 µs（25 µs 的 1–3%），
+  对电流环相位裕度的影响 < 1°；分频后绝大多数拍完全不执行外环。
+- 外环的可用带宽由**速度估计**决定，不由控制频率决定：PLL 带宽默认 500 rad/s
+  （约 80 Hz）+ 8 kHz 采样的 62.5 µs 零阶保持，比电流环低一个数量级。
+  所以“降外环频率”换不到电流环的任何好处，反过来也一样。
+- ⚠ **`i_q_des` 必须每拍从 `controller.i_q_ref` 重新赋值**：`field_weaken()` 是
+  *就地累加* `i_q_des`（`i_q_des += fw_int`）。分频等待期间若直接沿用 `i_q_des`，
+  弱磁会一拍接一拍地叠加下去。
+
+### 单位
+
+全部是**输出轴**量（与 `torque_control()` 同口径），输出是**电机端安培**：
+
+| 参数 | 单位 | 说明 |
+|---|---|---|
+| `config.pos_gain` | (rad/s)/rad | 位置误差 → 速度指令 |
+| `config.vel_gain` | A/(rad/s) | 速度误差 → 电流指令（电机端） |
+| `config.vel_integrator_gain` | A/(rad/s)/s | 速度积分 |
+| `config.accel_limit` | rad/s² | 速度设定值斜率限制，0 = 关闭 |
+| `config.pos_error_fault` | rad | 跟随误差故障阈值，0 = 关闭 |
+| `config.pll_bandwidth` | rad/s | 编码器速度 PLL 带宽 |
+
+出厂值：`pos_gain 15` / `vel_gain 3` / `vel_integrator_gain 25` / `accel_limit 10` /
+`pos_error_fault 0` / `pll_bandwidth 2000`。**`vel_gain` 从 5 降到 3、`accel_limit`
+从 0 改成 10 是台架实测的结果**：裸关节（低惯量 + 干摩擦）在 `vel_gain ≥ 4` 时速度环
+失稳（实测冲到 3.6 rad/s、电流限幅），`vel_gain 3` 留出余量；`accel_limit 10` 让
+指令阶跃变成 100 ms 的斜坡，压掉电流冲击而对稳态没有影响。这些仍是**起点**，
+目标机必须自己整定。
+
+为什么在安培域而不在 N·m 域：CSP/CSV 帧的限幅本来就是电流（A），
+`limit_norm()`、`field_weaken()`、过流阈值也都在安培域。省掉每拍 2 次乘法 +
+1 次除法，增益也不依赖标定出来的 `KT`。MIT 路径仍然是 N·m 域，不受影响。
+
+帧到环的换算（`can_cyberbeast.c`）：
+
+| 帧字段 | 线上单位 | 环内 |
+|---|---|---|
+| CSP 目标位置 | deg（输出端） | `× π/180` → `p_des`，再钳到 `[P_MIN,P_MAX]` |
+| CSP `vel_limit` | RPM（输出端） | `× 2π/60` → `controller.v_limit`；0/NaN 退回 `V_MAX` |
+| CSP/CSV `cur_limit` | A（**电机端**） | → `controller.i_cmd_max`，钳到 `[0, I_MAX]` |
+| CSV 目标速度 | RPM（输出端） | `× 2π/60` → `v_des`，再钳到 `[V_MIN,V_MAX]` |
+
+`vel_limit` 收到 0 一律按“未指定”处理并退回 `config.v_max`：位置模式配一个 0 限速
+会让关节在重力下直接垮掉。要“别动”请用速度模式给 0。
+
+### 抗饱和与限幅
+
+```c
+i_unlim = vel_gain*v_err + vel_integ;
+i_q     = clamp(i_unlim, ±i_cmd_max);
+if (i_q != i_unlim) { vel_integ *= 0.99f; }       /* 饱和 → 衰减，不累积 */
+else                { vel_integ += vel_integrator_gain*v_err*dt; }
+vel_integ = clamp(vel_integ, ±i_cmd_max);
+```
+
+与 ODrive 的 `vel_integrator_torque_ *= 0.99f` 同款。位置环没有积分器，所以不存在
+位置积分饱和；位置误差通过 `v_limit` 钳位转成“按速度上限追赶”。
+
+### 编码器速度 PLL
+
+`ps_update_pll()`（`position_sensor.c`）用 `ml_pll_step()` 在**单圈计数**上做临界阻尼
+PLL（`kp = 2·bw`、`ki = 0.25·kp²`，与 ODrive `Encoder::update()` 一致），输出
+`comm_encoder.pll_velocity`（电机端 rad/s）。
+
+- 用单圈计数而不是多圈浮点位置：`|count|` 超过 2^24 后 float32 已经丢掉整数分辨率，
+  位置一大相位检测就变成台阶。
+- 丢帧（`ps_finish_sample()` 返回 0）时不预测，否则估计会一路漂。
+- 第一个有效样本直接对齐（`pll_seeded`），不追赶 —— 半圈相位差经 `ki` 会变成
+  几十 rad/s 的速度尖峰，再进电流环就是一下冲车。
+- **MIT 与旧协议继续用 `comm_encoder.velocity`**（475 µs 整数差分），
+  这条路径没有改动；`telemetry.velocity` 与新增的 `telemetry.velocity_pll`
+  可以并排看噪声差别。
+
+**带宽怎么选**（`config.pll_bandwidth`，默认 **2000 rad/s ≈ 318 Hz**）：
+估计器的滞后是叠加在速度环“被控对象积分器固有的 -90°”之上的，所以要按穿越频率挑：
+
+| `pll_bandwidth` | 100 Hz 处相位 | 200 Hz 处相位 | 噪声（1 rev/s 时，电机端） |
+|---|---|---|---|
+| 500 (80 Hz) | -8° | -58° | ≈ 0.001% |
+| 1000 (160 Hz) | -2° | -35° | ≈ 0.002% |
+| **2000 (318 Hz)** | **-2°** | **-13°** | **≈ 0.05%** |
+| 3000 (477 Hz) | -1° | -5.5° | ≈ 0.13% |
+
+对照：19 点整数差分（`comm_encoder.velocity`）在同条件下噪声 ≈ **1.6%**，
+但 200 Hz 只有 -17° 相位。也就是说 PLL 在**噪声更好的同时相位也更差不到哪去**，
+可以把带宽开到 2000；真要在 200 Hz 以上做穿越，就调到 3000。
+
+`17 位编码器 + 40 kHz` 的量化噪声本来就很低，所以“噪声太大”不是实际限制，
+低速抖动更多来自机械与齿隙。
+
+### 惯量标定与增益推荐值
+
+外环的增益其实只有三个未知量：`J_out`、`KT`（已标定）、`GR`（配置）。给定目标穿越
+频率 `ω_c`，其余都能算出来；**`action.tune_gains`** 就按下面这套算并直接写进 RAM：
+
+```
+J_out   = KT·GR·Δi / Δa                          （惯量标定直接给）
+vel_gain            = tune_margin·J_out·ω_c/(KT·GR)      [A/(rad/s)]
+vel_integrator_gain = vel_gain·clamp(ω_c/25, 5, 30)      [A/(rad/s)/s]   （ω_i ≈ 18 rad/s @ ω_c=450）
+pos_gain            = ω_c/20                             [(rad/s)/rad]
+```
+
+输入是 `config.inertia`（必须先标定）、`config.omega_c`（默认 450）、
+`config.tune_margin`（默认 1.0）。要求菜单态 + `KT>0` + `GR>0`，**只写 RAM**，
+不落盘；写完用 `csv`/`csp` 子命令验证，满意再 `action.save`。
+
+⚠ 这里的 25 和 20 不是教科书取值（线性串级设计会说 `ω_c/5`），是台架上试出来的，
+原因同样写在上面的"小惯量 + 大摩擦"里：
+
+| 试过的值 | 结果（0.1 rad 阶跃 / 1 rad/s 阶跃） |
+|---|---|
+| `vel_integrator_gain = vel_gain·ω_c/5`（= 246 @ ω_c 450） | stick-slip 极限环，速度误差从 −0.8% 涨到 **+13.6%**，过冲 58% |
+| `vel_integrator_gain = vel_gain·18`（= 49） | 误差 +0.3% / +3.9%，过冲 38% / 25% |
+| `pos_gain = ω_c/5 = 90` | 位置过冲 **65%** |
+| `pos_gain = 60` / `45` | 过冲 47% / 33%（齿隙 + 摩擦引起的极限环，不是线性失稳） |
+| `pos_gain = 22.5`（`ω_c/20`） | 保持段 \|pos_err\| ≤ 1.7 mrad，干净 |
+
+**`tune_margin` 补的是线性公式的低估**：公式假设纯惯性负载，实测库仑摩擦把有效
+对象增益压低，同一台关节要把速度环放大到 2.6 倍才跟得上指令（`vel_gain` 1.05 → 2.74）；
+它只放大速度环，位置环不跟着放大。默认 1.0 = 纯公式（保守），摩擦主导的关节从
+2~3 起试。最终值仍以 `csv --sweep` 为准（见"台架整定步骤"）。
+
+**`action.measure_inertia`** —— 一条指令完成，不需要先手动进电机模式。
+`run_fsm_slow()` 负责编排（`fsm.c` 的 `inertia_phase`）：请求 → `MOTOR_MODE`
+→ 门极一开就触发 ISR 里的状态机 → 等它结束 → **自动回菜单**。
+自动回菜单是必须的：测完若停在 MOTOR_MODE，门极还开着而转矩是 0，有重力负载的
+关节会直接垮下来；回菜单后紧接着就能 `action.save`（save 要求门极关闭）。
+
+状态机本身（`Core/Src/motion.c` 的 `inertia_step()`）在 MOTOR_MODE 里跑，约 1.3 s，
+全程在控制 ISR 内、不 printf、不写 flash：
+
+| 阶段 | 时长 | 做什么 |
+|---|---|---|
+| `INERTIA_SETTLE` | 150 ms | 零电流，确认关节是静止的（窗内最大 \|ω\| 超过 0.15 rad/s 就直接失败） |
+| `INERTIA_BREAKAWAY` | ≤600 ms | 每 8 ms 加 0.05 A，直到 \|ω\| > 0.15 rad/s → 得到"摩擦+重力"等效电流 `i_break` |
+| `INERTIA_BRAKE` | 20–150 ms | **主动刹车**（`i = -ω`，限幅到 `0.5·I_MAX`）而不是零电流滑行 —— 滑行会让关节多走几倍行程，有限位的关节直接撞限位 |
+| `INERTIA_TEST_LO` | ≤60 ms | 电流台阶 `1.5·i_break`，跳过前 8 ms（电流环建立时间）后流式最小二乘拟合 `dω/dt` |
+| `INERTIA_BRAKE` | 20–150 ms | 同上 |
+| `INERTIA_TEST_HI` | ≤60 ms | 电流台阶 `2.5·i_break`（都钳在 `0.5·I_MAX` 以内） |
+| `INERTIA_BRAKE` → `INERTIA_DONE` | 20–150 ms | `J = KT·GR·(ī_hi − ī_lo)/(a_hi − a_lo)`，写 `config.inertia` |
+
+单个台阶还会在**位移超过 0.10 rad** 或速度超过 2 rad/s 时提前结束（轻关节几毫秒就到），
+实测整轮约 1.3 s、关节净行程 ~0.10 rad。
+
+`system.inertia_status` 的失败码是分段的，方便定位：3 = 关节本来就在动，4 = 加电流到
+上限还不动（卡住/摩擦过大），5 = 台阶太短采不到足够的点，6 = 激励不足/斜率不可信。
+
+诊断遥测（只读）：`telemetry.inertia_state`（状态机停在哪）、
+`telemetry.inertia_break_current`（本轮认定的突破电流）、
+`telemetry.inertia_accel_lo` / `inertia_accel_hi`（两个台阶各自拟合出的加速度）。
+`J` 由 `(ī_hi − ī_lo)` 和 `(a_hi − a_lo)` 算出来，所以这两个加速度**必须明显不同**；
+它们相等而 `status` 仍是 2，就说明读到的不是这一轮的数（旧镜像 / 烧录没成功，见
+"烧录）。台架典型值（48 V、裸关节、GR 7.75、KT 0.125）：`break = 0.10 A`、
+`a_lo ≈ 15.6`、`a_hi ≈ 37.3`、`J ≈ 0.0023 kg·m²`。
+
+**为什么是两个同向台阶，而不是 ODrive 的 ±对称法**：模型是 `J·a = KT·GR·i − c`，
+`c`（重力 + 库仑摩擦）是常值。两个同向台阶拟合出的斜率天然把 `c` 消掉；而 ±对称法
+里库仑摩擦的方向随运动反向，相加抵不掉，会把 `J` 高估 —— 台架上摩擦占到力矩的
+30% 时就是 30% 的增益偏差。
+
+- 拟合只累计 5 个和（`ml_fit_t`），ISR 里不需要缓存样本。
+- 结果**只写 RAM**，不会自动 `action.save`；`system.inertia_status` 报
+  0 未跑 / 1 运行中 / 2 成功 / 3..7 失败原因。
+- 打断路径：`zero_commands()`（超时、回菜单、故障）会把状态机复位成 IDLE 并置
+  失败 —— 否则下次进电机模式会从半个台阶续跑，测出来的 J 是错的。
+- 标定期间 `run_fsm` **跳过命令超时检查**（它自己就是命令来源），并且
+  **跳过 `inertia_req` 待处理的周期**（否则 `zero_commands()` 会在
+  `motion_control()` 采纳请求之前把它清掉 —— 这是实现时踩过的坑）。
+- 前提：`KT > 0`、`GR > 0`（endpoint 的 `require` 就挡在这里）、关节能自由转
+  一小段（净行程约 0.10 rad）、齿隙已经消除。卡住/欠激励会返回失败码，不会写垃圾值。
+
+**`ω_c` 的上限由延迟决定，不由惯量决定**：电流环 ≈40 µs + PLL（2000 rad/s）+
+速度环零阶保持（125 µs）+ 采样 ≈ 0.3–1 ms ⇒ `ω_c` 超过约 1000 rad/s（160 Hz）
+实际就是在跟延迟赛跑。
+
+台架实测（2026-10-30，48 V，裸关节，`prescaler 5/2`，`pll_bandwidth 2000`）：
+
+| 项目 | 实测 |
+|---|---|
+| 标定出的 `config.inertia` | **0.00206 / 0.00237 / 0.00289**（连续 3 次，均值 0.0024，离散 ±17%；重标电机后 0.00227，`break 0.10 A`、`a_lo 15.6`、`a_hi 37.3`） |
+| 标定耗时 / 关节行程 | ~1.3 s / ~0.10 rad（没加刹车时是 0.35 rad） |
+| `vel_gain = 3` | 稳定（`ω_c = 3·KT·GR/J ≈ 1100 rad/s`），超调 26% |
+| `vel_gain = 4` | 失稳（`ω_c ≈ 1500 rad/s`） |
+
+⇒ 反推出的延迟约 1 ms（含摩擦/齿隙造成的等效滞后），与 `vel_gain 3` 的 26% 超调吻合。
+**注意这个台架是"小惯量 + 大摩擦"**：按公式 `vel_gain = J·ω_c/(KT·GR)` 取 `ω_c=450`
+只有 1.15，实测却要到 3 才跟得上指令 —— 因为库仑摩擦把有效对象增益压低了，线性公式
+给的是**惯性主导**时的值。所以用法是：**公式给起点（并用来卡 `ω_c` 上限），
+`config.tune_margin` 补摩擦（≈2.6），`sweep` 给最终值**。
+
+### 位置跟随误差故障
+
+`config.pos_error_fault > 0` 时，位置环在**没有被 `v_limit` 饱和**的情况下，
+`|pos_err|` 连续超过阈值 100 ms 就锁存 `FAULT_POS`（`foc.h`）→ FAULT_MODE 关栅，
+需要显式回菜单才能清除。
+
+只用“未饱和”判定的原因是：目标离得很远（上电对齐、长距离移动）时位置环本来就
+会顶在速度上限上追，这时误差大是正常的。**因此阈值必须小于 `v_max / pos_gain`**，
+否则该条件永远不成立（误差一到 `v_max/pos_gain` 就饱和了，计时被清零）。
+
+**推荐值**：固件直接算好一个上限放在 `telemetry.pos_error_fault_suggest`：
+
+```
+e_recover = ½ · a_max · T²            a_max = KT·GR·I_MAX/J_out，T = 100 ms
+e_limit   = ½ · v_max / pos_gain
+suggest   = min(e_recover, e_limit)
+```
+
+`e_recover` 是"驱动器在 100 ms 内能把静止的关节拉回来多少"，`e_limit` 是"再大就
+必然饱和"。惯量未标定时（`config.inertia = 0`）只用 `e_limit`。它给的是**上限**：
+机械行程小的关节应取更小的值（例如行程的 1/4）。
+
+上报：MIT 响应帧 `CB_ERR_CONTROLLER(0x3)`；`QUERY_ERROR` 的 `type=3/5`。
+
+
+### 分频怎么选
+
+- 默认 5 / 2（8 kHz / 4 kHz）。ODrive 在 12 kHz FOC 上用的是 2 / 4（6 kHz / 1.5 kHz），
+  所以这个量级完全够用。
+- 全部设 1（两个环都 40 kHz）可以作为“带宽上限”对照，用来判断限制来自
+  增益还是来自采样。
+- 速度环不要低于 ~1 kHz：外环的相位裕度会开始被零阶保持吃掉。
+  `MOTION_PRESCALER_MAX = 100` 就是这条线的硬上限（40 kHz/100 = 400 Hz 是允许的
+  边界）。
+- 两个环都必须留在控制 ISR 里。放主循环（`run_fsm_slow`，1 ms + 抖动）会让
+  速度环带宽掉到 10 Hz 量级。
+
+### 台架测试脚本
+
+`tools/csv_csp_test.py`（USB endpoint，不需要 CAN 主站）。**它自己负责命令租约刷新**——
+`command.*` 的租约只有 `config.can_timeout`（默认 100 ms），用 `mc_ep.py set` 一条条
+敲根本无法维持，测出来的“环路不工作”其实是保护动作。
+
+| 子命令 | 作用 |
+|---|---|
+| `plain` | 进 MOTOR_MODE，用 MIT 律（`--kp/--kd`）顶住当前位置 → 重构回归 |
+| `csv` | 速度阶跃 `0 → +v → 0 → −v → 0` |
+| `csp` | 位置阶跃 `保持 → +step → 保持 → 回原位 → 保持` |
+| `timeout` | 刷新 0.6 s 后停手，验证租约到期后确实卸力 |
+| `sweep` | 扫 `config.vel_gain`（纯 P），打印稳态误差/超调，结束后恢复原值 |
+
+```bash
+python tools/csv_csp_test.py --port COM6 csv --vel 1.0 --log run.csv
+```
+
+- 三重中止闸：`telemetry.fault` 非 0、`|velocity_pll| > --abort-vel`（默认 3 rad/s）、
+  `|pos_err| > --abort-pos-err`（默认 0.5 rad）。任一触发都立刻退出并在 `finally`
+  里 `action.idle_mode` 关门极。
+- `--min-bus`（默认 15 V）挡住“主电源没上电还以为环路坏了”的情况；
+  `--allow-low-bus` 可以在无功率级时只验证逻辑/遥测（此时 `i_q_des` 会顶到限幅而
+  `i_q_filt` 恒为 0，这是正常的）。
+- `--log` 输出 UTF-8 CSV，可以直接画曲线。
+- ⚠ 它会**真的转电机**；纯速度/位置环没有行程保护（除非开 `config.pos_error_fault`），
+  调试时手放急停上。
+
+### 台架整定步骤
+
+按下面顺序走，每一步都用上一节的脚本（它自带租约刷新与中止闸）：
+
+```bash
+# 0) 先看基线：MIT 律能不能顶住（kp/kd 走的是 CTRL_IMPEDANCE，不经过外环）
+python tools/csv_csp_test.py --port COM6 plain --hold 2 --kp 20 --kd 1
+
+# 1) 速度环 P：扫描 vel_gain（脚本内部把 vel_integrator_gain 临时置 0，结束后恢复）
+python tools/csv_csp_test.py --port COM6 sweep --vel 1.0 --gains 1,2,3,4,6
+
+# 2) 选定 vel_gain 后加积分，再跑一次完整阶跃看正反转
+python tools/mc_ep.py --port COM6 set config.vel_integrator_gain 10
+python tools/csv_csp_test.py --port COM6 csv --vel 1.0 --hold 0.8 --move 2.5 --log csv.csv
+
+# 3) 位置环：从 ω_c/20 起试（台架上 ω_c/5 会因齿隙/摩擦过冲，见"惯量标定"一节）
+python tools/mc_ep.py --port COM6 set config.pos_gain 22
+python tools/csv_csp_test.py --port COM6 csp --step 0.2 --hold 1.2 --move 2.0 --log csp.csv
+
+# 4) 惯量标定 —— 一条指令，自动进出电机模式（结束自动回菜单）
+python tools/mc_ep.py --port COM6 call action.measure_inertia
+python tools/mc_ep.py --port COM6 get system.inertia_status     # 1 运行中 / 2 成功 / 3..7 失败原因
+python tools/mc_ep.py --port COM6 get config.inertia            # kg·m^2（只写 RAM，未保存）
+python tools/mc_ep.py --port COM6 get telemetry.pos_error_fault_suggest
+
+# 5) 由惯量算三个增益（只写 RAM；不满意就改 omega_c / tune_margin 重算）
+python tools/mc_ep.py --port COM6 set config.omega_c 450
+python tools/mc_ep.py --port COM6 set config.tune_margin 2.6     # 摩擦主导的关节从 2~3 起试
+python tools/mc_ep.py --port COM6 call action.tune_gains
+python tools/mc_ep.py --port COM6 get config.vel_gain            # 确认写进去了
+python tools/csv_csp_test.py --port COM6 csv --vel 1.0           # 验证
+python tools/csv_csp_test.py --port COM6 csp --step 0.2
+python tools/mc_ep.py --port COM6 call action.save               # 满意后再保存
+```
+
+`action.tune_gains` 的输入只有 `config.inertia`、`config.omega_c`、
+`config.tune_margin`（公式见"惯量标定与增益推荐值"），`ω_c` 取 300–600 rad/s
+起步（上限由延迟预算决定）。**摩擦主导的台架实测需要 `tune_margin ≈ 2.6`** ——
+公式给起点、margin 补摩擦、`sweep` 给最终值。标定/整定结果**都不会自动保存**。
+```
+
+判读方法：
+
+| 现象 | 含义 | 动作 |
+|---|---|---|
+| `sweep` 的 `err%` 很大（>20%） | 该增益下力矩不足以克服摩擦 | 加大 `vel_gain`，或靠积分补 |
+| `sweep` 的 `overshoot%` > 30% 或出现 `UNSTABLE` | 相位裕度不足（延迟/惯量） | 用该增益的 1/2.5 作为工作点 |
+| `vel_integral` 持续爬升不收敛 | 积分太强或机械卡住 | 降 `vel_integrator_gain`，查机构 |
+| CSP `|pos_err|max` 收敛但末端有极限环 | 低速干摩擦 + 量化（机械层面） | 开 `pos_error_fault`，或加大 `accel_limit` 平滑 |
+| `i_q_des` 顶在限幅而速度不动 | 电压/电流不足或堵转 | 查母线、`config.i_max`、机械 |
+
+**实机参考数据**（2026-10-30，48 V，裸关节：低惯量 + 干摩擦，GR 7.75、
+KT 0.123 N·m/A）：
+
+| `vel_gain`（纯 P，1.0 rad/s 阶跃） | 结果 |
+|---|---|
+| 1 | 稳定，稳态 ≈0.73 rad/s（−27%） |
+| 2 | 稳定，稳态 ≈0.86–0.90，有超调 |
+| 3 | 稳定（出厂值） |
+| 4 / 6 | **失稳**：速度冲到 3.6+ rad/s、电流限幅 |
+
+该台架上 `vel_gain 2` + `vel_integrator_gain 10` 把稳态误差压到 −5…−9%，
+`pos_gain 2` 的 0.2 rad 阶跃超调 12%、静止误差 2–3 mrad。
+
+**编码器 PLL 的真机校验**（用精确整数位置差分当参考，同区间均值）：
+PLL 误差 ≤4%，19 点差分 9–16%。这也解释了为什么外环必须用 PLL：低速时差分
+只有 ±1 LSB 的台阶（输出轴 0.026 rad/s/bit）。
+
+### ISR 预算判据
+
+改动前后各读一次：
+
+| 端点 | 判据 |
+|---|---|
+| `timing.overrun` | 必须保持 0 |
+| `timing.period_max` | < 0.6 × `timing.isr_period`（6000 cycles） |
+| `timing.seg_fsm_max` | 外环更新那拍会变高；对比 1/1 与 5/2 两种配置 |
 
 ## endpoint 协议
 
@@ -438,7 +799,8 @@ CubeMX 的 SysInit 段移到了配置加载之后
 | `0x00/0x80` MIT | 8 字节位域 → `p_des/v_des/kp/kd/t_ff`（**输出端 1:1**）；单播回 8 字节响应；FD 广播按 `slot = node_id` 取槽（node_id 必须 1..7） |
 | `0x03/0x83` TORQUE | 线上是电机端 N·m → `t_ff = τ × GR`，`kp = kd = 0` |
 | `0x04` CURRENT | `t_ff = I × KT × GR`，不回应答；**刷新超时**（比 ODrive 的 F19 更安全） |
-| `0x01/0x02` CSP/CSV | **暂不支持**（本固件没有独立位置/速度环），静默忽略 |
+| `0x01/0x81` CSP | 目标位置 deg(输出端) + `vel_limit` RPM(输出端) + `cur_limit` A(电机端)；Classic 8 B 用 float32 位置 + int16 RPM + int16 0.1A，FD 12 B 全 float32；进 `CTRL_POSITION`，单播回 MIT 响应 |
+| `0x02/0x82` CSV | 目标速度 RPM(输出端) + `cur_limit` A(电机端)；进 `CTRL_VELOCITY`，单播回 MIT 响应 |
 | `0x20/0x21` SDO | 直接 `endpoint_handler()`；值小端；Classic 下 ReqLen 钳到 4；`>4` 字节走分段写；批量读回 ERR |
 | `0x22` SAVE | 置 `state.save_pending`（门极关闭时由主循环写 flash） |
 | `0x24/0x25` 描述符 | 元数据 + 定长分片（8/64 B，末尾补 0），2 帧/ms |
@@ -524,7 +886,8 @@ schema 1 → 2 迁移已实机验证（同一块配置，不动 flash）：旧�
 ## 测试
 
 自动检查：`make check`（生成物/文档最新）、
-`make hosttest`（`prefs_codec` + `test_can_cyberbeast`）、`make`（链接）。
+`make hosttest`（`prefs_codec` + `test_can_cyberbeast` + `test_motion_law`）、
+`make`（链接）。
 Windows 用 MSYS2 bash 构建（Chocolatey 的 make 用 cmd，
 `mkdir -p` 会失败）：
 
@@ -535,6 +898,36 @@ make -j8
 
 改了协议/描述符时，用 JointSDK 的 `cb_jsondesc_parse.c` 解析
 `mc_ep.py descriptor` 导出的 JSON，确认 `rc=0`、类型/权限正确。
+
+### 烧录（J-Link，可靠流程）
+
+**别用 `JLink.exe loadfile` 或 UV4 默认设置直接烧这块板。** 台架实测
+（2026-10-30，J-Link V11 + JLink DLL V8.26，VTarget 2.917 V）：SWD **读回不稳**——
+同一段 flash 连续读三次会得到三个不同内容（1 MHz），Keil 默认的 5 MHz 下 J-Link
+自带 verify 随机报 `Verification failed @ 0x08000000`，而**编程其实只写了一部分**。
+最坑的是它有时"看起来成功了"：设备继续跑旧镜像，于是新加的 endpoint 用的是旧实现、
+遥测值自相矛盾（这一次就是 `inertia_accel_lo` 与 `inertia_accel_hi` 读回同一个值，
+排查了半天才发现是镜像没换）。
+
+可靠做法（`tools/flash_jlink.py` 就是把这一套写成脚本）：
+
+```
+python tools/flash_jlink.py            # 250 kHz + 8 KB 分块写 + 逐块回读比对 + 重试
+python tools/flash_jlink.py --erase    # 需要时先整片擦除（会清掉配置页！）
+python tools/flash_jlink.py --bin build/motorcontrol.bin   # GNU 构建产物也可以
+```
+
+- 250 kHz 是实测稳定的上限；1 MHz 读回就会偶发错字节（全镜像一次读完仍可能错 2 字节，
+  所以**校验也要分块 + 失败重读**，不能只信 J-Link 的 `Verify`）。
+- 烧完必须回读全镜像并逐字节比对，一致才算成功（脚本退出码非 0 就是没烧进去）。
+- 烧完核心处于 halt，`COM` 口不会出现；脚本最后会 `r`+`g`。手动流程是
+  `si SWD / speed 250 / device N32H473CE / connect / r / g / exit`。
+- 整片擦除会清掉配置页（`prefs_loaded = false`、`prefs_sequence = 0`）：
+  之后必须重新 `action.calibrate`（R/L/KT/编码器零点）再 `action.save`，
+  否则电流环/惯量标定拿到的都是默认值（实测未标定时 `breakaway = 0.4 A`、
+  加速度符号都反了，J 差 10 倍）。
+- 烧录成功后核对一次现场：`system.prefs_loaded` / `system.prefs_sequence` /
+  `config.kt` 是否符合预期，能立刻发现"其实没烧进去"。
 
 台架清单（改 endpoint/持久化后）：
 
@@ -558,6 +951,11 @@ make -j8
 | 16 | 门极使能时 `call action.reset_config` | `status 6`（`EP_ERR_STATE`），`save_status` 不变，配置不动 |
 | 17 | 空闲态 `set command.t_ff 5` 后 `call action.motor_mode` | 门极使能后 `telemetry.t_ff = 0`（进入模式时清零），电机不窜动 |
 | 18 | 电机模式下写 `command.t_ff`，然后停发 3×`can_timeout` | 命令自动清零（租约到期），`telemetry.i_q_des → 0` |
+| 19 | `set command.mode 1` + `set command.v_des 1` | 电机按速度环转到 ~1 rad/s；`telemetry.v_setpoint`/`vel_err` 有值，`command.mode` 回读为 1 |
+| 20 | `set command.mode 2` + `set command.p_des <当前+0.5>` | 位置环把关节转过去并停住；`telemetry.pos_err → 0`，无过冲振荡 |
+| 21 | CSP 时连发 3×`can_timeout` 不刷新 | 卸力（零转矩），不是“保持位置” |
+| 22 | `set config.pos_error_fault 0.2`，堵住关节让 CSP 追不上 | 约 100 ms 后 `telemetry.fault` 出现 `FAULT_POS(8)`，进 FAULT_MODE 关栅 |
+| 23 | `set config.vel_loop_prescaler 1` / `pos_loop_prescaler 1` | `timing.overrun` 仍为 0，`timing.period_max` < 0.6×`isr_period` |
 
 ## 发布检查表
 

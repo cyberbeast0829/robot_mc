@@ -23,6 +23,18 @@ ID 由 `tools/endpoint_ids.json` 锁定，固件升级不会改变；`access` �
 | `config.v_min` | 11 | float | rw | rad/s | ≤ 0.0 | -65.0 | 是 | 速度设定值下限（通常由 v_max 联动，也可单独写入以便备份恢复） |
 | `config.kp_max` | 12 | float | rw |  | ≥ 0.0 | 500.0 | 是 | 位置增益上限 |
 | `config.kd_max` | 13 | float | rw |  | ≥ 0.0 | 5.0 | 是 | 速度增益上限 |
+| `config.pos_gain` | 136 | float | rw | (rad/s)/rad | 0.0 .. 1000.0 | 15.0 | 是 | CSP 位置环 P 增益（输出轴）。位置误差 × 该值 = 速度指令；0 表示位置环只剩帧间前馈（要完全关闭请把 pos_ff_gain 也设 0） |
+| `config.vel_gain` | 137 | float | rw | A/(rad/s) | 0.0 .. 2000.0 | 3.0 | 是 | CSV/CSP 速度环 P 增益（电机端安培 / 输出轴角速度）；0 时速度环只剩积分器（要完全关闭请把 vel_integrator_gain 也设 0） |
+| `config.vel_integrator_gain` | 138 | float | rw | A/(rad/s)/s | 0.0 .. 200000.0 | 25.0 | 是 | 速度环 I 增益；消掉重力/摩擦下的稳态速度误差（抗饱和：输出限幅时积分按 0.99 衰减） |
+| `config.pos_ff_gain` | 139 | float | rw |  | 0.0 .. 2.0 | 1.0 | 是 | CSP 帧间速度前馈系数（指令差分的比例）；1.0 = 全前馈，0 = 关闭 |
+| `config.accel_limit` | 140 | float | rw | rad/s^2 | 0.0 .. 100000.0 | 10.0 | 是 | 速度设定值的斜率限制（输出轴）；0 = 关闭。非零默认值能在指令阶跃时压住电流冲击，对稳态无影响 |
+| `config.pos_error_fault` | 141 | float | rw | rad | 0.0 .. 1000.0 | 0.0 | 是 | 位置跟随误差故障阈值（输出轴）；0 = 关闭。只在位置环未被速度限幅饱和时判定，需持续 100 ms；必须小于 v_max/pos_gain 才会触发 |
+| `config.pll_bandwidth` | 142 | float | rw | rad/s | 20.0 .. 5000.0 | 2000.0 | 是 | 编码器速度 PLL 带宽（速度环/位置环的反馈来源）；越大相位滞后越小、噪声越大。默认 2000（约 318 Hz），200 Hz 穿越点只吃 -13° 相位 |
+| `config.inertia` | 151 | float | rw | kg·m^2 | 0.0 .. 100.0 | 0.0 | 是 | 输出端惯量（关节折算值）。可由 action.measure_inertia 测得（只写 RAM，不自动保存）；用于推荐增益与 pos_error_fault。0 = 未知 |
+| `config.omega_c` | 159 | float | rw | rad/s | 50.0 .. 1200.0 | 450.0 | 是 | action.tune_gains 的目标穿越频率：决定算出来的 vel_gain / pos_gain 有多激进。受延迟限制，超过约 1000 rad/s 实际是在跟延迟赛跑，建议 300~600 起步 |
+| `config.tune_margin` | 160 | float | rw | x | 0.2 .. 5.0 | 1.0 | 是 | action.tune_gains 对速度环增益的放大系数。线性公式给的是惯性主导时的值，摩擦/齿隙大的关节要放大（台架实测约 2.6）；只放大速度环，pos_gain 不受影响。1 = 纯公式 |
+| `config.vel_loop_prescaler` | 143 | int32 | rw |  | 1 .. 100 | 5 | 是 | 速度环分频：控制环 40 kHz / 该值 = 速度环频率（默认 5 → 8 kHz）；1 = 全速 40 kHz |
+| `config.pos_loop_prescaler` | 144 | int32 | rw |  | 1 .. 100 | 2 | 是 | 位置环分频：速度环 / 该值 = 位置环频率（默认 2 → 4 kHz）；位置环只在速度环执行的拍里执行 |
 | `config.gr` | 14 | float | rw |  | ≥ 0.001 | 7.75 | 是 | 减速比（门极关闭时才允许写） |
 | `config.kt` | 15 | float | rw | N-m/A | ≥ 0.0001 | 1.0 | 是 | 转矩常数（标定得出；门极关闭时才允许写） |
 | `config.ppairs` | 16 | float | rw |  | 1.0 .. 64.0 | 14.0 | 是 | 极对数（标定得出；门极关闭时才允许写） |
@@ -52,6 +64,7 @@ ID 由 `tools/endpoint_ids.json` 锁定，固件升级不会改变；`access` �
 | `command.v_des` | 130 | float | rw | rad/s | 运行期：`V_MIN` .. `V_MAX` | — | 否 | 速度设定值（输出轴 rad/s）；范围由 config.v_max 决定，进入 MOTOR_MODE 时清零 |
 | `command.kp` | 131 | float | rw |  | 运行期：0.0 .. `KP_MAX` | — | 否 | 位置增益；上限由 config.kp_max 决定，进入 MOTOR_MODE 时清零 |
 | `command.kd` | 132 | float | rw |  | 运行期：0.0 .. `KD_MAX` | — | 否 | 速度增益；上限由 config.kd_max 决定，进入 MOTOR_MODE 时清零 |
+| `command.mode` | 145 | int32 | rw |  | 0 .. 2 | — | 否 | 控制律：0 = 阻抗/MIT（默认，kp·p_des·kd·v_des·t_ff），1 = 速度环（CSV，用 command.v_des），2 = 位置环（CSP，用 command.p_des）。写完刷新命令租约；进入 MOTOR_MODE 时回 0 |
 
 ## telemetry：实时测量（只读）
 
@@ -108,6 +121,12 @@ ID 由 `tools/endpoint_ids.json` 锁定，固件升级不会改变；`access` �
 | `telemetry.i_scale` | 87 | float | r | A/count | — | — | 否 | 相电流标定系数 |
 | `telemetry.flux_linkage` | 88 | float | r | Wb | — | — | 否 | 磁链 λ（标定得出；由 KT 与极对数换算） |
 | `telemetry.ld_lq_diff` | 135 | float | r | H | — | — | 否 | 感差 Ld-Lq（标定得出；凸极电机为负） |
+| `telemetry.v_setpoint` | 146 | float | r | rad/s | — | — | 否 | 速度环实际使用的设定值（已过速度限幅与 accel_limit 斜率限制，输出轴） |
+| `telemetry.vel_integral` | 147 | float | r | A | — | — | 否 | 速度环积分器状态（电机端安培）；用它判断是积分在顶负载还是增益在振荡 |
+| `telemetry.pos_err` | 148 | float | r | rad | — | — | 否 | 位置环误差（输出轴，最近一次位置环更新的值） |
+| `telemetry.vel_err` | 149 | float | r | rad/s | — | — | 否 | 速度环误差（输出轴，最近一次速度环更新的值） |
+| `telemetry.velocity_pll` | 150 | float | r | rad/s | — | — | 否 | 速度环/位置环使用的编码器 PLL 速度（输出轴）；与 telemetry.velocity 对比可看差分估计的噪声 |
+| `telemetry.pos_error_fault_suggest` | 152 | float | r | rad | — | — | 否 | config.pos_error_fault 的推荐值 = min(½·a_max·0.1², ½·v_max/pos_gain)，其中 a_max=KT·GR·i_max/inertia；inertia 未知时只用后半项 |
 | `telemetry.adc_a_offset` | 89 | int32 | r |  | — | — | 否 | A 相电流零偏 |
 | `telemetry.adc_b_offset` | 90 | int32 | r |  | — | — | 否 | B 相电流零偏 |
 | `telemetry.adc_c_offset` | 91 | int32 | r |  | — | — | 否 | C 相电流零偏 |
@@ -119,6 +138,10 @@ ID 由 `tools/endpoint_ids.json` 锁定，固件升级不会改变；`access` �
 | `telemetry.observer_k` | 97 | float | r |  | — | — | 否 | 温度观测器增益 |
 | `telemetry.observer_trust` | 98 | float | r |  | — | — | 否 | 温度观测器置信度 |
 | `telemetry.observer_delta_t` | 99 | float | r | C | — | — | 否 | 温度观测器温升 |
+| `telemetry.inertia_state` | 155 | uint8 | r |  | — | — | 否 | 惯量标定状态机的阶段（0 空闲 / 2 试探 / 3 刹车 / 4 台阶 LO / 5 台阶 HI / 6 计算 / 7 失败） |
+| `telemetry.inertia_break_current` | 156 | float | r | A | — | — | 否 | 标定试探得到的"摩擦+重力"等效电流；台阶电流取它的 1.5×/2.5× |
+| `telemetry.inertia_accel_lo` | 157 | float | r | rad/s^2 | — | — | 否 | 台阶 LO 的拟合加速度（输出轴） |
+| `telemetry.inertia_accel_hi` | 158 | float | r | rad/s^2 | — | — | 否 | 台阶 HI 的拟合加速度（输出轴）；与 LO 的差决定 J |
 
 ## timing：ISR 耗时统计（只读）
 
@@ -149,6 +172,7 @@ ID 由 `tools/endpoint_ids.json` 锁定，固件升级不会改变；`access` �
 | `system.prefs_sequence` | 69 | uint32 | r |  | — | — | 否 | 当前配置块的序号 |
 | `system.config_schema` | 117 | uint16 | r |  | — | — | 否 | 配置记录的格式版本（PREFS_SCHEMA），用于升级迁移 |
 | `system.prefs_loaded` | 70 | bool | r |  | — | — | 否 | 是否从 flash 成功加载过配置 |
+| `system.inertia_status` | 153 | uint8 | r |  | — | — | 否 | 惯量标定状态：0 未跑 / 1 运行中（约 1.5 s，含进出电机模式）/ 2 成功（结果在 config.inertia）/ 3 关节本来就在动 / 4 突破电流超时（卡住或摩擦过大）/ 5 台阶太短（样本不足）或超时 / 6 激励不足（斜率不可信）/ 7 进不了电机模式 |
 | `system.save_status` | 119 | uint8 | r |  | — | — | 否 | 最近一次写 flash 的结果（save/zero/reset_config/标定共用）：0 未执行、1 成功、2 因门极使能跳过、3 写失败 |
 | `system.can_prot_active` | 123 | int32 | r |  | — | — | 否 | 当前生效的 CAN 协议（0=旧 11-bit，1=CYBERBEAST） |
 | `system.can_fd` | 124 | bool | r |  | — | — | 否 | 当前是否以 CAN FD 运行 |
@@ -167,3 +191,5 @@ ID 由 `tools/endpoint_ids.json` 锁定，固件升级不会改变；`access` �
 | `action.reset_config` | 126 | function | w |  | — | — | 否 | 恢复出厂默认值并写入 flash（要求门极关闭；会清掉标定，需重新标定并重启） |
 | `action.reboot` | 127 | function | w |  | — | — | 否 | 重启控制器（应答发出后约 0.5 s 复位，配置按已保存的值重新加载） |
 | `action.reset_timing` | 116 | function | w |  | — | — | 否 | 清零 ISR 耗时统计 |
+| `action.measure_inertia` | 154 | function | w |  | — | — | 否 | 一条指令完成惯量标定：自动进电机模式 → 打两个电流台阶测输出端惯量 → 回菜单。约 1.5 s、关节行程 ~0.1 rad。结果写 config.inertia（**只写 RAM，不自动保存**），进度/结果读 system.inertia_status；测完自动回菜单，可直接 action.save |
+| `action.tune_gains` | 161 | function | w |  | — | — | 否 | 用 config.inertia 算外环增益并写进 RAM（不自动保存）：vel_gain = tune_margin·J·omega_c/(KT·GR)；vel_integrator_gain = vel_gain·clamp(omega_c/25, 5, 30)；pos_gain = omega_c/20。写完用 csv/csp 子命令验证，满意再 action.save |

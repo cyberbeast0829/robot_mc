@@ -259,7 +259,10 @@ void ATIM1_UP_IRQHandler(void)
 
 	/* Collect the encoder frame started above (the marks are in execution order,
 	 * so FAULTS now precedes ENC - read the segments by name) */
-	ps_finish_sample(&comm_encoder, DT);
+	if(ps_finish_sample(&comm_encoder, DT)){
+		/* 速度 PLL 只喂速度环/位置环，丢帧时不预测（见 ps_update_pll） */
+		ps_update_pll(&comm_encoder, DT);
+	}
 	ISR_TIMING_MARK(ISR_SEG_ENC);
 
 	/* Run Finite State Machine */

@@ -57,7 +57,16 @@ Two equivalent builds produce the same firmware:
   (`tools/test_prefs_codec.c`, no target hardware) are the only automated checks.
   Everything else is verified by a clean build + bench testing by the maintainer
   (`tools/cb_bench.py` drives the CYBERBEAST platform over slcan: `--stage-a/-b/-c/-c-static/-d`,
-  `--reset-test`, `--timeout-test`).
+  `--reset-test`, `--timeout-test`; `tools/csv_csp_test.py` drives the velocity/position
+  loops over USB: `plain|csv|csp|timeout|sweep`).
+- ⚠ **Flashing this board is unreliable at high SWD clocks** (bench, 2026-10-30): reads and
+  programming silently corrupt at 5 MHz (Keil default) and even 1 MHz, J-Link's own
+  `Verify` fails at random addresses, and the device then keeps running the **old image** —
+  which looks like "the new endpoint isn't there / telemetry contradicts itself". Always
+  flash with `python tools/flash_jlink.py` (250 kHz, 8 KB chunks, per-chunk read-back
+  compare + retry, full-image verify, then `r`+`g`; `--erase` also clears the config pages).
+  After flashing, sanity-check `system.prefs_loaded` / `config.kt` to confirm the new image
+  really is running; after a mass erase re-run `action.calibrate` and `action.save`.
 
 ## 文档
 
@@ -112,6 +121,19 @@ Same shape as upstream, with these N32 names:
 - `USART3_IRQHandler` → `update_fsm`; `USB_FS_LP_IRQHandler` → `USB_Istr`; USB CDC RX also
   feeds `update_fsm` through `usb_rx_process_packet`.
 - Control loop is 40 kHz (`DT = 25 µs` in `hw_config.h`).
+- **MOTOR_MODE 的控制律**由 `motion_control()`（`motion.c`）分发：`CTRL_IMPEDANCE`
+  原样调 `torque_control()` 且**每拍都算**（MIT / 旧协议 / 0x03 / 0x04）；
+  `CTRL_VELOCITY`(CSV) 与 `CTRL_POSITION`(CSP) 是串级外环，按
+  `config.vel_loop_prescaler` / `pos_loop_prescaler` 分频（默认 8 kHz / 4 kHz）。
+  外环只决定 `i_q_des` 的参考，**电流环 `commutate()` 不变**；纯数学在
+  `motion_law.h`（host 可测）。外环用 `ps_update_pll()` 的编码器速度 PLL，
+  MIT 与 legacy 遥测仍用 `comm_encoder.velocity` 的整数差分。
+  ⚠ `field_weaken()` 就地累加 `i_q_des`，所以分频模式每拍都要
+  `i_q_des = i_q_ref` 重新赋值，否则弱磁会一拍接一拍叠上去。
+  增益来源：`action.measure_inertia` 测 `config.inertia`（一条指令、自动进出电机
+  模式），`action.tune_gains` 再按 `config.omega_c` / `config.tune_margin` 算出
+  `vel_gain` / `vel_integrator_gain` / `pos_gain` 写进 RAM（`motion_tune_gains()`，
+  公式与台架依据见 `docs/DEV.md`）。两个 action 都**不自动保存**。
 
 ATIM1 update/TRGO and the control ISR are fixed at the PWM **peak**, inside the
 low-side sampling window. Preserve `tim.c`'s startup sequence: load the internal
@@ -254,10 +276,11 @@ SysInit 段）。
 - `0x20/0x21/0x24/0x25` 直接复用 `endpoint_handler()` / `endpoint_json`；
   参数值小端、帧头大端。描述符流式发送在**主循环**（`can_proto_poll()`，2 帧/ms），
   不要在 ISR 里发；`can_cyberbeast_codec.h` 是 pure codec，`make hosttest` 覆盖。
-- 已实现：MIT(0x00/0x80)、TORQUE(0x03/0x83)、CURRENT(0x04)、SDO、查询 0x40~0x49、
-  心跳 0x48、系统 0x60~0x65、ESTOP 0xC0。
-- **未实现**：CSP/CSV(0x01/0x02)（本固件只有一套 PD+t_ff 控制律）、批量读
-  （0x20 bit6 → 回 ERR，主站退回单读）、ODrive 路径别名。
+- 已实现：MIT(0x00/0x80)、CSP(0x01/0x81)、CSV(0x02/0x82)、TORQUE(0x03/0x83)、
+  CURRENT(0x04)、SDO、查询 0x40~0x49、心跳 0x48、系统 0x60~0x65、ESTOP 0xC0。
+  CSP/CSV 走固件自己的串级外环（`motion.c`），增益在 `config.pos_gain` /
+  `vel_gain` / `vel_integrator_gain`，帧里只有目标值与限幅。
+- **未实现**：批量读（0x20 bit6 → 回 ERR，主站退回单读）、ODrive 路径别名。
 - **高层 `jsdk_context_configure()` 仍不兼容**：它会先做握手（等 `0x00` MIT
   响应）并解析 `axis0.motor.config.gear_ratio` 等 7 个 ODrive 专有路径。
   只用 endpoint 访问时，改用 `jsdk_context_desc_fetch()` + `jsdk_joint_param_get/set`；

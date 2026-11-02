@@ -47,6 +47,18 @@ const prefs_entry_t prefs_entries[] = {
 	{122, PREFS_T_I32, 4, (void *)&(CAN_HB_MS)},
 	{133, PREFS_T_F32, 4, (void *)&(L_D)},
 	{134, PREFS_T_F32, 4, (void *)&(L_Q)},
+	{136, PREFS_T_F32, 4, (void *)&(POS_GAIN)},
+	{137, PREFS_T_F32, 4, (void *)&(VEL_GAIN)},
+	{138, PREFS_T_F32, 4, (void *)&(VEL_INTEGRATOR_GAIN)},
+	{139, PREFS_T_F32, 4, (void *)&(POS_FF_GAIN)},
+	{140, PREFS_T_F32, 4, (void *)&(ACCEL_LIMIT)},
+	{141, PREFS_T_F32, 4, (void *)&(POS_ERROR_FAULT)},
+	{142, PREFS_T_F32, 4, (void *)&(PLL_BW)},
+	{143, PREFS_T_I32, 4, (void *)&(VEL_LOOP_PRESCALER)},
+	{144, PREFS_T_I32, 4, (void *)&(POS_LOOP_PRESCALER)},
+	{151, PREFS_T_F32, 4, (void *)&(INERTIA)},
+	{159, PREFS_T_F32, 4, (void *)&(OMEGA_C)},
+	{160, PREFS_T_F32, 4, (void *)&(TUNE_MARGIN)},
 };
 const unsigned prefs_entry_count = sizeof(prefs_entries) / sizeof(prefs_entries[0]);
 
@@ -88,6 +100,18 @@ void config_apply_defaults(void){
 	CAN_HB_MS = 100;
 	L_D = 9.5e-05f;
 	L_Q = 0.000124f;
+	POS_GAIN = 15.0f;
+	VEL_GAIN = 3.0f;
+	VEL_INTEGRATOR_GAIN = 25.0f;
+	POS_FF_GAIN = 1.0f;
+	ACCEL_LIMIT = 10.0f;
+	POS_ERROR_FAULT = 0.0f;
+	PLL_BW = 2000.0f;
+	VEL_LOOP_PRESCALER = 5;
+	POS_LOOP_PRESCALER = 2;
+	INERTIA = 0.0f;
+	OMEGA_C = 450.0f;
+	TUNE_MARGIN = 1.0f;
 }
 
 void config_apply_limits(void){
@@ -154,4 +178,38 @@ void config_apply_limits(void){
 	if(!isfinite(L_Q)){L_Q = 0.000124f;}
 	if(L_Q < 1e-06f){L_Q = 1e-06f;}
 	if(L_Q > 0.01f){L_Q = 0.01f;}
+	if(!isfinite(POS_GAIN)){POS_GAIN = 15.0f;}
+	if(POS_GAIN < 0.0f){POS_GAIN = 0.0f;}
+	if(POS_GAIN > 1000.0f){POS_GAIN = 1000.0f;}
+	if(!isfinite(VEL_GAIN)){VEL_GAIN = 3.0f;}
+	if(VEL_GAIN < 0.0f){VEL_GAIN = 0.0f;}
+	if(VEL_GAIN > 2000.0f){VEL_GAIN = 2000.0f;}
+	if(!isfinite(VEL_INTEGRATOR_GAIN)){VEL_INTEGRATOR_GAIN = 25.0f;}
+	if(VEL_INTEGRATOR_GAIN < 0.0f){VEL_INTEGRATOR_GAIN = 0.0f;}
+	if(VEL_INTEGRATOR_GAIN > 200000.0f){VEL_INTEGRATOR_GAIN = 200000.0f;}
+	if(!isfinite(POS_FF_GAIN)){POS_FF_GAIN = 1.0f;}
+	if(POS_FF_GAIN < 0.0f){POS_FF_GAIN = 0.0f;}
+	if(POS_FF_GAIN > 2.0f){POS_FF_GAIN = 2.0f;}
+	if(!isfinite(ACCEL_LIMIT)){ACCEL_LIMIT = 10.0f;}
+	if(ACCEL_LIMIT < 0.0f){ACCEL_LIMIT = 0.0f;}
+	if(ACCEL_LIMIT > 100000.0f){ACCEL_LIMIT = 100000.0f;}
+	if(!isfinite(POS_ERROR_FAULT)){POS_ERROR_FAULT = 0.0f;}
+	if(POS_ERROR_FAULT < 0.0f){POS_ERROR_FAULT = 0.0f;}
+	if(POS_ERROR_FAULT > 1000.0f){POS_ERROR_FAULT = 1000.0f;}
+	if(!isfinite(PLL_BW)){PLL_BW = 2000.0f;}
+	if(PLL_BW < 20.0f){PLL_BW = 20.0f;}
+	if(PLL_BW > 5000.0f){PLL_BW = 5000.0f;}
+	if(VEL_LOOP_PRESCALER < 1){VEL_LOOP_PRESCALER = 1;}
+	if(VEL_LOOP_PRESCALER > 100){VEL_LOOP_PRESCALER = 100;}
+	if(POS_LOOP_PRESCALER < 1){POS_LOOP_PRESCALER = 1;}
+	if(POS_LOOP_PRESCALER > 100){POS_LOOP_PRESCALER = 100;}
+	if(!isfinite(INERTIA)){INERTIA = 0.0f;}
+	if(INERTIA < 0.0f){INERTIA = 0.0f;}
+	if(INERTIA > 100.0f){INERTIA = 100.0f;}
+	if(!isfinite(OMEGA_C)){OMEGA_C = 450.0f;}
+	if(OMEGA_C < 50.0f){OMEGA_C = 50.0f;}
+	if(OMEGA_C > 1200.0f){OMEGA_C = 1200.0f;}
+	if(!isfinite(TUNE_MARGIN)){TUNE_MARGIN = 1.0f;}
+	if(TUNE_MARGIN < 0.2f){TUNE_MARGIN = 0.2f;}
+	if(TUNE_MARGIN > 5.0f){TUNE_MARGIN = 5.0f;}
 }
