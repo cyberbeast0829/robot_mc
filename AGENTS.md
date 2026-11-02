@@ -205,6 +205,13 @@ CYBERBEAST (`can_cyberbeast.c`) gotchas verified on the bench:
 - The bench tool's own frame rate matters: a slow serial read once pushed the harness to
   ~20 Hz, below the 25 ms timeout, which looked like "the firmware ignores commands".
 
+## USB 身份
+
+`usb_desc.c` 的 VID/PID 是 **`0x1209/0x4342`**（pid.codes 共享 VID，"CB" = CyberBeast）。
+**不要再出现 `0x1209/0x0D32`**——那是 ODrive Robotics 在 pid.codes 登记的 PID，上游
+`usb_desc.c` 或合并冲突里遇到它必须改回 `0x4342`。`0x1209` 下的 PID 需在 pid.codes
+提 PR 注册（要求公开仓库），未注册前只是暂用；换 ID 会让 Windows 重新枚举出新的 COM 号。
+
 ## Endpoint 参数访问层（fibre 风格）
 
 用 16 位 endpoint ID 访问任意参数/遥测/动作，灵感来自 ODrive 的 fibre：

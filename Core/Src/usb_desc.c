@@ -50,8 +50,8 @@ const uint8_t Virtual_Com_Port_DeviceDescriptor[] =
     0x40,   /* bMaxPacketSize0 */
     0x09,   /* idVendor (0x1209) */
     0x12,
-    0x32,   /* idProduct = 0x0D32 */
-    0x0D,
+    0x42,   /* idProduct = 0x4342 ("CB" = CyberBeast) */
+    0x43,
     0x00,
     0x03,   /* bcdDevice = 2.00 */
     1,              /* Index of string descriptor describing manufacturer */
@@ -169,7 +169,7 @@ const uint8_t Virtual_Com_Port_StringVendor[VIRTUAL_COM_PORT_SIZ_STRING_VENDOR] 
 {
     VIRTUAL_COM_PORT_SIZ_STRING_VENDOR,     /* Size of Vendor string */
     USB_STRING_DESCRIPTOR_TYPE,             /* bDescriptorType*/
-    /* Manufacturer: "NATIONS" */
+    /* Manufacturer: "CYBERBEAST" */
     'C', 0, 'Y', 0, 'B', 0, 'E', 0, 'R', 0, 'B', 0, 'E', 0, 'A', 0,
     'S', 0, 'T', 0
 };
@@ -178,18 +178,18 @@ const uint8_t Virtual_Com_Port_StringProduct[VIRTUAL_COM_PORT_SIZ_STRING_PRODUCT
 {
     VIRTUAL_COM_PORT_SIZ_STRING_PRODUCT,          /* bLength */
     USB_STRING_DESCRIPTOR_TYPE,        /* bDescriptorType */
-    /* Product name: "N32G45x Port" */
+    /* Product name: "CyberBeast CBA" */
     'C', 0, 'y', 0, 'b', 0, 'e', 0, 'r', 0, 'B', 0, 'e', 0, 'a', 0, 
-    's', 0, 't', 0, ' ', 0, 'B', 0, 'L', 0, '7', 0, '2', 0
+    's', 0, 't', 0, ' ', 0, 'C', 0, 'B', 0, 'A', 0
 };
 
 uint8_t Virtual_Com_Port_StringSerial[VIRTUAL_COM_PORT_SIZ_STRING_SERIAL] =
 {
     VIRTUAL_COM_PORT_SIZ_STRING_SERIAL,           /* bLength */
     USB_STRING_DESCRIPTOR_TYPE,                   /* bDescriptorType */
-    'B', 0, 'L', 0, '7', 0, '2', 0, '.', 0, 'C', 0, 'y', 0, 'b', 0,
-    'e', 0, 'r', 0, 'B', 0, 'e', 0, 'a', 0, 's', 0, 't', 0, '.', 0,
-    'c', 0, 'n', 0
+    'C', 0, 'B', 0, 'A', 0, '.', 0, 'C', 0, 'y', 0, 'b', 0, 'e', 0, 
+    'r', 0, 'B', 0, 'e', 0, 'a', 0, 's', 0, 't', 0, '.', 0, 'c', 0, 
+    'n', 0
 };
 
 uint8_t Virtual_Com_Port_StringComIntfc[VIRTUAL_COM_PORT_SIZ_STRING_COM_INTFC] =
@@ -222,7 +222,7 @@ uint8_t Virtual_Com_Port_StringNativeIntfcAbbr[VIRTUAL_COM_PORT_SIZ_STRING_NATIV
 {
     VIRTUAL_COM_PORT_SIZ_STRING_NATIVE_INTFC_ABBR,           /* bLength */
     USB_STRING_DESCRIPTOR_TYPE,                   /* bDescriptorType */
-    'B', 0, 'L', 0, '7', 0, '2', 0, ' ', 0, 'S', 0, 'e', 0, 'r', 0,
-    'i', 0, 'e', 0, 's', 0
+    'C', 0, 'B', 0, 'A', 0, ' ', 0, 'S', 0, 'e', 0, 'r', 0, 'i', 0, 
+    'e', 0, 's', 0
 };
 
