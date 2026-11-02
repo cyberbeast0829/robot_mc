@@ -271,16 +271,16 @@ static void test_tune_gains(void)
     CHECK(ml_tune_gains(j, kt, gr, 450.0f, 1.0f, &vg, &vig, &pg) == 1);
     CHECK_NEAR(vg, j * 450.0f / (kt * gr), 1e-6f);          /* ≈ 1.05 A/(rad/s) */
     CHECK_NEAR(vig, vg * 18.0f, vg * 1e-5f);                /* ω_i = 450/25 = 18 */
-    CHECK_NEAR(pg, 22.5f, 1e-6f);                           /* ω_c/20 */
+    CHECK_NEAR(pg, 15.0f, 1e-6f);                           /* ω_c/30（台架实测 22.5 会过冲） */
 
     /* 积分拐点夹在 [5, 30] rad/s：ω_c 很小时不跟着掉，很大时不跟着涨 */
     float vg4 = 0.0f, vig4 = 0.0f, pg4 = 0.0f;
     CHECK(ml_tune_gains(j, kt, gr, 50.0f, 1.0f, &vg4, &vig4, &pg4) == 1);
     CHECK_NEAR(vig4, vg4 * 5.0f, vg4 * 1e-5f);
-    CHECK_NEAR(pg4, 2.5f, 1e-6f);
+    CHECK_NEAR(pg4, 1.6666666f, 1e-4f);
     CHECK(ml_tune_gains(j, kt, gr, 1200.0f, 1.0f, &vg4, &vig4, &pg4) == 1);
     CHECK_NEAR(vig4, vg4 * 30.0f, vg4 * 1e-5f);
-    CHECK_NEAR(pg4, 60.0f, 1e-6f);
+    CHECK_NEAR(pg4, 40.0f, 1e-6f);
 
     /* margin 只放大速度环，位置环不受影响 */
     float vg2 = 0.0f, vig2 = 0.0f, pg2 = 0.0f;

@@ -214,17 +214,19 @@ static inline int ml_inertia_from_slopes(float kt, float gr, float i_lo, float a
  *
  *   vel_gain            = margin·J·ω_c/(KT·GR)      [A/(rad/s)]
  *   vel_integrator_gain = vel_gain·clamp(ω_c/25, 5, 30)   [A/(rad/s)/s]
- *   pos_gain            = ω_c/20                    [(rad/s)/rad]
+ *   pos_gain            = ω_c/30                    [(rad/s)/rad]
  *
- * 这两个 5 / 20 都是台架试出来的，不是教科书取值：线性串级设计会说
- * `vel_integrator_gain = vel_gain·ω_c/5`、`pos_gain = ω_c/5`，但这台
- * "小惯量 + 大摩擦 + 齿隙"的关节上：
+ * 这几个分母都是台架试出来的，不是教科书取值。线性串级设计会说
+ * `vel_integrator_gain = vel_gain·ω_c/5`、`pos_gain = ω_c/5`，但实测：
  *   - 积分拐点开到 90 rad/s 就出现 stick-slip 极限环（速度误差反而涨到 13%），
- *     拐点压到 ~18 rad/s 才干净；
- *   - pos_gain 45 以上位置环就开始过冲（0.1 rad 阶跃过冲 33%~65%），
- *     22.5 时只有 1.3%，15 时 3%。
- * `margin` 只放大速度环：它补的是线性公式对**惯性主导**假设的低估（台架需要
- * ~2.6），位置环不跟着放大更安全。 */
+ *     拐点压到 ~18 rad/s 才干净（ω_c/25）；
+ *   - pos_gain 22.5（=ω_c/20）在 accel_limit 10 时 0.2 rad 阶跃过冲 29%、
+ *     1 rad 阶跃过冲 29~49%；15（=ω_c/30）分别是 4% / 4%。
+ *     ⚠ 位置环本身是阻尼良好的（把 accel_limit 放到 200，45 也只有 0.1% 过冲），
+ *     过冲主要来自"速度设定值被斜率限制拖慢"——所以 accel_limit 太小也会
+ *     表现为位置环过冲。
+ * `margin` 只放大速度环：它补的是线性公式对**惯性主导**假设的低估（两块板
+ * 实测都要 ~2.2~2.6），位置环不跟着放大更安全。 */
 static inline int ml_tune_gains(float j, float kt, float gr, float omega_c, float margin,
                                 float *vel_gain, float *vel_i_gain, float *pos_gain)
 {
@@ -235,7 +237,7 @@ static inline int ml_tune_gains(float j, float kt, float gr, float omega_c, floa
 
 	*vel_gain = margin * j * omega_c / (kt * gr);
 	*vel_i_gain = *vel_gain * w_i;
-	*pos_gain = omega_c / 20.0f;
+	*pos_gain = omega_c / 30.0f;
 	return 1;
 }
 

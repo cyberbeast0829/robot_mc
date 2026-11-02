@@ -172,7 +172,7 @@
       "unit": "A/(rad/s)",
       "brief": "CSV/CSP 速度环 P 增益（电机端安培 / 输出轴角速度）；0 时速度环只剩积分器（要完全关闭请把 vel_integrator_gain 也设 0）",
       "persist": true,
-      "default": 3.0
+      "default": 2.469
     },
     {
       "name": "config.vel_integrator_gain",
@@ -184,7 +184,7 @@
       "unit": "A/(rad/s)/s",
       "brief": "速度环 I 增益；消掉重力/摩擦下的稳态速度误差（抗饱和：输出限幅时积分按 0.99 衰减）",
       "persist": true,
-      "default": 25.0
+      "default": 44.44
     },
     {
       "name": "config.pos_ff_gain",
@@ -207,7 +207,7 @@
       "unit": "rad/s^2",
       "brief": "速度设定值的斜率限制（输出轴）；0 = 关闭。非零默认值能在指令阶跃时压住电流冲击，对稳态无影响",
       "persist": true,
-      "default": 10.0
+      "default": 50.0
     },
     {
       "name": "config.pos_error_fault",
@@ -243,7 +243,7 @@
       "unit": "kg·m^2",
       "brief": "输出端惯量（关节折算值）。可由 action.measure_inertia 测得（只写 RAM，不自动保存）；用于推荐增益与 pos_error_fault。0 = 未知",
       "persist": true,
-      "default": 0.0
+      "default": 0.0006
     },
     {
       "name": "config.omega_c",
@@ -267,7 +267,7 @@
       "unit": "x",
       "brief": "action.tune_gains 对速度环增益的放大系数。线性公式给的是惯性主导时的值，摩擦/齿隙大的关节要放大（台架实测约 2.6）；只放大速度环，pos_gain 不受影响。1 = 纯公式",
       "persist": true,
-      "default": 1.0
+      "default": 2.2
     },
     {
       "name": "config.vel_loop_prescaler",

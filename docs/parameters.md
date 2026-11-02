@@ -24,15 +24,15 @@ ID 由 `tools/endpoint_ids.json` 锁定，固件升级不会改变；`access` �
 | `config.kp_max` | 12 | float | rw |  | ≥ 0.0 | 500.0 | 是 | 位置增益上限 |
 | `config.kd_max` | 13 | float | rw |  | ≥ 0.0 | 5.0 | 是 | 速度增益上限 |
 | `config.pos_gain` | 136 | float | rw | (rad/s)/rad | 0.0 .. 1000.0 | 15.0 | 是 | CSP 位置环 P 增益（输出轴）。位置误差 × 该值 = 速度指令；0 表示位置环只剩帧间前馈（要完全关闭请把 pos_ff_gain 也设 0） |
-| `config.vel_gain` | 137 | float | rw | A/(rad/s) | 0.0 .. 2000.0 | 3.0 | 是 | CSV/CSP 速度环 P 增益（电机端安培 / 输出轴角速度）；0 时速度环只剩积分器（要完全关闭请把 vel_integrator_gain 也设 0） |
-| `config.vel_integrator_gain` | 138 | float | rw | A/(rad/s)/s | 0.0 .. 200000.0 | 25.0 | 是 | 速度环 I 增益；消掉重力/摩擦下的稳态速度误差（抗饱和：输出限幅时积分按 0.99 衰减） |
+| `config.vel_gain` | 137 | float | rw | A/(rad/s) | 0.0 .. 2000.0 | 2.469 | 是 | CSV/CSP 速度环 P 增益（电机端安培 / 输出轴角速度）；0 时速度环只剩积分器（要完全关闭请把 vel_integrator_gain 也设 0） |
+| `config.vel_integrator_gain` | 138 | float | rw | A/(rad/s)/s | 0.0 .. 200000.0 | 44.44 | 是 | 速度环 I 增益；消掉重力/摩擦下的稳态速度误差（抗饱和：输出限幅时积分按 0.99 衰减） |
 | `config.pos_ff_gain` | 139 | float | rw |  | 0.0 .. 2.0 | 1.0 | 是 | CSP 帧间速度前馈系数（指令差分的比例）；1.0 = 全前馈，0 = 关闭 |
-| `config.accel_limit` | 140 | float | rw | rad/s^2 | 0.0 .. 100000.0 | 10.0 | 是 | 速度设定值的斜率限制（输出轴）；0 = 关闭。非零默认值能在指令阶跃时压住电流冲击，对稳态无影响 |
+| `config.accel_limit` | 140 | float | rw | rad/s^2 | 0.0 .. 100000.0 | 50.0 | 是 | 速度设定值的斜率限制（输出轴）；0 = 关闭。非零默认值能在指令阶跃时压住电流冲击，对稳态无影响 |
 | `config.pos_error_fault` | 141 | float | rw | rad | 0.0 .. 1000.0 | 0.0 | 是 | 位置跟随误差故障阈值（输出轴）；0 = 关闭。只在位置环未被速度限幅饱和时判定，需持续 100 ms；必须小于 v_max/pos_gain 才会触发 |
 | `config.pll_bandwidth` | 142 | float | rw | rad/s | 20.0 .. 5000.0 | 2000.0 | 是 | 编码器速度 PLL 带宽（速度环/位置环的反馈来源）；越大相位滞后越小、噪声越大。默认 2000（约 318 Hz），200 Hz 穿越点只吃 -13° 相位 |
-| `config.inertia` | 151 | float | rw | kg·m^2 | 0.0 .. 100.0 | 0.0 | 是 | 输出端惯量（关节折算值）。可由 action.measure_inertia 测得（只写 RAM，不自动保存）；用于推荐增益与 pos_error_fault。0 = 未知 |
+| `config.inertia` | 151 | float | rw | kg·m^2 | 0.0 .. 100.0 | 0.0006 | 是 | 输出端惯量（关节折算值）。可由 action.measure_inertia 测得（只写 RAM，不自动保存）；用于推荐增益与 pos_error_fault。0 = 未知 |
 | `config.omega_c` | 159 | float | rw | rad/s | 50.0 .. 1200.0 | 450.0 | 是 | action.tune_gains 的目标穿越频率：决定算出来的 vel_gain / pos_gain 有多激进。受延迟限制，超过约 1000 rad/s 实际是在跟延迟赛跑，建议 300~600 起步 |
-| `config.tune_margin` | 160 | float | rw | x | 0.2 .. 5.0 | 1.0 | 是 | action.tune_gains 对速度环增益的放大系数。线性公式给的是惯性主导时的值，摩擦/齿隙大的关节要放大（台架实测约 2.6）；只放大速度环，pos_gain 不受影响。1 = 纯公式 |
+| `config.tune_margin` | 160 | float | rw | x | 0.2 .. 5.0 | 2.2 | 是 | action.tune_gains 对速度环增益的放大系数。线性公式给的是惯性主导时的值，摩擦/齿隙大的关节要放大（台架实测约 2.6）；只放大速度环，pos_gain 不受影响。1 = 纯公式 |
 | `config.vel_loop_prescaler` | 143 | int32 | rw |  | 1 .. 100 | 5 | 是 | 速度环分频：控制环 40 kHz / 该值 = 速度环频率（默认 5 → 8 kHz）；1 = 全速 40 kHz |
 | `config.pos_loop_prescaler` | 144 | int32 | rw |  | 1 .. 100 | 2 | 是 | 位置环分频：速度环 / 该值 = 位置环频率（默认 2 → 4 kHz）；位置环只在速度环执行的拍里执行 |
 | `config.gr` | 14 | float | rw |  | ≥ 0.001 | 7.75 | 是 | 减速比（门极关闭时才允许写） |

@@ -177,15 +177,15 @@ python tools/mc_ep.py --port COM7 call action.idle_mode
 | 参数 | 单位 | 出厂值 | 说明 |
 |---|---|---|---|
 | `config.pos_gain` | (rad/s)/rad | 15 | 位置误差 × 它 = 速度指令 |
-| `config.vel_gain` | A/(rad/s) | 3 | 速度误差 × 它 = 电流指令 |
-| `config.vel_integrator_gain` | A/(rad/s)/s | 25 | 消掉重力/摩擦下的稳态误差 |
+| `config.vel_gain` | A/(rad/s) | 2.469 | 速度误差 × 它 = 电流指令 |
+| `config.vel_integrator_gain` | A/(rad/s)/s | 44.44 | 消掉重力/摩擦下的稳态误差 |
 | `config.pos_ff_gain` | — | 1.0 | CSP 帧间速度前馈；1 = 全前馈，0 = 关 |
-| `config.accel_limit` | rad/s² | 10 | 速度设定值斜率限制（输出轴）；0 = 关 |
+| `config.accel_limit` | rad/s² | 50 | 速度设定值斜率限制（输出轴）；0 = 关。**CSP 想快就先放开它**（30~100），比加 `pos_gain` 安全 |
 | `config.pos_error_fault` | rad | 0 | 跟随误差故障阈值，0 = 关 |
 | `config.pll_bandwidth` | rad/s | 2000 | 编码器速度估计带宽（约 318 Hz）；低速抖就降到 1000，想要更高带宽就升到 3000 |
-| `config.inertia` | kg·m² | 0 | 输出端惯量，由 `action.measure_inertia` 测得（只写 RAM）；用来算推荐增益和 `pos_error_fault` |
+| `config.inertia` | kg·m² | 0.0006 | 输出端惯量，由 `action.measure_inertia` 测得（只写 RAM）。**默认值只是本台架的实测值**，换电机/换关节必须重测 |
 | `config.omega_c` | rad/s | 450 | `action.tune_gains` 的目标穿越频率（越大越激进，300–600 起试） |
-| `config.tune_margin` | × | 1.0 | `action.tune_gains` 对速度环的放大系数：摩擦/齿隙大的关节用 2~3 |
+| `config.tune_margin` | × | 2.2 | `action.tune_gains` 对速度环的放大系数：摩擦/齿隙大的关节用 2~3；1 = 纯公式（只适合纯惯性负载） |
 
 ```bash
 python tools/mc_ep.py --port COM7 set config.pos_gain 20
@@ -250,9 +250,27 @@ python tools/mc_ep.py --port COM6 set config.can_timeout 100
 判读：`pos_err` 收敛到 0.0x mrad，`position` 最后精确等于 `p_des`
 （台架实测 0.3 rad 阶跃最终 `pos_err ≈ 3e-5 rad`）。
 
-- **增益要按关节整定**，出厂值只是“能动、不炸”的起点（`vel_gain 3`、`accel_limit 10`
-  是台架实测后下调的：裸关节在 `vel_gain ≥ 4` 会失稳）。方法见 [DEV.md](DEV.md)
-  的“台架整定步骤”，工具是 `tools/csv_csp_test.py`。
+- **增益要按关节整定**：出厂值（`vel_gain 2.469`、`vel_integrator_gain 44.44`、
+  `pos_gain 15`、`accel_limit 50`）是本台架（GR 7.75、`KT 0.031`、`J 0.0006`）整定的
+  结果，**换电机/换关节必须重做**；裸关节在 `vel_gain ≥ 4` 会失稳。方法见
+  [DEV.md](DEV.md) 的“台架整定步骤”，工具是 `tools/csv_csp_test.py`。
+- **两条路可选**：① 一条命令 `action.tune_gains`（先做 `action.measure_inertia`），
+  配方 = 惯量 + `config.omega_c`(450) + `config.tune_margin`；② 手工扫
+  `csv_csp_test.py sweep`。台架（GR 7.75、`KT 0.031`、`J 0.0006`）实测工作点：
+
+  | 模式 | 参数 | 值 | 效果 |
+  |---|---|---|---|
+  | MIT | `command.kp` / `kd` | **10 / 0.155**（`kd = 2√(kp·J)`） | 0.2 rad 阶跃 43 ms 上升、0.1 mrad 稳态、0.96 A 峰值 |
+  | CSV | `vel_gain` / `vel_integrator_gain` | **2.469 / 44.44**（= `tune_margin 2.2` 的配方值；手工最优 2.5/30 实测等效） | 1~65 rad/s 误差 ≤1%（40 rad/s 峰值 2.6 A） |
+  | CSP | `pos_gain` / `accel_limit` | **15 / 50** | 0.2 rad：0.2%、0.26 s；1 rad：4.2%、0.34 s |
+
+  `accel_limit` 从 10 提到 50 是 CSP 变快的关键：位置环是纯 P，它给出的速度设定值
+  被斜率限制拖慢时会出现"追上了速度还没降下来"的过冲（1 rad 阶跃：`accel_limit 10`
+  过冲 49%，50 时 4%）。**想要更快的 CSP 请先放开 `accel_limit`，不要只加 `pos_gain`。**
+- ⚠ **`command.p_des` 会被 `config.p_max` 钳位，不是拒绝**：反复跑速度测试后
+  绝对位置会漂移，一旦漂到 `p_max`（默认 ±12.5 rad）之外，CSP 的每个目标都被钳在
+  边界上，看起来像“位置环完全不动”。处理：放大 `config.p_max`，或 `action.zero`
+  **+`action.reboot`**（零点只在重启后生效）。
 - 每条命令都刷新“命令租约”（同 `command.*`）：`config.can_timeout` 内没有新命令，
   固件就把命令清零 → **卸力**，不是保持位置。周期同步的主站不会碰到这个问题。
 - 进电机模式、超时、故障都会把 `command.mode` 复位成 0（阻抗）。
@@ -419,6 +437,9 @@ LUT 的验证：把电机停到升级前同一机械角度，比较 `telemetry.e
 | `save_status = 3` | flash 写失败 | 看串口打印；`make check` 查容量；重试 |
 | `set` 的值和给的不一样 | 被限幅 | 正常，`set` 打印的是实际值 |
 | 串口终端乱码 | 两个程序抢一个串口 | 关掉多余连接，重新上电 |
+| CSP 命令发了但关节完全不动 | 绝对位置已漂到 `config.p_max` 外，`command.p_des` 被**钳位**在边界（不报错） | 放大 `config.p_max`，或 `action.zero` + `action.reboot` 重新对零 |
+| CSP 大阶跃过冲很大 | `config.accel_limit` 太小（速度设定值被斜率限制拖慢） | 先放开 `accel_limit`（30~100），再考虑动 `pos_gain` |
+| 高速跑一段时间后突然卸力、`telemetry.fault=2` | `FAULT_OC`：相电流超过 1.5×`config.i_max`（猛加速或高压纹波） | `action.idle_mode` 清故障；降 `accel_limit` 或确认 `i_max` 与电机匹配 |
 | 烧了新固件但行为没变（新参数不存在、遥测自相矛盾） | **其实没烧进去**：高 SWD 时钟下读回不稳，J-Link/Keil 的 verify 会失败但编程只写了一部分，设备继续跑旧镜像 | 用 `python tools/flash_jlink.py`（250 kHz + 分块写 + 回读校验）重烧；烧完核对 `system.prefs_loaded`、`config.kt` |
 | 整片擦除后电流环/惯量标定结果离谱 | 标定数据被擦掉，跑的是默认值 | 重新 `action.calibrate`，再 `action.save`；然后重测惯量 |
 
