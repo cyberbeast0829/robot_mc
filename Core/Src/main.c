@@ -445,8 +445,12 @@ int main(void)
 
   //for(int i = 0; i<128; i++){myprintf("%d\r\n", comm_encoder.offset_lut[i]);}
 
-	/* ATIM1 is already running.  Keep both groups untriggered until all
-	 * calibrations finish; ADC1/3 never need regular conversions. */
+	/* ATIM1 is already running.  Keep both groups untriggered while the ADCs
+	 * are calibrated; the triggers are restored after start_general_purpose_adc().
+	 * ADC1 only uses the injected group, ADC2's regular group is MOS_TEMP and
+	 * ADC3's regular group is VBUS + MOT_TEMP - so BOTH of those regular groups
+	 * must be restored, or their DMA channels never finish a transfer and
+	 * adc_measurements_[] stays 0 (see the note below). */
 	ADC_ConfigExternalTrigRegularConv(ADC1, ADC_EXT_TRIG_REG_CONV_SOFTWARE);
 	ADC_ConfigExternalTrigRegularConv(ADC2, ADC_EXT_TRIG_REG_CONV_SOFTWARE);
 	ADC_ConfigExternalTrigRegularConv(ADC3, ADC_EXT_TRIG_REG_CONV_SOFTWARE);
@@ -465,7 +469,8 @@ int main(void)
 	while(ADC_GetFlagStatus(ADC2, ADC_FLAG_RDY) == RESET){;}
 	ADC_CalibrationOperation(ADC2, ADC_CALIBRATION_SINGLE_MODE);
 	while(ADC2->CTRL2 & ADC_CTRL2_ENCAL){;}
-	/* ADC2 also measures single-ended VBUS/temperatures in its regular group. */
+	/* ADC2's regular group is MOS_TEMP (PA7 / CH2), ADC3's is VBUS (PE7 / CH4)
+	 * and MOT_TEMP (PE8 / CH6). */
 	ADC_CalibrationOperation(ADC2, ADC_CALIBRATION_DIFF_MODE);
 	while(ADC2->CTRL2 & ADC_CTRL2_ENCAL){;}
 	ADC_SetDMATransferMode(ADC2, ADC_MULTI_REG_DMA_EACH_ADC);
@@ -479,7 +484,15 @@ int main(void)
 	ADC_ConfigExternalTrigInjectedConv(ADC1, ADC_EXT_TRIG_INJ_CONV_ATIM1_TRGO);
 	ADC_ConfigExternalTrigInjectedConv(ADC2, ADC_EXT_TRIG_INJ_CONV_ATIM1_TRGO);
 	ADC_ConfigExternalTrigInjectedConv(ADC3, ADC_EXT_TRIG_INJ_CONV_ATIM1_TRGO);
+	/* Both regular groups are trigger-driven now (ADC2 = MOS_TEMP,
+	 * ADC3 = VBUS/MOT_TEMP).  ADC3 used to be left on the software trigger set
+	 * above and nothing ever software-started it, so VBUS never converted:
+	 * adc_measurements_[1] stayed 0 -> v_bus = 0 -> v_max = 0 -> svm() clamped
+	 * every duty cycle to the midpoint, i.e. no voltage at all.  The motor then
+	 * does not turn in open loop and calibration reports "measured 0 pole
+	 * pairs". */
 	ADC_ConfigExternalTrigRegularConv(ADC2, ADC_EXT_TRIG_REG_CONV_ATIM1_TRGO);
+	ADC_ConfigExternalTrigRegularConv(ADC3, ADC_EXT_TRIG_REG_CONV_ATIM1_TRGO);
 
   /* Turn on PWM */
   ATIM1->CCDAT1 = ATIM1->AR / 2;
