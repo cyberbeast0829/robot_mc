@@ -95,8 +95,8 @@ void config_apply_defaults(void){
 	M_ZERO = 0;
 	E_ZERO = 0;
 	memset((void *)&(ENCODER_LUT), 0, 512);
-	CAN_PROT = 0;
-	CAN_BAUD = 500000;
+	CAN_PROT = 1;
+	CAN_BAUD = 1000000;
 	CAN_HB_MS = 100;
 	L_D = 9.5e-05f;
 	L_Q = 0.000124f;

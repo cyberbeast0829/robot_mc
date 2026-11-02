@@ -458,9 +458,9 @@
       "ref": "CAN_PROT",
       "min": 0,
       "max": 1,
-      "brief": "CAN 协议（0=旧 11-bit 协议 500k，1=CYBERBEAST；下次上电生效）",
+      "brief": "CAN 协议（0=旧 11-bit 协议，1=CYBERBEAST；下次上电生效）",
       "persist": true,
-      "default": 0
+      "default": 1
     },
     {
       "name": "config.can_baud",
@@ -472,7 +472,7 @@
       "unit": "bit/s",
       "brief": "CAN 波特率：≤1M 为 Classic CAN（该速率），>1M 为 CAN FD（仲裁域固定 1M，数据域=本值）；下次上电生效",
       "persist": true,
-      "default": 500000
+      "default": 1000000
     },
     {
       "name": "config.can_hb_ms",

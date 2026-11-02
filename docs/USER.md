@@ -150,7 +150,7 @@ python tools/mc_ep.py --port COM7 call action.idle_mode
 
 **`action.reset_config`（恢复出厂默认值）**：会连标定一起清掉——`ppairs`、零点、
 编码器 LUT 全部回默认，必须**重新标定**；`CAN_ID / CAN_PROT / CAN_BAUD` 也会回默认
-（`can_prot = 0` 即旧 11-bit 协议），所以复位后要**重新配 CAN**，否则主站可能再也
+（**CYBERBEAST + Classic 1 Mbit/s**），所以复位后要**核对 CAN 设置**，否则主站可能再 也
 连不上。为避免"改了 CAN 设置却不重启"造成的失联和混合状态，**保存成功后固件会自动
 重启**（约 0.5 s，门极先关闭）。和 `action.save` 一样，门极使能时会被直接拒绝
 （`mc_ep.py` 报 `status 6` = `EP_ERR_STATE`，配置一个字都不动）；受理之后的结果看
@@ -463,9 +463,9 @@ LUT 的验证：把电机停到升级前同一机械角度，比较 `telemetry.e
 
 **保存会磨损 flash 吗？** 每次擦一页（8 KB），只在显式 `action.save` 时发生。
 
-**支持 CAN 吗？** 两套协议，用 `config.can_prot` 选择：`0` = 原有 11-bit 协议
-（默认，500 kbit/s），`1` = CYBERBEAST。`config.can_baud` 决定速率与物理层：
-≤ 1 Mbit/s 为 Classic CAN，> 1 Mbit/s 为 CAN FD（例：`can_baud = 5000000` 就是
-CYBERBEAST 默认的 1M 仲裁 / 5M 数据）。两者都是**下次上电生效**，
+**支持 CAN 吗？** 两套协议，用 `config.can_prot` 选择：`0` = 原有 11-bit 协议，
+`1` = CYBERBEAST（**默认**）。`config.can_baud` 决定速率与物理层（**默认 1000000**
+= Classic 1 Mbit/s）：≤ 1 Mbit/s 为 Classic CAN，> 1 Mbit/s 为 CAN FD（例：
+`can_baud = 5000000` 就是 1M 仲裁 / 5M 数据）。两者都是**下次上电生效**，
 `system.can_prot_active` / `system.can_fd` / `system.can_baud_active` 可核对
 当前实际运行值。详见 [DEV.md](DEV.md#can协议选择与-cyberbeast)。

@@ -49,8 +49,8 @@ ID 由 `tools/endpoint_ids.json` 锁定，固件升级不会改变；`access` �
 | `config.can_id` | 23 | int32 | rw |  | 0 .. 127 | 1 | 是 | CAN 节点 ID |
 | `config.can_master` | 24 | int32 | rw |  | 0 .. 127 | 0 | 是 | CAN 主站 ID |
 | `config.can_timeout` | 25 | int32 | rw | ms | 0 .. 100000 | 100 | 是 | CAN 命令超时（毫秒，0 = 关闭）；超时后清零 p_des/v_des/kp/kd/t_ff |
-| `config.can_prot` | 120 | int32 | rw |  | 0 .. 1 | 0 | 是 | CAN 协议（0=旧 11-bit 协议 500k，1=CYBERBEAST；下次上电生效） |
-| `config.can_baud` | 121 | int32 | rw | bit/s | 50000 .. 5000000 | 500000 | 是 | CAN 波特率：≤1M 为 Classic CAN（该速率），>1M 为 CAN FD（仲裁域固定 1M，数据域=本值）；下次上电生效 |
+| `config.can_prot` | 120 | int32 | rw |  | 0 .. 1 | 1 | 是 | CAN 协议（0=旧 11-bit 协议，1=CYBERBEAST；下次上电生效） |
+| `config.can_baud` | 121 | int32 | rw | bit/s | 50000 .. 5000000 | 1000000 | 是 | CAN 波特率：≤1M 为 Classic CAN（该速率），>1M 为 CAN FD（仲裁域固定 1M，数据域=本值）；下次上电生效 |
 | `config.can_hb_ms` | 122 | int32 | rw | ms | 0 .. 10000 | 100 | 是 | CYBERBEAST 心跳周期（0 = 关闭） |
 | `config.m_zero` | 26 | int32 | rw |  | — | 0 | 是 | 机械零位编码器计数（门极关闭时才允许写） |
 | `config.e_zero` | 27 | int32 | rw |  | — | 0 | 是 | 电角度零点编码器计数（门极关闭时才允许写） |

@@ -311,7 +311,8 @@ CYBERBEAST (`can_cyberbeast.c`) gotchas verified on the bench:
 
 CAN 传输层已实现（`can_proto.c` 分发 + `can_cyberbeast.c`）：`config.can_prot`
 选协议（0=旧 11-bit，1=CYBERBEAST），`config.can_baud` 选物理层（≤1M Classic，
->1M CAN FD：仲裁域固定 1M、数据域=该值），**都只在下次上电生效**；
+>1M CAN FD：仲裁域固定 1M、数据域=该值），**出厂默认 = CYBERBEAST @ 1 Mbit/s
+（Classic）**，**都只在下次上电生效**；
 `system.can_prot_active` / `system.can_fd` 报告实际运行值。消息 RAM、滤波器、
 NBTP/DBTP 都在 `can.c` 的 `MX_CAN1_Init()` 里按这两个值构建，所以该函数必须在
 `config_apply_defaults()`/`preference_writer_load()` 之后调用（不能放回 CubeMX 的

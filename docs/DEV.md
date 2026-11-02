@@ -792,7 +792,7 @@ bootloader 契约（本仓库不含 bootloader，app 链接在 `0x08000000`）�
 
 主动“恢复出厂”：`call action.reset_config`（需门极关闭）——它 = `config_apply_defaults()`
 、`config_apply_limits()`、保存一页，**会连标定一起清掉**（`ppairs`/零点/LUT 回默认），
-`CAN_ID/CAN_PROT/CAN_BAUD` 也回默认（`can_prot=0` ⇒ 旧 11-bit），所以保存成功后
+`CAN_ID/CAN_PROT/CAN_BAUD` 也回默认（出厂默认 **CYBERBEAST + Classic 1 Mbit/s**），所以保存成功后
 固件会自动重启（0.5 s），之后要重新配 CAN 并重新标定。运行中的 `comm_encoder` 副本
 故意不跟着改：重启前继续用旧标定，比拿全零 LUT 去换相安全。
 
@@ -802,8 +802,8 @@ bootloader 契约（本仓库不含 bootloader，app 链接在 `0x08000000`）�
 
 | 参数 | 含义 |
 |---|---|
-| `config.can_prot` | `0` = 旧 11-bit 协议（默认），`1` = CYBERBEAST |
-| `config.can_baud` | bit/s。`≤ 1M`：Classic CAN，该值就是位速率；`> 1M`：CAN FD，仲裁域固定 1 M，数据域 = 该值（支持 2M/4M/5M） |
+| `config.can_prot` | `0` = 旧 11-bit 协议，`1` = **CYBERBEAST（默认）** |
+| `config.can_baud` | bit/s，默认 `1000000`（Classic 1 Mbit/s）。`≤ 1M`：Classic CAN，该值就是位速率；`> 1M`：CAN FD，仲裁域固定 1 M，数据域 = 该值（支持 2M/4M/5M） |
 | `config.can_hb_ms` | CYBERBEAST 心跳周期（默认 100 ms，0 关闭） |
 
 `system.can_prot_active` / `system.can_fd` / `system.can_baud_active` 报告**真正在跑**
@@ -987,7 +987,7 @@ python tools/flash_jlink.py --bin build/motorcontrol.bin   # GNU 构建产物也
 | 12 | CRC 错的帧 | 设备不应答，后续通信正常 |
 | 13 | 旧描述符 CRC | 状态 7 |
 | 14 | `call action.reboot` | 应答先返回，~0.5 s 后重启；门极在复位前已关闭 |
-| 15 | `call action.reset_config`（先记下 `prefs_sequence`） | `save_status = 1`、序号 +1；`config.e_zero/ppairs` 回默认；**随后自动重启**，重启后 `prefs_loaded = true`、`config.can_prot = 0`（记得切回需要的协议）并重新标定 |
+| 15 | `call action.reset_config`（先记下 `prefs_sequence`） | `save_status = 1`、序号 +1；`config.e_zero/ppairs` 回默认；**随后自动重启**，重启后 `prefs_loaded = true`、`config.can_prot = 1` / `can_baud = 1000000`（出厂默认）并重新标定 |
 | 16 | 门极使能时 `call action.reset_config` | `status 6`（`EP_ERR_STATE`），`save_status` 不变，配置不动 |
 | 17 | 空闲态 `set command.t_ff 5` 后 `call action.motor_mode` | 门极使能后 `telemetry.t_ff = 0`（进入模式时清零），电机不窜动 |
 | 18 | 电机模式下写 `command.t_ff`，然后停发 3×`can_timeout` | 命令自动清零（租约到期），`telemetry.i_q_des → 0` |
