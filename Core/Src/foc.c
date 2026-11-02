@@ -66,9 +66,9 @@ void analog_sample (ControllerStruct *controller){
 
 	/* Raw samples and zero offsets stay bound to physical ADC1/2/3, even
 	 * when calibration changes PHASE_ORDER.  Swap only corrected currents. */
-	controller->adc_a_raw = ADC1->JDAT1;
+	controller->adc_a_raw = ADC3->JDAT1;
 	controller->adc_b_raw = ADC2->JDAT1;
-	controller->adc_c_raw = ADC3->JDAT1;
+	controller->adc_c_raw = ADC1->JDAT1;
 
 	controller->adc_vbus_raw = adc_measurements_[1];	// ADC3 regular channel 4 is VBUS
 	controller->v_bus = (float)controller->adc_vbus_raw*V_SCALE;
