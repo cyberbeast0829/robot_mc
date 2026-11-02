@@ -336,12 +336,12 @@ uint16_t adc_measurements_[3] = { 0 };
 void start_general_purpose_adc() {
     // MOS_TEMP
     DMA_SetCurrDataCounter(DMA1_CH1, 1);
-    DMA1_CH1->MADDR = (uint32_t)(&adc_measurements_[0]));
+    DMA1_CH1->MADDR = (uint32_t)(&adc_measurements_[0]);
     DMA_EnableChannel(DMA1_CH1, ENABLE);
 
     // VBUS, MOT_TEMP
     DMA_SetCurrDataCounter(DMA1_CH2, 2);
-    DMA1_CH2->MADDR = (uint32_t)(&adc_measurements_[1]));
+    DMA1_CH2->MADDR = (uint32_t)(&adc_measurements_[1]);
     DMA_EnableChannel(DMA1_CH2, ENABLE);
 }
 
