@@ -58,7 +58,7 @@ void cal_print_flush(CalStruct *cal){
 			case CAL_MSG_PHASE_ORDER:	myprintf(m->i0 ? "Swapping phase sign\r\n" : "Phase order correct\r\n"); break;
 			case CAL_MSG_PPAIRS:		myprintf("Pole Pairs: %d   (travel %.4f rad)\r\n", m->i0, m->f0); break;
 			case CAL_MSG_START_END:		myprintf("Start: %.3f   End: %.3f\r\n", m->f0, m->f1); break;
-			case CAL_MSG_FAILED:		myprintf("Calibration failed: measured %d pole pairs (max %d).  Check the encoder and I_CAL\r\n", m->i0, m->i1); break;
+			case CAL_MSG_FAILED:		myprintf("Calibration failed: measured %d pole pairs (max %d).  Encoder travel %.4f rad, bus %.1f V.  Check the encoder, I_CAL and the bus supply\r\n", m->i0, m->i1, m->f1, m->f0); break;
 			case CAL_MSG_START_LIN:		myprintf("Starting offset cal and linearization\r\n"); break;
 			case CAL_MSG_RL_START:		myprintf("Measuring R, L, Ld/Lq and flux linkage (%.2f A)\r\n", m->f0); break;
 			case CAL_MSG_R_STEP:		myprintf("R step 1: %.4f V @ %.2f A\r\n", m->f0, m->f1); break;
@@ -168,8 +168,11 @@ void order_phases(EncoderStruct *encoder, ControllerStruct *controller, CalStruc
 	if((ppairs < 1) || (ppairs > PPAIRS_MAX)){
 		/* Rotor barely moved, or moved a non-physical amount - stalled rotor,
 		 * a bad encoder, or I_CAL too low.  Bail out before the pole-pair count
-		 * can run calibration sampling off the end of its arrays */
-		cal_msg_push(cal, CAL_MSG_FAILED, ppairs, PPAIRS_MAX, 0.0f, 0.0f);
+		 * can run calibration sampling off the end of its arrays.
+		 * The bus voltage is part of the report because v_bus == 0 silences the
+		 * whole power stage (svm() has no scale to work with), which looks
+		 * exactly like a stalled motor here */
+		cal_msg_push(cal, CAL_MSG_FAILED, ppairs, PPAIRS_MAX, controller->v_bus, theta_range);
 		cal->failed = 1;
 		return;
 	}
