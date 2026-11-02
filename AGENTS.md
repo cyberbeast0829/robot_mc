@@ -91,11 +91,28 @@ The PWM/advanced timer is `ATIM1` (aliased `TIM_PWM` in `hw_config.h`); FOC writ
 `TIM_PWM->CCDAT1/2/3` directly against period `TIM_PWM->AR` (see `foc.c`).
 
 The three phase-current shunts are **5 mOhm in the low-side legs**, confirmed by
-the maintainer. `I_SCALE` is nominally `0.005035400390625 A/count` for the current
-ADC/PGA configuration; the previous `0.050354...` coefficient assumed 0.5 mOhm
-and over-reported current by 10x. The board current limit is conservatively
-capped at 4 A (6 A software OC trip). Do not restore the old 40 A limit or alter
-the PGA gain without verifying the analogue range and actual phase current.
+the maintainer. `I_SCALE` is a **formula** in `hw_config.h`, not a literal:
+
+```
+I_SCALE = (ADC_DIFF_SPAN / 2^12) / (R_SHUNT * PGA_GAIN)   // ADC_DIFF_SPAN = 3.3 V (PGA out +-VREF/2, 2048 = 0 A)
+```
+
+`PGA_GAIN` is the **actual** PGA differential gain, i.e. half of the `<n>` in
+`pga.c`'s `PGA_CTRL_CH1GAIN_<n>_DIFF_<2n>`: `32_DIFF_64` → 16, `24_DIFF_48` → 12.
+It is derived from `PGA_GAIN_CODE` in `hw_config.h` (the gain field: 7 = 32_DIFF_64,
+6 = 24_DIFF_48), because the code ↔ gain table is not a formula.
+This board (5 mOhm + gain 12) gives `0.013427734375 A/count`, i.e. +-2048 counts =
+**±27.5 A**; the old gain-16 board was `0.01007080078125` (`±20.6 A`). The earlier
+`0.005035400390625` value halved the span (the ADC then saturated at half the PGA
+range), so gains tuned against it were tuned on a 2x-low current reading; the
+pre-fork `0.050354...` assumed 0.5 mOhm and over-reported current by 10x.
+Changing the gain means editing `pga.c` **and** `PGA_GAIN_CODE` together — `pga.c`
+has a `_Static_assert` on it so they cannot drift apart. The board current limit
+is conservatively capped (default 4 A → 6 A software OC trip); keep
+`I_OC_FAULT_FACTOR * I_MAX_LIMIT` below the ±27.5 A saturation point or a
+saturated reading silently masks the overcurrent fault. Do not restore the old
+40 A limit or alter the PGA gain without verifying the analogue range and actual
+phase current.
 
 ⚠ **Never assume an `HAL_*` / `stm32f4xx_*` / `TIM1->BDTR` / `.Instance` reference resolves
 here** — verify it against the N32 SDK. The incomplete-port leftovers have been cleaned up
@@ -107,6 +124,28 @@ N32 flash API — 8 KB page erase + 64-bit `FLASH_ProgramdoubleWord` and a softw
 the top two pages `0x0807C000`/`0x0807E000`. The payload is an **ID-keyed TLV record table**
 (`prefs_codec.c`), not the old raw array; see "配置持久化" below. Only commented-out ST
 calls remain (`main.c`, `foc.c`, `it.c`).
+
+⚠ **Always call `DMA_StructInit(&x)` before filling a `DMA_InitType`** — `DMA_Init()` also
+programs the three `BURST_*` fields (into `CHCFG`'s BLEN/BURST_DYNAMIC bits and into the
+whole-controller `DMAy->BURSTEN`). `spi.c` used to skip it, so those came from stale stack
+(SRAM contents from the previous run) and could silently open burst mode: a 1-halfword SPI
+frame then never satisfies a burst, `TXNUM` stays 1, the transfer-complete flag never sets,
+and `ps_warmup` spun forever at `position_sensor.c` (`DMA_FLAG_TC2`) before the FSM started.
+That also means "the encoder reads 0 / DMA never finishes" symptoms can differ between the
+GNU and Keil images and between power cycles **of the same source**; check the burst fields
+and `DMA2->BURSTEN` (0x400204A8) before blaming the encoder. `adc.c` has always done it right.
+
+⚠ **The general-purpose ADC channels (`adc_measurements_[]`) must actually be trigger-driven.**
+`main.c` sets every regular *and* injected external trigger to SOFTWARE while the ADCs are
+calibrated, then restores them: injected on all three ADCs, regular on **ADC2 (MOS_TEMP) and
+ADC3 (VBUS + MOT_TEMP)**. Missing the ADC3 regular restore left VBUS on a software trigger
+nobody started, so `adc_measurements_[1]` stayed 0 → `controller.v_bus = 0` → `svm()` had no
+scale and clamped all three duties to the midpoint, i.e. **the power stage output nothing at
+all** and `action.calibrate` failed with "measured 0 pole pairs". Diagnose with
+`telemetry.v_bus` (the boot banner prints `VBUS: x.x V` too): if it reads 0 the motor cannot
+turn in any mode, whatever else the symptoms suggest. ADC channel map in use:
+ADC2_CH2/PA7 = MOS_TEMP → `adc_measurements_[0]`, ADC3_CH4/PE7 = VBUS → `[1]`,
+ADC3_CH6/PE8 = MOT_TEMP → `[2]`.
 
 ## Real-time architecture (full description in `CLAUDE.md`)
 

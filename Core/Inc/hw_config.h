@@ -128,12 +128,42 @@
  * removed - it was an ST-hal leftover and was never used) */
 
 /* Other hardware-related constants */
-/* The three low-side shunts are 5 mOhm (confirmed on this board), not
- * 0.5 mOhm.  With the same ADC/PGA configuration the old 0.050354 A/count
- * coefficient over-reported current by 10x.  Keep the original conversion
- * convention, corrected for the actual shunts; verify absolute gain against
- * a phase-current measurement before increasing the board current limit. */
-#define I_SCALE 			0.005035400390625f  // Nominal amps per A/D count with 5 mOhm shunts
+/* Phase-current sense chain: low-side shunt -> on-chip PGA (differential) ->
+ * 12-bit differential ADC.  I = (ADC count) * I_SCALE, with
+ *     I_SCALE = (ADC_DIFF_SPAN / 2^12) / (R_SHUNT * PGA_GAIN)
+ * ADC_DIFF_SPAN is the PGA output swing that the 4096 codes cover.  The PGA
+ * output range is +-VREF/2 (3.3 V differential, code 2048 = 0 A), so one count
+ * is ADC_DIFF_SPAN/4096 at the ADC and the measurable range is +-2048 counts:
+ *     +-2048 * 0.0134277 A = +-27.5 A at gain 12 (was +-20.6 A at gain 16)
+ * Do NOT additionally halve ADC_DIFF_SPAN - that makes the ADC saturate at
+ * half the PGA range (it did, once: 0.0067139 A/count instead of 0.0134277).
+ *
+ * The three low-side shunts are 5 mOhm on this board, not 0.5 mOhm (the old
+ * 0.050354 A/count coefficient assumed 0.5 mOhm and over-reported by 10x).
+ *
+ * PGA_GAIN is the ACTUAL differential gain.  It is derived from the PGA gain
+ * field written in pga.c (PGA_CTRL_CH1GAIN_<n>_DIFF_<2n>); the actual gain is
+ * n/2, and the field code is n's index in the gain table:
+ *     code:      0    1    2    3    4     5     6     7
+ *     <n>:       1    2    4    8   12    16    24    32
+ *     actual:  0.5    1    2    4    6     8    12    16
+ * code 7 (32_DIFF_64) is the old board -> I_SCALE = 0.01007080078125 A/count;
+ * code 6 (24_DIFF_48) is this board      -> I_SCALE = 0.013427734375 A/count.
+ * Changing the gain means editing pga.c AND PGA_GAIN_CODE here - pga.c has a
+ * _Static_assert on PGA_GAIN_CODE so the two cannot drift apart.
+ * Verify the absolute gain against a measured phase current before raising
+ * the board current limit. */
+#define ADC_VREF			3.3f			// ADC reference (V)
+#define ADC_DIFF_SPAN		(ADC_VREF)		// differential span of the 4096 codes (PGA output +-VREF/2)
+#define ADC_FULL_SCALE		4096.0f			// 12-bit converter
+#define R_SHUNT				0.005f			// Low-side phase shunt (ohm)
+#define PGA_GAIN_CODE		6				// Gain field: 6 = PGA_CTRL_CH1GAIN_24_DIFF_48
+/* gain-table lookup: code -> <n> (see the table above) */
+#define PGA_GAIN_N(code)	((code) == 0 ? 1 : (code) == 1 ? 2 : (code) == 2 ? 4 : \
+							 (code) == 3 ? 8 : (code) == 4 ? 12 : (code) == 5 ? 16 : \
+							 (code) == 6 ? 24 : 32)
+#define PGA_GAIN			(PGA_GAIN_N(PGA_GAIN_CODE) / 2.0f)	// actual differential gain
+#define I_SCALE				((ADC_DIFF_SPAN / ADC_FULL_SCALE) / (R_SHUNT * PGA_GAIN))
 // V_SCALE = (3.3 * VBUS_S_DIVIDER) / (2^12) 其中 VBUS_S_DIVIDER = 93.91 / 3.01
 #define V_SCALE 			0.02513618342504f    // Bus volts per A/D Count
 #define DTC_MAX 			0.7f          	// Max duty cycle (calibration converts its voltages with CAL_V_PER_CMD - see calibration.c)
@@ -147,12 +177,14 @@
 #define V_BUS_MAX			60.0f			// max drive voltage - torque command is cut above this (soft limit)
 #define V_BUS_FAULT			67.0f			// hard overvoltage limit - latches a fault and disables the gate drive
 
-/* Conservative limit for the 5 mOhm board.  At I_MAX=4 A the 1.5x OC trip
- * is 6 A, about 1192 ADC counts from zero with I_SCALE above, leaving room
- * around the measured midscale offsets.  The previous 40 A limit no longer
- * fits the corrected measurement range.  Raising this requires checking
- * both the analogue sense range and the power-stage/shunt ratings. */
-#define I_MAX_LIMIT			20.0f			// Hard upper bound for I_MAX (A)
+/* Conservative limit for the 5 mOhm board.  The PGA output range (+-VREF/2)
+ * saturates 2048 counts from zero, i.e. at +-27.5 A with the gain above, and a
+ * saturated reading can never exceed the OC threshold - so
+ * I_OC_FAULT_FACTOR * I_MAX_LIMIT must stay below that (4 A -> 6 A trip =
+ * ~447 counts, 10 A -> 15 A trip = ~1117 counts, both well inside).  Raising
+ * this requires checking both the analogue sense range and the power-stage /
+ * shunt ratings. */
+#define I_MAX_LIMIT			10.0f			// Hard upper bound for I_MAX (A)
 #define I_OC_FAULT_FACTOR	1.5f			// Overcurrent latch threshold = factor * I_MAX
 
 /* Current controller */

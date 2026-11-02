@@ -1,5 +1,11 @@
 #include "pga.h"
 
+/* 相电流增益必须与 hw_config.h 的 PGA_GAIN_CODE 一致：I_SCALE 用实际差分增益换算，
+ * 两者错配会静默地把电流报错倍数，所以在这里做编译期检查。
+ *   PGA_CTRL_CH1GAIN_24_DIFF_48 -> code 6 -> 实际差分增益 12 */
+_Static_assert((PGA_CTRL_CH1GAIN_24_DIFF_48 >> 4) == PGA_GAIN_CODE,
+               "pga.c gain does not match PGA_GAIN_CODE in hw_config.h");
+
 void MX_PGA_Init(void)
 {
   PGA_InitType PGA_Initial;
@@ -23,8 +29,9 @@ void MX_PGA_Init(void)
 
   PGA_StructInit(&PGA_Initial);
   PGA_Initial.DiffModeEn = ENABLE;
-  PGA_Initial.Gain1 = PGA_CTRL_CH1GAIN_32_DIFF_64;
-  PGA_Initial.Gain2 = PGA_CTRL_CH1GAIN_32_DIFF_64;
+  /* 24_DIFF_48 = code 6 = 实际差分增益 12；改这里必须同步改 hw_config.h 的 PGA_GAIN_CODE */
+  PGA_Initial.Gain1 = PGA_CTRL_CH1GAIN_24_DIFF_48;
+  PGA_Initial.Gain2 = PGA_CTRL_CH1GAIN_24_DIFF_48;
   PGA_Initial.En1 = DISABLE;
   PGA_Initial.En2 = DISABLE;
   
