@@ -66,6 +66,14 @@ extern "C" {
  * 再 / 2 = 4 kHz。设成 1/1 就是两个环都跑 40 kHz。 */
 #define VEL_LOOP_PRESCALER      __int_reg[137]                                  // 控制环 / 该值 = 速度环频率
 #define POS_LOOP_PRESCALER      __int_reg[138]                                  // 速度环 / 该值 = 位置环频率
+/* CAN FD 发送延迟补偿（TDC）偏移，单位是**数据域 tq**：
+ *   -1 = 自动（= 数据域 tseg1，与 ODrive / canable2-fw 一致，默认）
+ *    0 = 关闭（仅用于实验对照）
+ *   >0 = 手写偏移（TDCR 的 offset 与 filter 都用该值；上限 31）
+ * 5 Mbit/s 下 1 tq 只有 25 ns，收发器环回延迟超过剩余采样裕量，不开 TDC 时
+ * 设备会把自己发出的帧判成错误帧 → TEC 涨到 bus-off、总线上什么都看不到。
+ * 只在 FD 模式下生效，且**下次上电**才应用（DBTP/TDCR 只能在 init 模式写）。 */
+#define CAN_TDC                 __int_reg[139]
 
 
 

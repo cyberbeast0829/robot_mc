@@ -487,6 +487,18 @@
       "default": 100
     },
     {
+      "name": "config.can_tdc",
+      "type": "int32",
+      "access": "rw",
+      "ref": "CAN_TDC",
+      "min": -1,
+      "max": 31,
+      "unit": "tq",
+      "brief": "CAN FD 发送延迟补偿偏移（数据域 tq）：-1 = 自动（= 数据域 tseg1，默认），0 = 关闭，>0 = 手动；5M 必须开，下次上电生效",
+      "persist": true,
+      "default": -1
+    },
+    {
       "name": "config.m_zero",
       "type": "int32",
       "access": "rw",

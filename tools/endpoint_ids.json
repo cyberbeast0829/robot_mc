@@ -1,5 +1,5 @@
 {
-  "next_id": 162,
+  "next_id": 163,
   "map": {
     "config.i_bw": 1,
     "config.i_max": 2,
@@ -161,6 +161,7 @@
     "telemetry.inertia_accel_hi": 158,
     "config.omega_c": 159,
     "config.tune_margin": 160,
-    "action.tune_gains": 161
+    "action.tune_gains": 161,
+    "config.can_tdc": 162
   }
 }

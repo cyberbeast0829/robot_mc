@@ -805,6 +805,7 @@ bootloader 契约（本仓库不含 bootloader，app 链接在 `0x08000000`）�
 | `config.can_prot` | `0` = 旧 11-bit 协议，`1` = **CYBERBEAST（默认）** |
 | `config.can_baud` | bit/s，默认 `1000000`（Classic 1 Mbit/s）。`≤ 1M`：Classic CAN，该值就是位速率；`> 1M`：CAN FD，仲裁域固定 1 M，数据域 = 该值（支持 2M/4M/5M） |
 | `config.can_hb_ms` | CYBERBEAST 心跳周期（默认 100 ms，0 关闭） |
+| `config.can_tdc` | CAN FD 发送延迟补偿偏移（单位：数据域 tq）。`-1` = 自动（= 数据域 tseg1，默认，与 ODrive / canable2-fw 一致）、`0` = 关闭、`>0` = 手动；只对 FD 生效，下次上电应用 |
 
 `system.can_prot_active` / `system.can_fd` / `system.can_baud_active` 报告**真正在跑**
 的协议、物理层与速率。`can_prot=0` 时 `can_baud > 1M` 会被钳到 1M（旧协议只有
@@ -877,7 +878,13 @@ CubeMX 的 SysInit 段移到了配置加载之后
 
 ### 台架注意
 
-- 5 M 数据域没有额外配置 TDC（与 ODrive 现状一致），需要实测误码率/TEC。
+- **5 M 数据域必须开 TDC**（`config.can_tdc` 默认 `-1` = 自动）。2026-11-03 台架实测：
+  不开 TDC 时 5M **完全不通** —— 设备自报 `can_fd=true`/`can_baud_active=5000000`，但
+  `can_tec=248`、`can_rec=0`、`lec=7`，适配器一帧都收不到（发送无 ACK → 反复重发 → bus-off）；
+  同一固件把数据域改成 2M（20 tq，裕量 2.5 倍）则 97/97 全过。根因：8 tq/25 ns 下收发器
+  环回延迟（100~250 ns）吃掉采样裕量，发送端需要靠 TDC 把自己的求值点往后推。
+  TDC 只能在 init 模式写，所以 `MX_CAN1_Init()` 里必须放在 `FDCAN_Init()` 之后、
+  `FDCAN_Start()` 之前；offset 与 filter 都用数据域 tseg1。
 - 仲裁域统一 40 个时间量子；旧协议保持原采样点 **87.5%**（34/5，总线行为不变），
   CYBERBEAST 用 80%（31/8，与 ODrive 一致；FD 数据域 5 M = 8 tq/75%）。
 - 扩展帧过滤器接受**全部**扩展帧，Dest 由软件过滤；1M 满总线约 2k 帧/s，

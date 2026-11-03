@@ -166,6 +166,23 @@ void MX_CAN1_Init(void)
 
   FDCAN_Init(FDCAN2, &hcan1);
 
+  /* CAN FD 数据域很快（5M 时 1 tq = 25 ns），收发器环回延迟（典型 100~250 ns）
+   * 已经吃掉一个位时间里剩下的采样裕量。M_CAN 的解决方式是 TDC：发送端把
+   * 自己评估 ACK / 位错误的采样点往后推 TDCO 个数据域 tq。
+   * 不开它时（2026-11-03 台架）5M 完全不通：can_tec = 248、can_rec = 0，
+   * 适配器一帧都收不到，而同一套代码 2M（20 tq，裕量 2.5 倍）一切正常。
+   * 默认值与 ODrive 参考实现 / canable2-fw 一致：offset = filter = 数据域 tseg1。
+   * DBTP/TDCR 只能在 init 模式写，所以必须放在 FDCAN_Init() 之后、FDCAN_Start() 之前。 */
+  if(can_fd_running){
+          int tdc = CAN_TDC;
+          if(tdc < 0){tdc = (int)hcan1.DataTimeSeg1;}      /* -1 = 自动 */
+          if(tdc > 31){tdc = 31;}
+          if(tdc > 0){
+                  FDCAN_ConfigTxDelayCompensation(FDCAN2, (uint32_t)tdc, (uint32_t)tdc);
+                  FDCAN_EnableTxDelayCompensation(FDCAN2);
+          }
+  }
+
   FDCAN_ConfigTSPrescaler(FDCAN2, FDCAN_TIMESTAMP_PRESC_16);
   FDCAN_Config_TS(FDCAN2, FDCAN_TIMESTAMP_DISABLE);
 

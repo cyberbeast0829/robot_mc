@@ -59,6 +59,7 @@ const prefs_entry_t prefs_entries[] = {
 	{151, PREFS_T_F32, 4, (void *)&(INERTIA)},
 	{159, PREFS_T_F32, 4, (void *)&(OMEGA_C)},
 	{160, PREFS_T_F32, 4, (void *)&(TUNE_MARGIN)},
+	{162, PREFS_T_I32, 4, (void *)&(CAN_TDC)},
 };
 const unsigned prefs_entry_count = sizeof(prefs_entries) / sizeof(prefs_entries[0]);
 
@@ -112,6 +113,7 @@ void config_apply_defaults(void){
 	INERTIA = 0.0006f;
 	OMEGA_C = 450.0f;
 	TUNE_MARGIN = 2.2f;
+	CAN_TDC = -1;
 }
 
 void config_apply_limits(void){
@@ -212,4 +214,6 @@ void config_apply_limits(void){
 	if(!isfinite(TUNE_MARGIN)){TUNE_MARGIN = 2.2f;}
 	if(TUNE_MARGIN < 0.2f){TUNE_MARGIN = 0.2f;}
 	if(TUNE_MARGIN > 5.0f){TUNE_MARGIN = 5.0f;}
+	if(CAN_TDC < -1){CAN_TDC = -1;}
+	if(CAN_TDC > 31){CAN_TDC = 31;}
 }

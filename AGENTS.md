@@ -309,6 +309,11 @@ CYBERBEAST (`can_cyberbeast.c`) gotchas verified on the bench:
 
 ## 与 JointSDK（CyberBeast）的兼容性
 
+⚠ **CAN FD 5 Mbit/s 必须开 TDC**（`config.can_tdc`，默认 `-1` = 自动 = 数据域 tseg1）。
+2026-11-03 台架：不开 TDC 时 5M 一帧都不通（`can_tec` 涨到 bus-off、适配器收不到任何东西），
+2M 正常；TDC 只能在 init 模式写，位置在 `MX_CAN1_Init()` 的 `FDCAN_Init()` 之后、
+`FDCAN_Start()` 之前。改 `can_tdc` 后要重启才生效。
+
 CAN 传输层已实现（`can_proto.c` 分发 + `can_cyberbeast.c`）：`config.can_prot`
 选协议（0=旧 11-bit，1=CYBERBEAST），`config.can_baud` 选物理层（≤1M Classic，
 >1M CAN FD：仲裁域固定 1M、数据域=该值），**出厂默认 = CYBERBEAST @ 1 Mbit/s
