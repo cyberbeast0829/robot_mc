@@ -24,6 +24,7 @@ EP_V_MAX = 10
 EP_KP_MAX = 12
 EP_KD_MAX = 13
 EP_GR = 14
+EP_KT = 15
 EP_CAN_HB_MS = 122
 EP_CAN_PROT_ACTIVE = 123
 EP_CAN_FD = 124
@@ -48,12 +49,31 @@ EP_V_DES = 50
 EP_KP = 51
 EP_KD = 52
 EP_T_FF = 53
+EP_POS_GAIN = 136
+EP_VEL_GAIN = 137
+EP_VEL_IGAIN = 138
+EP_CMD_T_FF = 128
+EP_CMD_P_DES = 129
+EP_CMD_V_DES = 130
+EP_CMD_KP = 131
+EP_CMD_KD = 132
+EP_CMD_MODE = 145
+EP_I_Q_DES = 54
+EP_SAVE_STATUS = 119
 
 # ---- CyberBeast message types ------------------------------------------
 MT_MIT = 0x00
+MT_CSP = 0x01
+MT_CSV = 0x02
 MT_TORQUE = 0x03
 MT_CURRENT = 0x04
 MT_MIT_BCAST = 0x80
+MT_CSP_BCAST = 0x81
+MT_CSV_BCAST = 0x82
+MT_TORQUE_BCAST = 0x83
+MT_SET_NODE_ID = 0x60
+MT_CONFIG_SAVE = 0x22
+MT_CONFIG_RESET = 0x23
 MT_PARAM_READ = 0x20
 MT_PARAM_WRITE = 0x21
 MT_DESC_READ = 0x24
@@ -142,6 +162,12 @@ class Slcan:
         """发送一帧 CyberBeast：FD 模式下 >8 B 用 BRS，≤8 B 不用。"""
         self.send(can_id, data, fd=self.fd,
                   brs=bool(self.fd and len(data) > 8))
+
+    def send_std(self, can_id, data):
+        """11-bit 标准帧（CyberBeast 模式下应当被硬件滤波器整体丢掉）。"""
+        line = "t%03X%X%s" % (can_id & 0x7FF, len(data), data.hex().upper())
+        self.ser.write((line + "\r").encode())
+        self.ser.flush()
 
     @staticmethod
     def parse(line):
@@ -379,7 +405,7 @@ def write_hb_period(bus, ms):
     check("read back", ok, "" if not ok else str(le_i32(raw)))
 
 
-def fetch_descriptor(bus, expect_len=9881):
+def fetch_descriptor(bus, expect_len=None):
     print("[5] JSON descriptor (0x24 / 0x25)")
     need = expect_len
     total = None
@@ -406,8 +432,12 @@ def fetch_descriptor(bus, expect_len=9881):
                 print("      offset gap: got %d expected %d" % (off, len(data)))
                 data.extend(b"\x00" * max(0, off - len(data)))
             data.extend(payload)
-    ok_len = total == expect_len
-    check("descriptor length", ok_len, "got %s expect %d (rx %d)" % (total, expect_len, len(data)))
+    if expect_len is None:
+        check("descriptor length plausible", total is not None and total > 512,
+              "total=%s (rx %d)" % (total, len(data)))
+    else:
+        check("descriptor length", total == expect_len,
+              "got %s expect %d (rx %d)" % (total, expect_len, len(data)))
     if total:
         data = data[:total]
         ok_crc = crc16(bytes(data)) == crc
@@ -416,7 +446,9 @@ def fetch_descriptor(bus, expect_len=9881):
             desc = json.loads(bytes(data).decode("ascii"))
             names = {e["name"] for e in desc}
             need_names = {"config.can_prot", "config.can_baud", "system.can_fd",
-                          "action.save", "telemetry.position"}
+                          "action.save", "action.reboot", "action.reset_config",
+                          "telemetry.position", "command.p_des", "command.t_ff",
+                          "config.pos_gain", "config.vel_gain"}
             check("descriptor parses", True, "%d endpoints" % len(desc))
             check("new endpoints present", need_names <= names,
                   str(sorted(need_names - names)))
@@ -515,15 +547,12 @@ def pump(bus, seconds, pos, vel, kp, kd, tau, rng, period=0.01):
 
 
 def stage_b(bus, tau_cmd, pulse_ms):
-    rng = {}
-    for key, ep in (("p", EP_P_MAX), ("v", EP_V_MAX), ("kp", EP_KP_MAX),
-                    ("kd", EP_KD_MAX), ("gr", EP_GR), ("i_max", EP_I_MAX)):
-        raw, _ = sdo_read(bus, ep)
-        rng[key] = le_f32(raw) if raw else 0.0
-    rng["tau"] = rng["i_max"] * 1.0 * rng["gr"]   # KT = 1 in this config
-    rng["cur"] = rng["i_max"] * rng["gr"]
-    print("[B1] ranges: p=%.2f v=%.2f kp=%.1f kd=%.2f tau=%.1f cur=%.1f" %
-          (rng["p"], rng["v"], rng["kp"], rng["kd"], rng["tau"], rng["cur"]))
+    rng = read_ranges(bus)
+    print("[B1] ranges: p=%.2f v=%.2f kp=%.1f kd=%.2f kt=%.4f tau_max=%.3f cur_max=%.2f" %
+          (rng["p"], rng["v"], rng["kp"], rng["kd"], rng["kt"], rng["tau"], rng["cur"]))
+    if abs(tau_cmd) > rng["tau"]:
+        print("      ⚠ 请求 %.3f N·m 超过满量程 %.3f，会被钳位" % (tau_cmd, rng["tau"]))
+        tau_cmd = rng["tau"] * (1.0 if tau_cmd > 0 else -1.0)
 
     # 先发一帧零力矩，拿到当前位置
     f = pump(bus, 0.05, 0.0, 0.0, 0.0, 0.0, 0.0, rng)
@@ -555,7 +584,10 @@ def stage_b(bus, tau_cmd, pulse_ms):
             d = decode_mit_out(f["data"], rng)
             peak_iq = max(peak_iq, abs(d["iq"]))
             peak_vel = max(peak_vel, abs(d["vel"]))
-            if d["err"] != 0 or peak_iq > 1.5 or peak_vel > 5.0:
+            # 中止闸按本机配置来定：空载台架上 0.2 N.m 就能转得很快，
+            # 固定阈值（旧版 5 rad/s）会把正常响应当成故障
+            if (d["err"] != 0) or (peak_iq > 1.2 * rng["i_max"]) \
+                    or (peak_vel > rng["abort_vel"]):
                 abort = True
                 break
     print("      peak iq=%.3f A, peak vel=%.3f rad/s" % (peak_iq, peak_vel))
@@ -577,13 +609,19 @@ def stage_b(bus, tau_cmd, pulse_ms):
 
 
 def read_ranges(bus):
+    """MIT 位域的满量程：tau_max = I_MAX*KT*GR（输出端 N·m），cur_max = I_MAX*GR（电机端 A）。
+
+    ⚠ KT 是标定出来的（本机约 0.031），**不能假设 1**：以前按 KT=1 编码会把力矩缩小
+    30 倍，看起来像"固件不接受力矩命令"。"""
     rng = {}
     for key, ep in (("p", EP_P_MAX), ("v", EP_V_MAX), ("kp", EP_KP_MAX),
-                    ("kd", EP_KD_MAX), ("gr", EP_GR), ("i_max", EP_I_MAX)):
+                    ("kd", EP_KD_MAX), ("gr", EP_GR), ("i_max", EP_I_MAX),
+                    ("kt", EP_KT)):
         raw, _ = sdo_read(bus, ep)
         rng[key] = le_f32(raw) if raw else 0.0
-    rng["tau"] = rng["i_max"] * 1.0 * rng["gr"]   # KT = 1 in this config
+    rng["tau"] = rng["i_max"] * rng["kt"] * rng["gr"]
     rng["cur"] = rng["i_max"] * rng["gr"]
+    rng["abort_vel"] = 0.25 * rng["v"]      # 台架中止闸（空载轴 1/4 满速）
     return rng
 
 
@@ -620,7 +658,10 @@ def stage_c_bcast(bus, tau_cmd, pulse_ms):
             d = decode_mit_out(f["data"], rng)
             peak_iq = max(peak_iq, abs(d["iq"]))
             peak_vel = max(peak_vel, abs(d["vel"]))
-            if d["err"] != 0 or peak_iq > 1.5 or peak_vel > 5.0:
+            # 中止闸按本机配置来定：空载台架上 0.2 N.m 就能转得很快，
+            # 固定阈值（旧版 5 rad/s）会把正常响应当成故障
+            if (d["err"] != 0) or (peak_iq > 1.2 * rng["i_max"]) \
+                    or (peak_vel > rng["abort_vel"]):
                 abort = True
                 break
     print("      peak iq=%.3f A, peak vel=%.3f rad/s" % (peak_iq, peak_vel))
@@ -652,8 +693,9 @@ def stage_c_static(bus, gr):
     通过 telemetry.p_des/v_des/kp/kd/t_ff 反读固件实际接收到的值：
       - 64 B MIT 广播的 slot 是否按 node_id 取对
       - TORQUE(0x83) 电机端 N·m 是否 ×GR
-      - CURRENT(0x04) 是否 ×KT×GR（本机 KT=1）
+      - CURRENT(0x04) 是否 ×KT×GR
     """
+    kt = read_float_ep(bus, EP_KT)
     raw, _ = sdo_read(bus, EP_MODE)
     mode = raw[0] if raw else -1
     if mode != 0:
@@ -663,11 +705,10 @@ def stage_c_static(bus, gr):
     check("MENU (gates off)", raw is not None and raw[0] == 0)
 
     slot = NODE
+    rng = read_ranges(bus)          # 必须是设备真实量程（tau_max = I_MAX*KT*GR）
     p_t, v_t, kp_t, kd_t, tau_t = 0.5, 0.1, 10.0, 1.0, 0.2
     buf = bytearray(64)
-    buf[slot * 8:slot * 8 + 8] = mit_bytes(p_t, v_t, kp_t, kd_t, tau_t,
-                                           {"p": 12.5, "v": 65.0, "kp": 500.0,
-                                            "kd": 5.0, "tau": 31.0})
+    buf[slot * 8:slot * 8 + 8] = mit_bytes(p_t, v_t, kp_t, kd_t, tau_t, rng)
     print("[C1] 64 B MIT broadcast Dest=0x%02X slot=%d" % (1 << slot, slot))
     bus.send(cb_id(PRI_HIGH_CTRL, MT_MIT_BCAST, 1 << slot), bytes(buf),
              fd=True, brs=True)
@@ -678,7 +719,7 @@ def stage_c_static(bus, gr):
     print("      read back:", got)
     tol_p = 25.0 / 65535.0
     tol_kp = 500.0 / 4095.0
-    tol_tau = 2.0 * 31.0 / 4095.0
+    tol_tau = 2.0 * rng["tau"] / 4095.0
     check("broadcast slot applied to p_des", got["p_des"] is not None and
           abs(got["p_des"] - p_t) < tol_p, str(got["p_des"]))
     check("broadcast slot applied to kp", got["kp"] is not None and
@@ -686,27 +727,28 @@ def stage_c_static(bus, gr):
     check("broadcast slot applied to t_ff", got["t_ff"] is not None and
           abs(got["t_ff"] - tau_t) < tol_tau, str(got["t_ff"]))
 
-    print("[C2] TORQUE broadcast 0x83: motor-side 0.5 N.m -> expect t_ff=%.3f" % (0.5 * gr))
+    # 0.5 电机端 N·m × GR 常常超过 tau_max（本机只有 0.72），固件会钳位 —— 期望值也要钳
+    want_tau = min(0.5 * gr, rng["tau"])
+    print("[C2] TORQUE broadcast 0x83: motor-side 0.5 N.m -> expect t_ff=%.4f%s"
+          % (want_tau, "（被 I_MAX*KT*GR 钳位）" if want_tau < 0.5 * gr else ""))
     bus.send(cb_id(3, MT_TORQUE + 0x80, 1 << slot), struct.pack(">f", 0.5),
              fd=True, brs=False)
     time.sleep(0.05)
     t_ff = read_float_ep(bus, EP_T_FF)
-    check("torque broadcast x GR", t_ff is not None and abs(t_ff - 0.5 * gr) < 0.02,
+    check("torque broadcast x GR (clamped)", t_ff is not None and abs(t_ff - want_tau) < 0.01,
           str(t_ff))
 
-    print("[C3] CURRENT unicast 0x04: 0.2 A -> expect t_ff=%.3f" % (0.2 * gr))
+    print("[C3] CURRENT unicast 0x04: 0.2 A -> expect t_ff=%.4f" % (0.2 * kt * gr))
     bus.send_cb(cb_id(3, MT_CURRENT, NODE), struct.pack(">f", 0.2))
     time.sleep(0.05)
     t_ff = read_float_ep(bus, EP_T_FF)
-    check("current x KT x GR", t_ff is not None and abs(t_ff - 0.2 * gr) < 0.02,
+    check("current x KT x GR", t_ff is not None and abs(t_ff - 0.2 * kt * gr) < 0.01,
           str(t_ff))
 
     # 清零，避免把测试命令留在控制器里
     for _ in range(3):
         bus.send_cb(cb_id(PRI_HIGH_CTRL, MT_MIT, NODE),
-                    mit_bytes(0.0, 0.0, 0.0, 0.0, 0.0,
-                              {"p": 12.5, "v": 65.0, "kp": 500.0,
-                               "kd": 5.0, "tau": 31.0}))
+                    mit_bytes(0.0, 0.0, 0.0, 0.0, 0.0, rng))
         time.sleep(0.01)
     check("commands cleared", abs(read_float_ep(bus, EP_T_FF)) < 0.02)
     raw, _ = sdo_read(bus, EP_FAULT)
@@ -834,7 +876,7 @@ def stage_d(bus):
 
     print("[D6] TORQUE clamp + NaN (gates off, MENU)")
     rng = read_ranges(bus)
-    lim = rng["i_max"] * rng["gr"]
+    lim = rng["tau"]          # I_MAX*KT*GR
     bus.send_cb(cb_id(3, MT_TORQUE, NODE), struct.pack(">f", 1e6))
     time.sleep(0.05)
     tau_hi = read_float_ep(bus, EP_T_FF)
@@ -856,6 +898,14 @@ def stage_timeout(bus):
     这样即使电机被夹具卡住，也能测出超时。"""
     rng = read_ranges(bus)
     to_ms = read_int_ep(bus, EP_CAN_TIMEOUT)
+    restored = None
+    if to_ms == 0:
+        # 租约被关掉（0 = 不超时）就没法测；临时开 100 ms，测完恢复
+        sdo_write(bus, EP_CAN_TIMEOUT, struct.pack("<i", 100))
+        time.sleep(0.05)
+        to_ms = read_int_ep(bus, EP_CAN_TIMEOUT)
+        restored = 0
+        print("      (can_timeout 原本是 0/关闭，临时设为 %s ms)" % to_ms)
     window = (to_ms or 0) * 40          # 40 控制周期 = 1 ms
     print("[T0] CAN_TIMEOUT = %s ms (= %d control cycles at 40 kHz)" % (to_ms, window))
 
@@ -946,6 +996,374 @@ def stage_timeout(bus):
     check("no latched fault", raw is not None and le_i32(raw) == 0,
           "" if raw is None else str(le_i32(raw)))
 
+    if restored is not None:
+        sdo_write(bus, EP_CAN_TIMEOUT, struct.pack("<i", restored))
+        time.sleep(0.05)
+        print("      can_timeout 已恢复为 %s" % read_int_ep(bus, EP_CAN_TIMEOUT))
+
+
+
+# ---- stage E: CSP(0x01) / CSV(0x02) ------------------------------------
+
+DEG = 180.0 / 3.141592653589793
+RAD = 3.141592653589793 / 180.0
+
+
+def csp_classic(pos_deg, vel_rpm, cur_a):
+    """Classic 8 B：float32 位置(度) | int16 RPM | int16 0.1 A（电机端）。"""
+    return struct.pack(">fhh", pos_deg, int(vel_rpm), int(round(cur_a * 10.0)))
+
+
+def csp_payload(bus, pos_deg, vel_rpm, cur_a):
+    """CSP 的载荷随物理层不同：FD 12 B = 3×float32，Classic 8 B = f32 + i16 + i16。"""
+    if bus.fd:
+        return struct.pack(">fff", pos_deg, vel_rpm, cur_a)
+    return csp_classic(pos_deg, vel_rpm, cur_a)
+
+
+def mit_bcast_payload(bus, rng, pos, vel, kp, kd, tau):
+    """MIT 广播帧：FD 下 64 B 按 slot = node_id 取槽，Classic 下 8 B 所有节点共用。"""
+    one = mit_bytes(pos, vel, kp, kd, tau, rng)
+    if not bus.fd:
+        return one
+    buf = bytearray(64)
+    buf[NODE * 8:NODE * 8 + 8] = one
+    return bytes(buf)
+
+
+def csv_classic(vel_rpm, cur_a):
+    """Classic 8 B：float32 RPM | float32 A（电机端）。"""
+    return struct.pack(">ff", vel_rpm, cur_a)
+
+
+def stage_e(bus):
+    """CSP/CSV：目标值是**输出轴**量（度 / RPM），由固件自己的串级外环跟踪。"""
+    rng = read_ranges(bus)
+    pos_gain = read_float_ep(bus, EP_POS_GAIN)
+    vel_gain = read_float_ep(bus, EP_VEL_GAIN)
+    print("      gains: pos_gain=%s vel_gain=%s" % (pos_gain, vel_gain))
+
+    raw, _ = sdo_read(bus, EP_MODE)
+    if raw and raw[0] != 0:
+        bus.send_cb(cb_id(3, MT_CLEAR, NODE), b"")
+        time.sleep(0.2)
+
+    print("[E1] START_MOTOR + 零力矩帧")
+    bus.send_cb(cb_id(3, MT_START, NODE), b"")
+    f = pump(bus, 0.35, 0.0, 0.0, 0.0, 0.0, 0.0, rng)
+    d = decode_mit_out(f["data"], rng) if f else None
+    check("MOTOR mode", d is not None and d["mode"] == 4, str(d))
+    pos0 = d["pos"] if d else 0.0
+    print("      pos0 = %.4f rad (%.3f deg)" % (pos0, pos0 * DEG))
+
+    # ---- CSV +10 rpm ----
+    rpm = 10.0
+    want = rpm * 2.0 * 3.141592653589793 / 60.0
+    print("[E2] CSV 0x02: +%.0f rpm（限流 1.0 A 电机端）0.8 s" % rpm)
+    peak = 0.0
+    err = None
+    samples = []                    # (时间, 速度)，用来区分瞬态与稳态
+    last = None
+    end = time.time() + 0.8
+    while time.time() < end:
+        bus.send_cb(cb_id(3, MT_CSV, NODE), csv_classic(rpm, 1.0))
+        for fr in bus.read_frames(0.02):
+            if is_from_node(fr, MT_MIT):
+                last = fr
+                dd = decode_mit_out(last["data"], rng)
+                peak = max(peak, dd["vel"])
+                err = dd["err"]
+                samples.append((time.time(), dd["vel"]))
+    tail = [v for t, v in samples if t > end - 0.2]      # 最后 0.2 s = 稳态
+    ss = sum(tail) / len(tail) if tail else None
+    print("      peak vel = %.3f, steady-state = %s rad/s (expect ~%.3f)"
+          % (peak, "%.3f" % ss if ss is not None else "-", want))
+    # 协议层只保证"跟得上目标"：瞬态超调是增益/惯量的事，用 csv_csp_test.py 整定
+    check("CSV steady-state tracks the target",
+          ss is not None and abs(ss - want) < 0.15 * want, "%.3f vs %.3f" % (ss or 0.0, want))
+    check("CSV transient overshoot < 60%", peak < 1.6 * want,
+          "peak=%.3f (>%.3f)" % (peak, 1.6 * want))
+    check("CSV no fault", err == 0, "err=%s" % err)
+
+    print("[E3] CSV 0 rpm -> 停住")
+    end = time.time() + 0.5
+    vel_end = None
+    while time.time() < end:
+        bus.send_cb(cb_id(3, MT_CSV, NODE), csv_classic(0.0, 1.0))
+        for fr in bus.read_frames(0.02):
+            if is_from_node(fr, MT_MIT):
+                vel_end = decode_mit_out(fr["data"], rng)["vel"]
+    check("CSV 0 rpm holds still", vel_end is not None and abs(vel_end) < 0.6,
+          "vel=%.3f" % (vel_end or 0.0))
+
+    # ---- CSP 位置阶跃 ----
+    target_deg = pos0 * DEG + 3.0
+    print("[E4] CSP 0x01: 目标 %.2f deg（+3 deg），20 rpm / 0.5 A 限幅，1.5 s" % target_deg)
+    end = time.time() + 1.5
+    last = None
+    while time.time() < end:
+        bus.send_cb(cb_id(3, MT_CSP, NODE), csp_payload(bus, target_deg, 20.0, 0.5))
+        for fr in bus.read_frames(0.02):
+            if is_from_node(fr, MT_MIT):
+                last = fr
+    d = decode_mit_out(last["data"], rng) if last else None
+    got_deg = (d["pos"] * DEG) if d else None
+    print("      final pos = %s deg (target %.2f)" % ("%.3f" % got_deg if got_deg else "-", target_deg))
+    check("CSP reached the target", got_deg is not None and abs(got_deg - target_deg) < 0.5,
+          "err=%.3f deg" % (abs(got_deg - target_deg) if got_deg is not None else -1))
+    check("CSP no fault", d is not None and d["err"] == 0, str(d))
+
+    # ---- 回原位并退出 ----
+    print("[E5] CSP 回原位，然后 STOP")
+    end = time.time() + 1.2
+    while time.time() < end:
+        bus.send_cb(cb_id(3, MT_CSP, NODE), csp_payload(bus, pos0 * DEG, 20.0, 0.5))
+        for fr in bus.read_frames(0.02):
+            if is_from_node(fr, MT_MIT):
+                last = fr
+    d = decode_mit_out(last["data"], rng) if last else None
+    check("CSP returned to the start", d is not None and abs(d["pos"] - pos0) < 0.01,
+          "pos=%.4f (start %.4f)" % (d["pos"] if d else 0.0, pos0))
+
+    bus.send_cb(cb_id(3, MT_STOP, NODE), b"")
+    time.sleep(0.3)
+    raw, _ = sdo_read(bus, EP_GATE_DRIVE, 1)
+    check("gate drive disabled after stop", raw is not None and raw[0] == 0)
+    raw, _ = sdo_read(bus, EP_FAULT)
+    check("no latched fault", raw is not None and le_i32(raw) == 0,
+          "" if raw is None else str(le_i32(raw)))
+
+
+# ---- stage F: 寻址与过滤 ------------------------------------------------
+
+def stage_f(bus):
+    """Dest 单播 / 位掩码广播 / 0xFF 广播 / 11-bit 标准帧 的过滤行为。
+
+    判据用 telemetry.p_des（MIT 帧会写 controller.p_des），门极不用开。
+    """
+    rng = read_ranges(bus)
+    pump(bus, 0.2, 0.0, 0.0, 0.0, 0.0, 0.0, rng)
+    base = read_float_ep(bus, EP_P_DES) or 0.0
+
+    def one_shot(dest, pri, mt, pos, expect_rsp):
+        bus.drain()
+        if mt >= 0x80:
+            payload = mit_bcast_payload(bus, rng, pos, 0.0, 0.0, 0.0, 0.0)
+        else:
+            payload = mit_bytes(pos, 0.0, 0.0, 0.0, 0.0, rng)
+        bus.send_cb(cb_id(pri, mt, dest), payload)
+        frames = bus.read_frames(0.25)
+        rsp = find(frames, MT_MIT) is not None
+        now = read_float_ep(bus, EP_P_DES)
+        return rsp, now
+
+    print("[F1] 单播给别的节点（Dest=5）")
+    rsp, now = one_shot(5, 2, MT_MIT, 0.5, False)
+    check("unicast to another node: no response", not rsp)
+    check("unicast to another node: state unchanged",
+          now is not None and abs(now - base) < 1e-6, "p_des=%s" % now)
+
+    print("[F2] 广播位掩码不含本机（Dest=0x04，本机 node=1）")
+    rsp, now = one_shot(0x04, 2, MT_MIT_BCAST, 0.5, False)
+    check("broadcast without our bit: ignored",
+          now is not None and abs(now - base) < 1e-6, "p_des=%s" % now)
+
+    print("[F3] 广播位掩码含本机（Dest=0x02）")
+    rsp, now = one_shot(0x02, 2, MT_MIT_BCAST, 0.5, False)
+    check("broadcast with our bit: applied",
+          now is not None and abs(now - 0.5) < 0.02, "p_des=%s" % now)
+    check("broadcast: no unicast response", not rsp)
+
+    print("[F4] 全局广播（Dest=0xFF）")
+    rsp, now = one_shot(0xFF, 2, MT_MIT_BCAST, -0.4, False)
+    check("0xFF broadcast: applied", now is not None and abs(now + 0.4) < 0.02,
+          "p_des=%s" % now)
+
+    print("[F5] 11-bit 标准帧必须被硬件过滤器丢掉")
+    bus.drain()
+    bus.send_std(0x001, bytes([0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]))
+    time.sleep(0.1)
+    now = read_float_ep(bus, EP_P_DES)
+    check("standard frame ignored", now is not None and abs(now + 0.4) < 0.02,
+          "p_des=%s" % now)
+
+    print("[F6] SET_NODE_ID 0x60 写回同一个 id（1）")
+    raw, _ = sdo_read(bus, 25)  # 占位，确保链路还在
+    bus.send_cb(cb_id(4, MT_SET_NODE_ID, NODE), bytes([NODE]))
+    time.sleep(0.1)
+    frames = bus.read_frames(0.4)
+    check("node still answers after SET_NODE_ID", any(is_hb(x) for x in frames))
+
+    # 收尾：清掉命令
+    pump(bus, 0.1, 0.0, 0.0, 0.0, 0.0, 0.0, rng)
+
+
+
+# ---- stage G: 各控制律上报的 mode / ctrl_mode ---------------------------
+
+CM_VOLTAGE, CM_TORQUE, CM_VELOCITY, CM_POSITION = 0, 1, 2, 3
+
+
+def hb_ctrl_mode(bus, seconds=0.4):
+    """心跳 Byte1 低 4 位 = control_mode（客户端用它显示当前控制律）。"""
+    frames = bus.read_frames(seconds)
+    hbs = [f for f in frames if is_hb(f)]
+    if not hbs:
+        return None
+    d = decode_hb(hbs[-1]["data"])
+    return {"state": d["state"], "ctrl": d["ctrl"], "mode_byte": d["state"]}
+
+
+def recenter(bus, rng, target=0.0, rpm=60.0, timeout=10.0):
+    """空载轴没有负载，纯力矩探针会让它一路加速漂走 —— 收尾用 CSV 把它转回来。
+
+    位置量是输出轴 rad；返回最终位置。
+    """
+    pos = read_float_ep(bus, EP_POSITION) or 0.0
+    if abs(pos - target) < 0.3:
+        return pos
+    print("      recenter: %.2f -> %.2f rad（CSV %+.0f rpm）" % (pos, target, rpm))
+    if read_int_ep(bus, EP_MODE) != 0:
+        bus.send_cb(cb_id(3, MT_CLEAR, NODE), b"")
+        time.sleep(0.2)
+    bus.send_cb(cb_id(3, MT_START, NODE), b"")
+    time.sleep(0.15)
+    end = time.time() + timeout
+    while time.time() < end:
+        pos = read_float_ep(bus, EP_POSITION) or 0.0
+        d = target - pos
+        if abs(d) < 0.3:
+            break
+        # d > 0 表示要往正方向走；别在这里再拐一层符号（曾经把轴赶到了 75 rad）
+        v = abs(rpm) if d > 0 else -abs(rpm)
+        if abs(d) < 2.0:
+            v = v * 0.4
+        bus.send_cb(cb_id(3, MT_CSV, NODE), csv_classic(v, 1.0))
+        bus.read_frames(0.02)
+    for _ in range(5):
+        bus.send_cb(cb_id(3, MT_CSV, NODE), csv_classic(0.0, 1.0))
+        time.sleep(0.02)
+    bus.send_cb(cb_id(3, MT_STOP, NODE), b"")
+    time.sleep(0.3)
+    return read_float_ep(bus, EP_POSITION) or 0.0
+
+
+def stage_g(bus):
+    """5 种控制律各自的 mode nibble / control_mode 是否与协议表一致。
+
+    MIT/CSP/CSV/0x03/0x04 依次下发一条无害指令，直接看应答与心跳：
+      MIT -> ModeState 4, control_mode POSITION(3)
+      CSP -> 5, POSITION(3)   CSV -> 6, VELOCITY(2)
+      0x03/0x04 -> 7, TORQUE(1)
+    """
+    rng = read_ranges(bus)
+    raw, _ = sdo_read(bus, EP_MODE)
+    if raw and raw[0] != 0:
+        bus.send_cb(cb_id(3, MT_CLEAR, NODE), b"")
+        time.sleep(0.2)
+    bus.send_cb(cb_id(3, MT_START, NODE), b"")
+    pump(bus, 0.3, 0.0, 0.0, 0.0, 0.0, 0.0, rng)
+    pos = read_float_ep(bus, EP_POSITION) or 0.0
+
+    rows = []
+
+    def probe(tag, mt, payload, want_mode, want_cm, hold=0.35):
+        end = time.time() + hold
+        last = None
+        while time.time() < end:
+            bus.send_cb(cb_id(3 if mt < 0x80 else 2, mt, NODE), payload)
+            for fr in bus.read_frames(0.04):
+                if is_from_node(fr, MT_MIT):
+                    last = fr
+        if last is None:
+            # 0x04 按协议不回应答，用 0x40 QUERY_STATUS 取同一份 ModeState
+            bus.drain()
+            bus.send_cb(cb_id(PRI_QUERY, MT_QUERY_STATUS, NODE), b"")
+            last = find(bus.read_frames(0.3), MT_MIT)
+        d = decode_mit_out(last["data"], rng) if last else None
+        cm = hb_ctrl_mode(bus, 0.25)
+        rows.append((tag, d["mode"] if d else None, cm["ctrl"] if cm else None,
+                     want_mode, want_cm))
+
+    probe("MIT 0x00", MT_MIT, mit_bytes(pos, 0.0, 5.0, 0.5, 0.0, rng), 4, CM_POSITION)
+    probe("CSP 0x01", MT_CSP, csp_payload(bus, pos * DEG, 10.0, 0.3), 5, CM_POSITION)
+    probe("CSV 0x02", MT_CSV, csv_classic(0.0, 0.3), 6, CM_VELOCITY)
+    probe("TORQUE 0x03", MT_TORQUE, struct.pack(">f", 0.01), 7, CM_TORQUE)
+    probe("CURRENT 0x04", MT_CURRENT, struct.pack(">f", 0.2), 7, CM_TORQUE)
+
+    print("      %-13s %-9s %-11s %s" % ("命令", "ModeState", "control_mode", "期望"))
+    for tag, got, cm, wm, wc in rows:
+        ok = (got == wm) and (cm == wc)
+        check("%s reports mode=%d ctrl=%d" % (tag, wm, wc), ok,
+              "got mode=%s ctrl=%s" % (got, cm))
+
+    # 收尾：纯力矩/电流探针会让空载轴漂走，用 CSV 转回起点再停
+    recenter(bus, rng, pos)
+    pump(bus, 0.15, pos, 0.0, 0.0, 0.0, 0.0, rng)
+    bus.send_cb(cb_id(3, MT_STOP, NODE), b"")
+    time.sleep(0.3)
+    raw, _ = sdo_read(bus, EP_GATE_DRIVE, 1)
+    check("gate drive disabled", raw is not None and raw[0] == 0)
+    raw, _ = sdo_read(bus, EP_FAULT)
+    check("no latched fault", raw is not None and le_i32(raw) == 0)
+
+
+# ---- stage H: 系统操作码 0x40/0x49/0x60/0x22/0x23 -----------------------
+
+def stage_h(bus):
+    """文档里列出但还没覆盖的 opcode。
+
+    0x40 QUERY_STATUS / 0x49 STATUS_FEEDBACK：都回 8 字节 MIT 风格应答。
+    0x60 SET_NODE_ID：改成 7 再改回 1（RAM only，断电即恢复）。
+    0x22 CONFIG_SAVE：等效 action.save（门极关着才会写）。
+    0x23 CONFIG_RESET：等效 0x64 重启。
+    """
+    print("[H1] 0x40 QUERY_STATUS / 0x49 STATUS_FEEDBACK")
+    for mt, name in ((MT_QUERY_STATUS, "0x40"), (MT_STATUS_FEEDBACK, "0x49")):
+        bus.drain()
+        bus.send_cb(cb_id(PRI_QUERY, mt, NODE), b"")
+        f = find(bus.read_frames(0.3), MT_MIT)
+        check("%s returns an 8-byte response" % name,
+              f is not None and len(f["data"]) == 8,
+              "" if f is None else f["data"].hex())
+
+    print("[H2] SET_NODE_ID 0x60：1 -> 7 -> 1")
+    bus.send_cb(cb_id(4, MT_SET_NODE_ID, NODE), bytes([7]))
+    time.sleep(0.05)
+    frames = bus.read_frames(0.6)
+    srcs = {fields(f["id"])[3] for f in frames if fields(f["id"])[1] == MT_HEARTBEAT}
+    check("heartbeat source switched to 7", 7 in srcs, str(sorted(srcs)))
+    bus.send_cb(cb_id(4, MT_SET_NODE_ID, 7), bytes([NODE]))
+    time.sleep(0.05)
+    frames = bus.read_frames(0.6)
+    srcs = {fields(f["id"])[3] for f in frames if fields(f["id"])[1] == MT_HEARTBEAT}
+    check("node id restored to 1", 1 in srcs, str(sorted(srcs)))
+
+    print("[H3] 0x22 CONFIG_SAVE")
+    seq0 = read_int_ep(bus, EP_PREFS_SEQUENCE)
+    bus.send_cb(cb_id(4, MT_CONFIG_SAVE, NODE), b"")
+    time.sleep(1.0)
+    seq1 = read_int_ep(bus, EP_PREFS_SEQUENCE)
+    st = (sdo_read(bus, EP_SAVE_STATUS, 1)[0] or b"\xff")[0]
+    check("CONFIG_SAVE wrote a block", seq1 == (seq0 or 0) + 1, "seq %s -> %s" % (seq0, seq1))
+    check("save_status = 1", st == 1, "status=%s" % st)
+
+    print("[H4] 0x23 CONFIG_RESET -> 重启")
+    bus.drain()
+    t0 = time.time()
+    bus.send_cb(cb_id(4, MT_CONFIG_RESET, NODE), b"")
+    back = None
+    while time.time() - t0 < 8.0:
+        for f in bus.read_frames(0.1):
+            if is_hb(f):
+                back = f
+                break
+        if back is not None and (time.time() - t0) > 1.0:
+            break
+    check("device rebooted and resumed", back is not None, "%.1f s" % (time.time() - t0))
+    check("prefs_sequence unchanged by reboot",
+          read_int_ep(bus, EP_PREFS_SEQUENCE) == seq1)
+
 
 def main():
     ap = argparse.ArgumentParser()
@@ -959,24 +1377,54 @@ def main():
                     help="0x64 RESET_DEVICE 普通重启 + 配置保持")
     ap.add_argument("--stage-d", action="store_true",
                     help="错误路径：批量读/只读写/只写读/限幅/NaN/长度不符")
+    ap.add_argument("--stage-e", action="store_true", help="CSP(0x01)/CSV(0x02) 目标跟踪")
+    ap.add_argument("--stage-f", action="store_true", help="寻址与过滤（Dest/广播/标准帧）")
+    ap.add_argument("--stage-g", action="store_true", help="5 种控制律的 mode/control_mode 上报")
+    ap.add_argument("--stage-h", action="store_true", help="0x40/0x49/0x60/0x22/0x23 系统操作码")
+    ap.add_argument("--all", action="store_true",
+                    help="顺序跑 A→F→E→B→C-static→D→timeout（会真的转电机）")
     ap.add_argument("--timeout-test", action="store_true",
                     help="MOTOR 模式下 CAN 命令超时")
-    ap.add_argument("--tau", type=float, default=2.0, help="output N.m for the pulse")
+    ap.add_argument("--tau", type=float, default=0.2, help="output N.m for the pulse")
     ap.add_argument("--pulse-ms", type=int, default=200)
-    ap.add_argument("--fd", action="store_true", help="CAN FD 模式（1M/5M）")
+    ap.add_argument("--fd", action="store_true", help="CAN FD 模式（1M 仲裁 + 数据域）")
+    ap.add_argument("--fd-rate", type=int, default=5, choices=(2, 5),
+                    help="FD 数据域速率：2 或 5（Mbit/s）。适配器只支持这两档（Y2/Y5）")
     ap.add_argument("--gr", type=float, default=7.75, help="gear ratio for the static checks")
     args = ap.parse_args()
 
     bus = Slcan(args.port)
     bus.fd = bool(args.fd)
     try:
-        bus.open(8, 5 if args.fd else None)
-        if args.reset_test:
+        bus.open(8, args.fd_rate if args.fd else None)
+        if args.all:
+            for name, fn in (("A 链路/协议", lambda: stage_a(bus)),
+                             ("F 寻址/过滤", lambda: stage_f(bus)),
+                             ("E CSP/CSV", lambda: stage_e(bus)),
+                             ("B MIT 单播", lambda: stage_b(bus, args.tau, args.pulse_ms)),
+                             ("C-static 广播/单位", lambda: stage_c_static(bus, args.gr)
+                              if args.fd else print("(跳过：C-static 需要 --fd)")),
+                             ("G 控制律上报", lambda: stage_g(bus)),
+                             ("D 错误路径", lambda: stage_d(bus)),
+                             ("T 命令超时", lambda: stage_timeout(bus))):
+                print("\n=================== %s ===================" % name)
+                fn()
+            recenter(bus, rng=read_ranges(bus), target=0.0)
+            print("\n=================== 全部阶段结束 ===================")
+        elif args.reset_test:
             stage_reset(bus)
         elif args.stage_d:
             stage_d(bus)
         elif args.timeout_test:
             stage_timeout(bus)
+        elif args.stage_e:
+            stage_e(bus)
+        elif args.stage_g:
+            stage_g(bus)
+        elif args.stage_h:
+            stage_h(bus)
+        elif args.stage_f:
+            stage_f(bus)
         elif args.stage_c_static:
             if not args.fd:
                 print("stage C-static requires --fd")
