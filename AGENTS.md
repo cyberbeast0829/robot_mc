@@ -175,6 +175,19 @@ Same shape as upstream, with these N32 names:
   模式），`action.tune_gains` 再按 `config.omega_c` / `config.tune_margin` 算出
   `vel_gain` / `vel_integrator_gain` / `pos_gain` 写进 RAM（`motion_tune_gains()`，
   公式与台架依据见 `docs/DEV.md`）。两个 action 都**不自动保存**。
+- **输入整形**（`config.input_mode`，编号同 ODrive 的 `InputMode`）只整形喂给控制环的
+  设定值，**不选控制环**（那是 `command.mode`）：0 忽略/1 直通/**2 VEL_RAMP（默认）**/
+  3 POS_FILTER/5 TRAP_TRAJ/6 TORQUE_RAMP/9 MIT；4/7/8 不支持，按直通。
+  - 3/5 是**轨迹发生器**（位置环频率上产出 `(pos, vel)`），轨迹速度**取代**帧间
+    前馈 `pos_ff`（叠加会过冲）；它们自己就平滑，**不再叠加** `accel_limit` 的斜率。
+  - `ml_trap_*` 是 ODrive `trapTraj.cpp` 的逐行移植；`ml_posf_*` 是 ODrive
+    `INPUT_MODE_POS_FILTER` 的二阶跟踪（ki=2·bw、kp=ki²/4，kp·dt≤0.5 自动压增益）。
+  - `motion_seed()` / 模式变化时清 `pos_trap.planned` 与 `pos_filter.seeded`，
+    下一拍从**实测位置**起步；`zero_commands()` 置 `input_mode_prev = 0xFF` 强制重播种。
+  - `config.enable_vel_limit`（默认 true）关掉后 CSV/CSP 与 CYBERBEAST 帧解析都不再
+    压到 `v_max`，`command.v_des` 端点也改成固定 ±200 rad/s（否则写不进去）；
+    `config.enable_torque_vel_lim`（默认 false）在阻抗/力矩模式按
+    `i_q = clamp(i_q, (v_max−v)·vel_gain, (−v_max−v)·vel_gain)` 限速（安培域，量纲天然成立）。
 
 ATIM1 update/TRGO and the control ISR are fixed at the PWM **peak**, inside the
 low-side sampling window. Preserve `tim.c`'s startup sequence: load the internal
@@ -194,6 +207,32 @@ Invariants carried from upstream — keep them:
 - `fault_shutdown()` (in `n32h47x_48x_it.c`) must stay register-writes-only: gate drive off
   via the ATIM1 BKDT bits (never SPI, never assume the bus is usable).
 
+## 保护与限幅（P0，2026-11）
+
+阈值全部是参数，**不要往 `hw_config.h` 加回编译期常量**
+（`V_BUS_FAULT` 已删除，改成 `config.vbus_ov_trip`）：
+
+- `check_faults()`（ISR）：`FAULT_OV` 用 `config.vbus_ov_trip`（任何状态都查）；
+  `FAULT_UV` 用 `config.vbus_uv_trip`，**只在门极使能时**查 + ~10 ms 去抖
+  （USB 单独供电时 `v_bus=0`，否则一上电就锁故障把人挡在菜单外）；
+  `FAULT_FET_OT`/`FAULT_MOT_OT` 在 `hi + 5 °C` 时锁存（与 ODrive 的 `do_checks()` 一致）。
+- `commutate()` 每拍算一次电流上限：`I_MAX` × 温度降流（`[lo,hi]` 线性）× 
+  `config.torque_lim/(KT·GR)`，再按估算母线电流 `config.i_dc_max` 回压指令。
+  温度保护关闭时**完全不影响** `I_MAX`。
+- **NTC 温度在主循环算**（`update_thermistors()`，从 `run_fsm_slow()` 第一件事调用），
+  不在 40 kHz 中断里算；`dt` 由 `controller.loop_count` 的差得出（主循环没有固定周期）。
+  换算照搬 ODrive `ThermistorCurrentLimiter` 的四阶多项式 + 两级 0.1 s 低通，
+  MOS=`adc_measurements_[0]`、电机=`adc_measurements_[2]`。
+  ⚠ 系数是 ODrive 板的，CBL89 上台架先核对室温读数，**校正前不要打开
+  `fet_temp_en` / `mot_temp_en`**。
+- **母线电流/功率是估算值**（没有直流分流器）：`P_elec = 1.5·V_PER_CMD·(v_d·i_d+v_q·i_q)`，
+  `i_bus = P_elec/v_bus`，`mech_power = i_q_filt·KT·GR·dtheta_mech`。只能做监控和软限幅，
+  **不能当保护**。`V_PER_CMD` 现在在 `hw_config.h`，`calibration.c` 的 `CAL_V_PER_CMD`
+  也指向它 —— 改 `svm()`/`DTC_*` 时一处改完即可。
+- `config.pre_calibrated` 是**进电机模式的前置条件**：三层门禁
+  （endpoint `require` / `cb_start_motor()` / `run_fsm()` 兜底）。标定完成时置 1，
+  进标定或 `action.reset_config` 清 0。别为了"方便调试"把它默认设 1。
+
 ## 标定
 
 `CALIBRATION_MODE` 的 ISR 链路是 `order_phases()` → `calibrate_encoder()` →
@@ -201,6 +240,9 @@ Invariants carried from upstream — keep them:
 `measure_phase_resistance` / `measure_phase_inductance` / `measure_ld_lq` /
 `measure_flux_linkage` 的移植，用两段直流外推 R、±2 V 翻转测 L、锁住转子测
 Ld/Lq、开环升速测磁链并令 `KT = 1.5·PPAIRS·λ`。测试电流 = `min(I_CAL, I_MAX)`。
+
+- `run_fsm_slow()` 在 `done_ordering && done_cal && done_rl` 全为真后先置
+  `PRE_CALIBRATED = 1` 再存盘；这一刻才算"标定完成"（见上一节的进模式门禁）。
 
 - 极对数（`order_phases()`）：转一个电周期后**保持末相位 0.75 s 再取角度**，否则
   转子加速滞后会让 14 极对算成 15（0.95° 机械滞后就够）；两端各平均 0.1 s。
@@ -307,6 +349,11 @@ Zadig 装 WinUSB（CDC 不受影响）。
   会自动置 `reboot_pending`（`CAN_ID/CAN_PROT/CAN_BAUD` 运行期生效，改了不重启
   会让主站失联）；`action.reboot` 不要动 `_reboot_cookie`（`main.c` 的
   `!= 42 → 再复位一次` 是启动状态不确定时的保险）。
+  **唯一的例外是 `action.enter_dfu_mode`**：它置 `state.dfu_pending`，`run_fsm_slow()`
+  在应答发完后把 cookie 写成 `0xDEADBEEF` 再复位，等价于串口菜单的 `d`
+  （`early_start_checks()` 延时 ~2 s 后 `Jump_To_BOOT()`）。两条复位路径共用
+  `reboot_armed/reboot_deadline`，靠 `reboot_dfu` 区分；**不要在 handler 里直接复位**，
+  否则 USB/CAN 的应答发不出去。
 - **`command.*`（t_ff/p_des/v_des/kp/kd）有两条硬语义**：写入必须刷新命令租约
   （`"set": "... = v; controller.timeout = 0;"`，与 CAN 帧一致，否则默认 100 ms
   的 `config.can_timeout` 一到就会被 `zero_commands()` 清掉；**不要**用把
@@ -407,6 +454,14 @@ SysInit 段）。
   `can_tx/rx`, `prefs`) are defined in `main.c` and `extern`'d via `structs.h`. (The upstream
   `drv` singleton was removed together with the DRV8323.)
 - Config params in `user_config.h` alias `__float_reg[]`/`__int_reg[]`; `ENCODER_LUT` is
-  `__int_reg[6..133]`; `VERSION_NUM` lives in `main.h` (so CAN can report it).
+  `__int_reg[6..133]`；**固件版本只有 `main.h` 的 `FW_VERSION_MAJOR/MINOR/REVISION/
+  UNRELEASED` 一处**（endpoint `system.fw_version_*`、CYBERBEAST 设备信息帧、启动
+  横幅都由它派生；老协议 `CAN_VAR_VERSION` 按协议仍是 float，编码为
+  `major + 0.01*minor`（minor 占百分位、0..99，靠 `_Static_assert` 守住；
+  用 0.1 的话 minor ≥ 10 会进位到整数部分）。曾经的手写 float `VERSION_NUM` /
+  `system.version` 已删除，别再加回来。
+  **布尔标志**（`PRE_CALIBRATED` / `FET_TEMP_EN` / `MOT_TEMP_EN`）用 `main.c` 里的
+  `uint8_t` 全局（`*_flag`）而不是 `__int_reg`：TLV 里 bool 记录只有 1 字节，
+  塞进 `int` 只会写低字节。新增 bool 参数照这个来。
 - Keil/AC6 `NO_INIT` trick: `__attribute__((section(".bss.NO_INIT")))` (used for
   `_reboot_cookie`) must stay in sync with the scatter file `Keil/ODrive_N32.sct`.

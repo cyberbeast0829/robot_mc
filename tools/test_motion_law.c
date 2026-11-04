@@ -16,6 +16,7 @@
 
 #include <stdio.h>
 #include <stdint.h>
+#include <string.h>
 #include <math.h>
 
 #include "motion_law.h"
@@ -301,6 +302,173 @@ static void test_tune_gains(void)
     CHECK(ml_tune_gains(j, kt, gr, 0.0f, 1.0f, &vg, &vig, &pg) == 0);
 }
 
+/* ---- 输入整形：加速/减速分开的斜率限制 ---- */
+static void test_slew2(void)
+{
+    /* 加速用 accel：0 → 1，accel 1000、dt 25 us ⇒ 每拍 0.025 */
+    CHECK_NEAR(ml_slew2(0.0f, 1.0f, 1000.0f, 100.0f, DT25), 0.025f, 1e-6f);
+
+    /* 减速用 decel：1 → 0（目标为 0 也算减速），同号收缩 ⇒ 每拍 0.0025 */
+    CHECK_NEAR(ml_slew2(1.0f, 0.0f, 1000.0f, 100.0f, DT25), 0.9975f, 1e-6f);
+    /* 同号收缩同样走 decel */
+    CHECK_NEAR(ml_slew2(1.0f, 0.2f, 1000.0f, 100.0f, DT25), 0.9975f, 1e-6f);
+
+    /* 反向（目标与当前异号）算加速，不受 decel 限制 */
+    CHECK_NEAR(ml_slew2(-1.0f, 1.0f, 1000.0f, 100.0f, DT25), -0.975f, 1e-6f);
+
+    /* |target| > |current| 且同号 → 加速 */
+    CHECK_NEAR(ml_slew2(0.5f, 1.0f, 1000.0f, 100.0f, DT25), 0.525f, 1e-6f);
+
+    /* decel = 0 ⇒ 退回 accel（老参数含义不变） */
+    CHECK_NEAR(ml_slew2(1.0f, 0.0f, 1000.0f, 0.0f, DT25), 0.975f, 1e-6f);
+
+    /* NaN 目标保持当前值 */
+    CHECK_NEAR(ml_slew2(0.5f, NAN, 1000.0f, 100.0f, DT25), 0.5f, 0.0f);
+}
+
+/* ---- TRAP_TRAJ：规划与求值 ---- */
+static void test_trap_plan_eval(void)
+{
+    ml_trap_t tr;
+    float p, v, a;
+
+    /* 长行程（梯形）：0 → 10 rad，vmax 5，a = d = 10
+     * 加速 0.5 s 走 1.25 rad，减速同样，匀速 7.5 rad / 5 = 1.5 s */
+    memset(&tr, 0, sizeof(tr));
+    CHECK(ml_trap_plan(&tr, 10.0f, 0.0f, 0.0f, 5.0f, 10.0f, 10.0f) == 1);
+    CHECK_NEAR(tr.ta, 0.5f, 1e-4f);
+    CHECK_NEAR(tr.tv, 1.5f, 1e-4f);
+    CHECK_NEAR(tr.td, 0.5f, 1e-4f);
+    CHECK_NEAR(tr.tf, 2.5f, 1e-4f);
+
+    ml_trap_eval(&tr, 0.0f, &p, &v, &a);
+    CHECK_NEAR(p, 0.0f, 1e-5f);
+    CHECK_NEAR(a, 10.0f, 1e-5f);
+    ml_trap_eval(&tr, 0.5f, &p, &v, &a);       /* 加速段结束：1.25 rad, 5 rad/s */
+    CHECK_NEAR(p, 1.25f, 1e-4f);
+    CHECK_NEAR(v, 5.0f, 1e-4f);
+    ml_trap_eval(&tr, 1.0f, &p, &v, &a);       /* 匀速中：5.0 + 5*0.5 = 3.75 */
+    CHECK_NEAR(p, 3.75f, 1e-4f);
+    CHECK_NEAR(v, 5.0f, 1e-4f);
+    CHECK_NEAR(a, 0.0f, 1e-6f);
+    ml_trap_eval(&tr, 2.5f, &p, &v, &a);       /* 结束 */
+    CHECK_NEAR(p, 10.0f, 1e-4f);
+    CHECK_NEAR(v, 0.0f, 1e-6f);
+
+    /* 短行程：0 → 0.5 rad 到不了 5 rad/s ⇒ 三角形，没有匀速段 */
+    memset(&tr, 0, sizeof(tr));
+    CHECK(ml_trap_plan(&tr, 0.5f, 0.0f, 0.0f, 5.0f, 10.0f, 10.0f) == 1);
+    CHECK_NEAR(tr.tv, 0.0f, 0.0f);
+    CHECK(tr.vr < 5.0f && tr.vr > 0.0f);
+    ml_trap_eval(&tr, tr.tf, &p, &v, &a);
+    CHECK_NEAR(p, 0.5f, 1e-4f);
+    CHECK_NEAR(v, 0.0f, 1e-5f);
+
+    /* 反向同样对称 */
+    memset(&tr, 0, sizeof(tr));
+    CHECK(ml_trap_plan(&tr, -10.0f, 0.0f, 0.0f, 5.0f, 10.0f, 10.0f) == 1);
+    ml_trap_eval(&tr, tr.tf, &p, &v, &a);
+    CHECK_NEAR(p, -10.0f, 1e-4f);
+    CHECK_NEAR(v, 0.0f, 1e-5f);
+
+    /* 起始速度已高于巡航速度：先减速（运动方向为负，所以要正的加速度） */
+    memset(&tr, 0, sizeof(tr));
+    CHECK(ml_trap_plan(&tr, 0.0f, 10.0f, -5.0f, 2.0f, 10.0f, 10.0f) == 1);
+    CHECK(tr.ar > 0.0f);
+    ml_trap_eval(&tr, tr.tf, &p, &v, &a);
+    CHECK_NEAR(p, 0.0f, 1e-4f);
+    CHECK_NEAR(v, 0.0f, 1e-5f);
+
+    /* 非法限值一律拒绝 */
+    memset(&tr, 0, sizeof(tr));
+    CHECK(ml_trap_plan(&tr, 1.0f, 0.0f, 0.0f, 0.0f, 10.0f, 10.0f) == 0);
+    CHECK(ml_trap_plan(&tr, 1.0f, 0.0f, 0.0f, 5.0f, 0.0f, 10.0f) == 0);
+    CHECK(ml_trap_plan(&tr, 1.0f, 0.0f, 0.0f, 5.0f, 10.0f, 0.0f) == 0);
+}
+
+/* ---- TRAP_TRAJ：按拍推进 ---- */
+static void test_trap_step(void)
+{
+    ml_trap_t tr;
+    float p = 0.0f, v = 0.0f;
+    const float dt = 1.0f / 4000.0f;
+    int steps = 0;
+    int moving = 1;
+    float vmax_seen = 0.0f;
+
+    memset(&tr, 0, sizeof(tr));
+    /* 0 → 2 rad，1 rad/s 巡航，10 rad/s² 加减速：约 2.1 s */
+    while (moving && (steps < 40000)) {
+        moving = ml_trap_step(&tr, dt, 2.0f, 1.0f, 10.0f, 10.0f, &p, &v);
+        if (fabsf(v) > vmax_seen) { vmax_seen = fabsf(v); }
+        steps++;
+    }
+    CHECK_NEAR(p, 2.0f, 1e-5f);                 /* 终点精确 */
+    CHECK_NEAR(v, 0.0f, 1e-6f);
+    CHECK(vmax_seen <= 1.0f + 1e-4f);           /* 不超巡航速度 */
+    CHECK(steps > 8000 && steps < 9000);        /* ≈ 2.1 s * 4000 */
+
+    /* 到位后再调用：停在终点，返回 0，位置不漂 */
+    moving = ml_trap_step(&tr, dt, 2.0f, 1.0f, 10.0f, 10.0f, &p, &v);
+    CHECK(moving == 0);
+    CHECK_NEAR(p, 2.0f, 1e-5f);
+    CHECK_NEAR(tr.t, tr.tf, 0.0f);              /* 时间冻结，不会无限增长 */
+
+    /* 目标中途改变：从当前点续规划，不跳变 */
+    memset(&tr, 0, sizeof(tr));
+    p = 0.0f; v = 0.0f;
+    for (int i = 0; i < 100; i++) { ml_trap_step(&tr, dt, 5.0f, 1.0f, 10.0f, 10.0f, &p, &v); }
+    float p_before = p;
+    CHECK(p > 0.0f && p < 1.0f);
+    ml_trap_step(&tr, dt, -1.0f, 1.0f, 10.0f, 10.0f, &p, &v);   /* 立刻反向 */
+    CHECK_NEAR(p, p_before, 0.02f);             /* 一拍内不跳 */
+    CHECK(tr.xf == -1.0f);
+
+    /* 非法的 vel/accel：退化成直接跟随目标，不卡死 */
+    memset(&tr, 0, sizeof(tr));
+    p = 0.0f; v = 9.0f;
+    moving = ml_trap_step(&tr, dt, 3.0f, 0.0f, 0.0f, 0.0f, &p, &v);
+    CHECK(moving == 0);
+    CHECK_NEAR(p, 3.0f, 0.0f);
+    CHECK_NEAR(v, 0.0f, 0.0f);
+}
+
+/* ---- POS_FILTER：二阶跟踪滤波 ---- */
+static void test_posf(void)
+{
+    ml_posf_t f;
+    float p = 0.0f, v = 0.0f;
+    const float dt = 1.0f / 4000.0f;
+
+    memset(&f, 0, sizeof(f));
+    ml_posf_reset(&f, 0.0f, 0.0f);
+
+    /* 目标阶跃 1 rad：位置单调逼近、速度先升后落、稳态无超调 */
+    float p_prev = 0.0f;
+    int converged = -1;
+    for (int i = 0; i < 20000; i++) {
+        ml_posf_step(&f, 1.0f, 0.0f, 10.0f, dt, &p, &v);
+        CHECK(p >= p_prev - 1e-6f);             /* 临界阻尼不应过冲 */
+        p_prev = p;
+        if ((converged < 0) && (fabsf(p - 1.0f) < 1e-3f)) { converged = i; }
+    }
+    CHECK_NEAR(p, 1.0f, 1e-3f);
+    CHECK_NEAR(v, 0.0f, 1e-3f);
+    CHECK(converged > 0 && converged < 8000);   /* bw = 10 rad/s ⇒ 约 0.5 s 收敛 */
+
+    /* 带宽过大时自动压低增益，不能发散 */
+    memset(&f, 0, sizeof(f));
+    ml_posf_reset(&f, 0.0f, 0.0f);
+    for (int i = 0; i < 20000; i++) { ml_posf_step(&f, 1.0f, 0.0f, 100000.0f, dt, &p, &v); }
+    CHECK(isfinite(p) && fabsf(p - 1.0f) < 0.05f);
+
+    /* NaN 目标：保持当前值 */
+    memset(&f, 0, sizeof(f));
+    ml_posf_reset(&f, 0.25f, 0.0f);
+    ml_posf_step(&f, NAN, 0.0f, 10.0f, dt, &p, &v);
+    CHECK_NEAR(p, 0.25f, 1e-6f);
+}
+
 int main(void)
 {
     test_clamp();
@@ -312,6 +480,10 @@ int main(void)
     test_pll_converge();
     test_fit_and_inertia();
     test_tune_gains();
+    test_slew2();
+    test_trap_plan_eval();
+    test_trap_step();
+    test_posf();
 
     if (failures == 0) {
         printf("test_motion_law: all tests passed\n");

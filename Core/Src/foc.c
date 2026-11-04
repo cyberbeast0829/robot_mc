@@ -13,6 +13,7 @@
 #include "hw_config.h"
 #include "user_config.h"
 #include "timing.h"
+#include <math.h>
 
 extern uint16_t adc_measurements_[3];
 
@@ -198,8 +199,89 @@ void reset_foc(ControllerStruct *controller){
     controller->v_d = 0;
     controller->fw_int = 0;
     controller->otw_flag = 0;
-
+    controller->i_bus = 0;
+    controller->i_bus_filt = 0;
+    controller->p_elec = 0;
+    controller->mech_power = 0;
+    controller->uv_cycles = 0;
+    /* 电流上限由 commutate() 每拍重算（温度降流 + 转矩上限）。这里先给一个有效值，
+     * 否则进电机模式的第一拍 torque_control() 会用上一次留下的（可能是 0）上限 */
+    controller->i_max = I_MAX;
+    controller->temp_i_lim = I_MAX;
     }
+
+/* ---- NTC 温度 --------------------------------------------------------------
+ *
+ * 照搬 ODrive Board/v3 的 ThermistorCurrentLimiter：把 ADC 原始值归一化到
+ * [0,1]（x = count/4096，即相对参考电压的比例），用四阶 Horner 多项式换算成 °C，
+ * 再过两级一阶低通（每级 tau = 0.1 s，等效二阶、约 0.26 s 的时间常数）。
+ *
+ * 系数就是 ODrive 板子的那两组（MOS 板载 NTC / 外接电机 NTC）。CBL89 的分压网络
+ * 如果与 ODrive 不同，读数会偏——所以在台架上用室温核对一次；偏差大就改这两组
+ * 系数（换算结构不变）。
+ *
+ * 上下文：本硬件 MOS_TEMP = ADC2_CH2 → adc_measurements_[0]，
+ * MOT_TEMP = ADC3_CH6 → adc_measurements_[2]（见 main.c 的 start_general_purpose_adc）。
+ * 这两个 DMA 目标每个 PWM 周期刷新，主循环读到的永远是最新值。
+ * 只用于监控和（默认关闭的）温度保护：不参与电流环，也不在这里 printf。 */
+static const float fet_thermistor_poly[] = { 296.7f, -385.7f, 257.1f, -26.81f };
+static const float mot_thermistor_poly[] = {-296.7f, 504.3f, -375.8f, 141.3f };
+
+#define THERM_LPF_TAU	0.1f
+
+static float thermistor_celsius(const float *c, unsigned n, float x){
+	float v = c[n - 1u];
+	for(int i = (int)n - 2; i >= 0; i--){v = v*x + c[i];}
+	return v;
+}
+
+static float thermistor_step(float raw, float *stage1, float *stage2, float k){
+	*stage1 += k*(raw - *stage1);
+	*stage2 += k*(*stage1 - *stage2);
+	return *stage2;
+}
+
+void update_thermistors(ControllerStruct *controller){
+	/* 两级 LPF 的状态跨调用保留；上电时先从 0 开始（会被第一级很快拉上来） */
+	static float fet_s1, fet_s2, mot_s1, mot_s2;
+	static uint32_t last_count;
+	static uint8_t seeded;
+
+	/* dt 从控制周期计数算出：主循环没有固定周期（打印/擦 flash 都会拉长一拍），
+	 * 用固定 dt 会让滤波时间常数随固件行为漂移。夹在 [0.05 ms, 500 ms] 之间，
+	 * 防止计数回绕或长时间停在这里时把滤波做废 */
+	uint32_t now = (uint32_t)controller->loop_count;
+	float dt = (float)(now - last_count) * DT;
+	last_count = now;
+	if(dt < 0.00005f){dt = 0.00005f;}
+	if(dt > 0.5f){dt = 0.5f;}
+
+	float k = dt/THERM_LPF_TAU;
+	if(k > 1.0f){k = 1.0f;}
+
+	float fet_raw = thermistor_celsius(fet_thermistor_poly,
+	                                   sizeof(fet_thermistor_poly)/sizeof(fet_thermistor_poly[0]),
+	                                   (float)adc_measurements_[0]/ADC_FULL_SCALE);
+	float mot_raw = thermistor_celsius(mot_thermistor_poly,
+	                                   sizeof(mot_thermistor_poly)/sizeof(mot_thermistor_poly[0]),
+	                                   (float)adc_measurements_[2]/ADC_FULL_SCALE);
+
+	if(!seeded){
+		fet_s1 = fet_s2 = fet_raw;
+		mot_s1 = mot_s2 = mot_raw;
+		seeded = 1;
+	}
+
+	float fet = thermistor_step(fet_raw, &fet_s1, &fet_s2, k);
+	float mot = thermistor_step(mot_raw, &mot_s1, &mot_s2, k);
+	/* 换算出来的 NaN（系数/通道异常）不能进比较，也不能进遥测 */
+	if(!isfinite(fet)){fet = 0.0f;}
+	if(!isfinite(mot)){mot = 0.0f;}
+
+	controller->mos_temp = fet;
+	controller->mot_temp = mot;
+}
+
 
 void reset_observer(ObserverStruct *observer){
 /*
@@ -275,7 +357,65 @@ void commutate(ControllerStruct *controller, EncoderStruct *encoder)
         * every state - see the note there */
 
        controller->v_max = OVERMODULATION*controller->v_bus_filt*(DTC_MAX-DTC_MIN)*SQRT1_3;
-       controller->i_max = I_MAX; //I_MAX*(!controller->otw_flag) + I_MAX_CONT*controller->otw_flag;
+
+       /* ---- 母线电流 / 机械功率（估算，见下）----
+        * 硬件没有直流分流器：用上一拍的 dq 电压和的功率反推。
+        *   P_elec = 1.5 * V_PER_CMD * (v_d*i_d + v_q*i_q)   [W]
+        *   i_bus  = P_elec / v_bus                           [A]
+        * 1.5 是幅值不变 dq 变换的功率系数。v_d/v_q 是上一拍的输出（指令在上一拍
+        * 已经生效），所以误差在一个控制周期内，对监控和软限幅足够。
+        * 这不是精密测量，不能拿它当保护阈值 —— 保护仍然靠相电流与母线电压。 */
+       {
+           float vbus = controller->v_bus_filt;
+           float p_elec = 1.5f*V_PER_CMD*(controller->v_d*controller->i_d
+                                         + controller->v_q*controller->i_q);
+           float i_bus = (vbus > 1.0f) ? (p_elec/vbus) : 0.0f;
+           if(!isfinite(i_bus)){i_bus = 0.0f;}
+           if(!isfinite(p_elec)){p_elec = 0.0f;}
+           controller->p_elec = p_elec;
+           controller->i_bus = i_bus;
+           controller->i_bus_filt = (1.0f-VBUS_FILT_ALPHA)*controller->i_bus_filt
+                                  + VBUS_FILT_ALPHA*i_bus;
+           /* 机械功率：输出端转矩 × 输出轴角速度（>0 输出机械功，<0 回馈） */
+           controller->mech_power = controller->i_q_filt*KT*GR*controller->dtheta_mech;
+       }
+
+       /* ---- 电流上限：I_MAX 再叠加温度降流与转矩上限 ----
+        * 温度保护关闭时完全不影响 I_MAX（默认就是关）。 */
+       {
+           float i_lim = I_MAX;
+
+           if(FET_TEMP_EN && (FET_TEMP_HI > FET_TEMP_LO)){
+               float frac = (FET_TEMP_HI - controller->mos_temp)/(FET_TEMP_HI - FET_TEMP_LO);
+               if(frac < 0.0f){frac = 0.0f;}
+               if(frac > 1.0f){frac = 1.0f;}
+               i_lim *= frac;
+           }
+           if(MOT_TEMP_EN && (MOT_TEMP_HI > MOT_TEMP_LO)){
+               float frac = (MOT_TEMP_HI - controller->mot_temp)/(MOT_TEMP_HI - MOT_TEMP_LO);
+               if(frac < 0.0f){frac = 0.0f;}
+               if(frac > 1.0f){frac = 1.0f;}
+               i_lim *= frac;
+           }
+           /* config.torque_lim 是**输出端** N·m，与 command.t_ff / telemetry.torque
+            * 同量纲；换算到电机端安培是 /(KT*GR) */
+           if((TORQUE_LIM > 0.0f) && (KT*GR > 0.0f)){
+               float t_lim = TORQUE_LIM/(KT*GR);
+               if(t_lim < i_lim){i_lim = t_lim;}
+           }
+           controller->i_max = i_lim;
+           controller->temp_i_lim = i_lim;
+       }
+
+       /* 母线电流软限幅：只按比例回压，不锁故障（估算值不足以判断过流）。
+        * 只压不抬，所以不会因为估算噪声把指令放大 */
+       if((I_DC_MAX > 0.0f) && (controller->i_bus_filt > I_DC_MAX)){
+           float scale = I_DC_MAX/controller->i_bus_filt;
+           if(scale < 0.0f){scale = 0.0f;}
+           if(scale > 1.0f){scale = 1.0f;}
+           controller->i_q_des *= scale;
+           controller->i_d_des *= scale;
+       }
 
        limit_norm(&controller->i_d_des, &controller->i_q_des, controller->i_max);	// 2.3 us
 
@@ -356,9 +496,34 @@ void commutate_open_loop(ControllerStruct *controller, EncoderStruct *encoder)
     }
 
 void torque_control(ControllerStruct *controller){
-	controller->t_ff_filt = 0.9f*controller->t_ff_filt + 0.1f*controller->t_ff;
+	/* TORQUE_RAMP：把 t_ff 按 config.torque_ramp_rate（N·m/s）限斜率，再走原来的
+	 * 一阶滤波。两者目的不同：斜坡限制的是“变化有多快”，滤波抑制的是尖峰。
+	 * 只在 input_mode == 6 时生效；其他模式下 t_ff_slew 直接跟随，行为与改动前一致。 */
+	float t_ff = controller->t_ff;
+	if((INPUT_MODE == INPUT_MODE_TORQUE_RAMP) && (TORQUE_RAMP_RATE > 0.0f)){
+		controller->t_ff_slew = ml_slew(controller->t_ff_slew, t_ff, TORQUE_RAMP_RATE, DT);
+		t_ff = controller->t_ff_slew;
+	}
+	else{
+		controller->t_ff_slew = t_ff;
+	}
+
+	controller->t_ff_filt = 0.9f*controller->t_ff_filt + 0.1f*t_ff;
     float torque_des = controller->kp*(controller->p_des - controller->theta_mech) + controller->t_ff_filt + controller->kd*(controller->v_des - controller->dtheta_mech);
     controller->i_q_des = fast_fmaxf(fast_fminf(torque_des/(KT*GR), controller->i_max), -controller->i_max);
+
+    /* config.enable_torque_vel_lim（默认关）：阻抗/力矩/电流模式下也限制速度。
+     * 与 ODrive 的 limitVel() 同构，只是直接在安培域做 —— VEL_GAIN 就是
+     * A/(rad/s)，所以 (v_lim - v)·vel_gain 的量纲正好是 A。
+     * 高速时把转矩往“刹车”方向压：超过上限就没有往超速方向推的余量。 */
+    if(TORQUE_VEL_LIM_EN && (V_MAX > 0.0f) && (VEL_GAIN > 0.0f)){
+        float v = controller->dtheta_mech;
+        float i_hi = (V_MAX - v)*VEL_GAIN;
+        float i_lo = (-V_MAX - v)*VEL_GAIN;
+        if(controller->i_q_des > i_hi){controller->i_q_des = i_hi;}
+        if(controller->i_q_des < i_lo){controller->i_q_des = i_lo;}
+    }
+
     if(controller->v_bus > V_BUS_MAX){controller->i_q_des = 0;}
     controller->i_d_des = 0.0f;
 
@@ -375,9 +540,33 @@ void check_faults(ControllerStruct *controller){
 	 * (the threshold used to be computed once at boot) */
 	controller->i_oc_limit = I_OC_FAULT_FACTOR*I_MAX;
 
-	if(controller->v_bus > V_BUS_FAULT){
+	/* 母线过压：阈值来自 config.vbus_ov_trip（默认 67 V，原编译期常量）。
+	 * 任何状态都检查 —— 门极关闭时母线也可能被外部推高 */
+	if(controller->v_bus > VBUS_OV_TRIP){
 		if(!(controller->fault & FAULT_OV)){controller->fault_vbus = controller->v_bus;}
 		controller->fault |= FAULT_OV;
+	}
+	/* 母线欠压：只在门极使能时判定。USB 单独供电（没有母线电压）时 v_bus 就是
+	 * 0，若在任何状态都检查，一上电就会锁存故障、把用户挡在菜单外。
+	 * 加速/制动时母线会瞬间跌落，所以用 ~10 ms 去抖（40 kHz ⇒ 400 拍） */
+	if((VBUS_UV_TRIP > 0.0f) && controller->gate_drive_enabled){
+		if(controller->v_bus < VBUS_UV_TRIP){
+			if(controller->uv_cycles < 0xFFFFu){controller->uv_cycles++;}
+			if(controller->uv_cycles >= 400u){
+				if(!(controller->fault & FAULT_UV)){controller->fault_vbus = controller->v_bus;}
+				controller->fault |= FAULT_UV;
+			}
+		}
+		else{controller->uv_cycles = 0;}
+	}
+	else{controller->uv_cycles = 0;}
+	/* 过温：mos_temp/mot_temp 由主循环（update_thermistors）更新。与 ODrive 一致：
+	 * 达到 hi 时电流上限已经降到 0，再高出 5 °C 才锁故障，避免在阈值上抖动 */
+	if(FET_TEMP_EN && (controller->mos_temp >= FET_TEMP_HI + 5.0f)){
+		controller->fault |= FAULT_FET_OT;
+	}
+	if(MOT_TEMP_EN && (controller->mot_temp >= MOT_TEMP_HI + 5.0f)){
+		controller->fault |= FAULT_MOT_OT;
 	}
 	/* Overcurrent is only checked while the gate drive is on.  With the FETs
 	 * off the phase current is noise around zero, so a low threshold latches on
@@ -421,6 +610,13 @@ void zero_commands(ControllerStruct * controller){
 	controller->pos_ff_last = 0;
 	controller->pos_ff_cycle = 0;
 	controller->pos_fault_t = 0;
+	/* 输入整形状态一并丢弃：下一次进外环时从当前状态重新播种（见 motion_seed）。
+	 * 0xFF 是哨兵值，保证下一次 motion_control() 一定重新播种一次 */
+	controller->input_mode_prev = 0xFF;
+	controller->pos_trap.planned = 0;
+	controller->pos_trap.t = 0;
+	controller->pos_filter.seeded = 0;
+	controller->t_ff_slew = 0;
 
 	/* 正在跑的惯量标定必须中止：离开 MOTOR_MODE 后 motion_control() 不再被调用，
 	 * 状态会停在半路，下次进电机模式时从半个台阶"续跑"，测出来的 J 是错的 */

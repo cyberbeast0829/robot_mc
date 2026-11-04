@@ -304,8 +304,9 @@ void calibrate_encoder(EncoderStruct *encoder, ControllerStruct *controller, Cal
  * duty deviation of 0.5/v_scale with v_scale = v_bus*(DTC_MAX-DTC_MIN)*SQRT1_3,
  * and the phase-neutral voltage the inverter applies is v_bus times the duty
  * deviation.  The results below are scaled by this so the persisted R/L/lambda
- * values are in SI units.  Keep in sync with svm()/commutate(). */
-#define CAL_V_PER_CMD	(0.5f/((DTC_MAX-DTC_MIN)*SQRT1_3))
+ * values are in SI units.  The expression lives in hw_config.h (V_PER_CMD)
+ * because the bus-current estimate in foc.c needs the same number. */
+#define CAL_V_PER_CMD	V_PER_CMD
 
 /* Run one calibration control-law cycle: apply a dq voltage in the stationary
  * (theta = 0) or an arbitrary open-loop frame.  Returns 1 if the vector had to

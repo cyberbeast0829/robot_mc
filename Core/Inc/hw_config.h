@@ -170,12 +170,24 @@
 #define DTC_MIN 			0.0f          	// Min duty cycle
 #define DTC_COMP 			0.000f          // deadtime compensation (100 ns / 25 us)
 #define DT					.000025f		// Loop period
+/* 硬件版本（system.hw_version_*；CYBERBEAST 的 QUERY_DEVICE_INFO 也报这组值）。
+ * CBL89 板。换板/改版必须同步这三行 —— 上位机靠它区分引脚与量程。 */
+#define HW_VERSION_MAJOR	4
+#define HW_VERSION_MINOR	2
+#define HW_VERSION_VARIANT	89
+/* dq 电压指令 → 物理伏特：svm() 把 dq 电压按 v_scale = v_bus*(DTC_MAX-DTC_MIN)*sqrt(1/3)
+ * 归一化，所以 1 个指令单位 = 0.5/((DTC_MAX-DTC_MIN)*sqrt(1/3)) 伏。
+ * 标定（calibration.c 的 CAL_V_PER_CMD）和母线功率估算（foc.c 的 i_bus）共用它，
+ * 改 svm()/DTC_MAX/DTC_MIN 时必须同步（sqrt(1/3) 与 math_ops.h 的 SQRT1_3 同值） */
+#define V_PER_CMD			(0.5f/((DTC_MAX-DTC_MIN)*0.57735026919f))
 /* 外环分频上限。速度环最低 40 kHz/100 = 400 Hz，仍远高于速度估计的可用带宽；
  * 再低就只是把相位裕度白白送掉 */
 #define MOTION_PRESCALER_MAX	100
 #define EN_ENC_LINEARIZATION 1				// Enable/disable encoder linearization
-#define V_BUS_MAX			60.0f			// max drive voltage - torque command is cut above this (soft limit)
-#define V_BUS_FAULT			67.0f			// hard overvoltage limit - latches a fault and disables the gate drive
+#define V_BUS_MAX			60.0f			// max drive voltage - torque command is cut above this (soft limit).
+											// The hard overvoltage / undervoltage limits are configuration
+											// parameters (config.vbus_ov_trip, default 67 V; config.vbus_uv_trip,
+											// default 0 = off) - see check_faults()
 
 /* Conservative limit for the 5 mOhm board.  The PGA output range (+-VREF/2)
  * saturates 2048 counts from zero, i.e. at +-27.5 A with the gain above, and a

@@ -58,6 +58,20 @@ static int prescaler(int value)
 	return value;
 }
 
+/* config.input_mode 的取值清洗：越界或不支持的模式（MIX_CHANNELS / MIRROR /
+ * TUNING）按 PASSTHROUGH 处理 —— 宁可"没整形"，也不能让关节因为一个无效参数
+ * 彻底不动。 */
+static uint8_t input_mode_now(void)
+{
+	int m = INPUT_MODE;
+	if ((m < 0) || (m > INPUT_MODE_MIT)) { return INPUT_MODE_PASSTHROUGH; }
+	if ((m == INPUT_MODE_MIX_CHANNELS) || (m == INPUT_MODE_MIRROR)
+	    || (m == INPUT_MODE_TUNING)) {
+		return INPUT_MODE_PASSTHROUGH;
+	}
+	return (uint8_t)m;
+}
+
 /* 位置跟随误差故障的推荐阈值：
  *   e_recover = ½·a_max·T²      T 秒内能把静止的关节拉回来的位移（a_max = KT·GR·I_MAX/J）
  *   e_limit   = ½·V_MAX/POS_GAIN 再大位置环就必然被速度限幅饱和，故障永不触发
@@ -94,6 +108,12 @@ static void motion_seed(ControllerStruct *controller, const EncoderStruct *encod
 	controller->pos_ff = 0.0f;
 	controller->pos_ff_last = controller->p_des;
 	controller->pos_ff_cycle = controller->loop_count;
+
+	/* 输入整形状态：POS_FILTER 从实测位置起步；TRAP_TRAJ 下一拍会从
+	 * (当前设定点, 0) 重新规划（planned = 0 就是"还没规划"的标志） */
+	controller->pos_filter.seeded = 0;
+	controller->pos_trap.planned = 0;
+	controller->pos_trap.t = 0.0f;
 }
 
 /* ---- 惯量标定 ---------------------------------------------------------
@@ -304,6 +324,16 @@ void motion_control(ControllerStruct *controller, EncoderStruct *encoder)
 	}
 	controller->ctrl_mode_prev = controller->ctrl_mode;
 
+	/* 输入整形模式变了也要重新播种：TRAP_TRAJ/POS_FILTER 的状态属于上一个模式，
+	 * 带着走会从旧的设定点突然跳过去 */
+	const uint8_t in_mode = input_mode_now();
+	if (in_mode != controller->input_mode_prev) {
+		controller->pos_filter.seeded = 0;
+		controller->pos_trap.planned = 0;
+		controller->pos_trap.t = 0.0f;
+		controller->input_mode_prev = in_mode;
+	}
+
 	if (controller->ctrl_mode == CTRL_IMPEDANCE) {
 		/* 现有阻抗律：每拍都算，与改动前完全一致 */
 		torque_control(controller);
@@ -338,32 +368,61 @@ void motion_control(ControllerStruct *controller, EncoderStruct *encoder)
 		float v_lim = controller->v_limit;
 		if (!(v_lim > 0.0f)) { v_lim = V_MAX; }
 
-		if ((controller->ctrl_mode == CTRL_POSITION) && controller->pos_update) {
+		if (in_mode == INPUT_MODE_INACTIVE) {
+			/* 忽略输入：设定值保持不变（ODrive 的 INPUT_MODE_INACTIVE 同义）。
+			 * 仍跑速度环，所以关节会稳在当前设定点上，而不是卸力 */
+			controller->pos_err = 0.0f;
+			controller->pos_fault_t = 0.0f;
+		} else if ((controller->ctrl_mode == CTRL_POSITION) && controller->pos_update) {
 			float p_meas = encoder->angle_multiturn * inv_gr;
 			float p_des = controller->p_des;
 			/* P_MAX/P_MIN 配反了就不限幅（默认 ±12.5 rad 是给整机留的软限位） */
 			if (P_MAX > P_MIN) { p_des = ml_clampf(p_des, P_MIN, P_MAX); }
 
-			float pos_err = p_des - p_meas;
-			float v_cmd = ml_pos_p(POS_GAIN, POS_FF_GAIN, pos_err, controller->pos_ff);
+			/* 输入整形：POS_FILTER / TRAP_TRAJ 给出自己的 (位置, 速度) 设定，
+			 * 速度同时作为位置环前馈取代帧间差分的 pos_ff（两者叠加会过冲） */
+			float p_track = p_des;
+			float v_ff = controller->pos_ff;
+			if (in_mode == INPUT_MODE_TRAP_TRAJ) {
+				(void)ml_trap_step(&controller->pos_trap, dt_p, p_des,
+				                   v_lim, ACCEL_LIMIT, DECEL_LIMIT, &p_track, &v_ff);
+			} else if (in_mode == INPUT_MODE_POS_FILTER) {
+				if (!controller->pos_filter.seeded) {
+					ml_posf_reset(&controller->pos_filter, p_meas, 0.0f);
+				}
+				ml_posf_step(&controller->pos_filter, p_des, 0.0f, INPUT_BW, dt_p,
+				             &p_track, &v_ff);
+			}
+
+			float pos_err = p_track - p_meas;
+			float v_cmd = ml_pos_p(POS_GAIN, POS_FF_GAIN, pos_err, v_ff);
 
 			controller->pos_err = pos_err;
-			controller->v_target = ml_clampf(v_cmd, -v_lim, v_lim);
+			/* config.enable_vel_limit 关掉时不再夹取（帧内的 vel_limit 也不生效） */
+			controller->v_target = VEL_LIMIT_EN ? ml_clampf(v_cmd, -v_lim, v_lim) : v_cmd;
 
 			/* 被速度限幅 = 正在按上限追赶，这时误差大是正常的；
 			 * 只有“没饱和却一直追不上”才当成跟随故障 */
 			if (ml_pos_fault(POS_ERROR_FAULT, &controller->pos_fault_t, pos_err,
-			                 (v_cmd != controller->v_target), dt_p)) {
+			                 VEL_LIMIT_EN && (v_cmd != controller->v_target), dt_p)) {
 				controller->fault |= FAULT_POS;
 			}
 		} else if (controller->ctrl_mode == CTRL_VELOCITY) {
 			controller->pos_err = 0.0f;
 			controller->pos_fault_t = 0.0f;
-			controller->v_target = ml_clampf(controller->v_des, V_MIN, V_MAX);
+			controller->v_target = VEL_LIMIT_EN
+			                       ? ml_clampf(controller->v_des, V_MIN, V_MAX)
+			                       : controller->v_des;
 		}
 
-		controller->v_setpoint = ml_slew(controller->v_setpoint, controller->v_target,
-		                                ACCEL_LIMIT, dt_v);
+		/* 速度设定值整形：只有 VEL_RAMP 走斜率限制。PASSTHROUGH / MIT 直通，
+		 * POS_FILTER / TRAP_TRAJ 的平滑已经由轨迹给出（位置环输出就是速度指令） */
+		if (in_mode != INPUT_MODE_INACTIVE) {
+			controller->v_setpoint = (in_mode == INPUT_MODE_VEL_RAMP)
+			                         ? ml_slew2(controller->v_setpoint, controller->v_target,
+			                                    ACCEL_LIMIT, DECEL_LIMIT, dt_v)
+			                         : controller->v_target;
+		}
 		controller->vel_err = controller->v_setpoint - v_meas;
 		controller->i_q_ref = ml_vel_pi(VEL_GAIN, VEL_INTEGRATOR_GAIN,
 		                                controller->i_cmd_max, &controller->vel_integ,

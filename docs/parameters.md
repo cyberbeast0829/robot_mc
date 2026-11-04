@@ -27,7 +27,13 @@ ID 由 `tools/endpoint_ids.json` 锁定，固件升级不会改变；`access` �
 | `config.vel_gain` | 137 | float | rw | A/(rad/s) | 0.0 .. 2000.0 | 2.469 | 是 | CSV/CSP 速度环 P 增益（电机端安培 / 输出轴角速度）；0 时速度环只剩积分器（要完全关闭请把 vel_integrator_gain 也设 0） |
 | `config.vel_integrator_gain` | 138 | float | rw | A/(rad/s)/s | 0.0 .. 200000.0 | 44.44 | 是 | 速度环 I 增益；消掉重力/摩擦下的稳态速度误差（抗饱和：输出限幅时积分按 0.99 衰减） |
 | `config.pos_ff_gain` | 139 | float | rw |  | 0.0 .. 2.0 | 1.0 | 是 | CSP 帧间速度前馈系数（指令差分的比例）；1.0 = 全前馈，0 = 关闭 |
-| `config.accel_limit` | 140 | float | rw | rad/s^2 | 0.0 .. 100000.0 | 50.0 | 是 | 速度设定值的斜率限制（输出轴）；0 = 关闭。非零默认值能在指令阶跃时压住电流冲击，对稳态无影响 |
+| `config.accel_limit` | 140 | float | rw | rad/s^2 | 0.0 .. 100000.0 | 50.0 | 是 | 速度设定值的**加速**斜率限制（输出轴），也用于 TRAP_TRAJ 的加速段；0 = 关闭。非零默认值能在指令阶跃时压住电流冲击，对稳态无影响 |
+| `config.decel_limit` | 181 | float | rw | rad/s^2 | 0.0 .. 100000.0 | 50.0 | 是 | 速度设定值的**减速**斜率限制（输出轴），也用于 TRAP_TRAJ 的减速段；0 = 与 accel_limit 相同（不单独限制） |
+| `config.input_mode` | 182 | int32 | rw |  | 0 .. 9 | 2 | 是 | 输入整形模式（与 ODrive InputMode 编号一致）：0=忽略输入保持、1=直通、2=速度斜率（默认）、3=位置跟踪滤波、5=梯形位置规划、6=转矩斜坡、9=MIT(同直通)；4/7/8 不支持，按直通处理。它只整形设定值，控制环仍由 command.mode 选择 |
+| `config.input_bw` | 183 | float | rw | 1/s | 1.0 .. 200.0 | 10.0 | 是 | input_mode=3（位置跟踪滤波）的跟踪带宽；离散稳定限制在 4 kHz 位置环上约 45 1/s，超了固件会自动压低增益 |
+| `config.torque_ramp_rate` | 184 | float | rw | N-m/s | 0.0 .. 10000.0 | 1.0 | 是 | input_mode=6（转矩斜坡）下前馈转矩的变化率；0 = 不限（直通）。只在阻抗/MIT 模式下生效 |
+| `config.enable_vel_limit` | 185 | bool | rw |  | — | 1 | 是 | 速度设定值限幅总开关：false 时 CSV/CSP/帧内 vel_limit 都不再受 config.v_max 约束（此时 command.v_des 的物理范围是 ±200 rad/s）。默认 true |
+| `config.enable_torque_vel_lim` | 186 | bool | rw |  | — | 0 | 是 | 阻抗/力矩/电流模式下的速度限制开关：打开后按 i_q <= (v_max - v)·vel_gain 限制推力，防止超过 v_max（默认关，与改动前行为一致） |
 | `config.pos_error_fault` | 141 | float | rw | rad | 0.0 .. 1000.0 | 0.0 | 是 | 位置跟随误差故障阈值（输出轴）；0 = 关闭。只在位置环未被速度限幅饱和时判定，需持续 100 ms；必须小于 v_max/pos_gain 才会触发 |
 | `config.pll_bandwidth` | 142 | float | rw | rad/s | 20.0 .. 5000.0 | 2000.0 | 是 | 编码器速度 PLL 带宽（速度环/位置环的反馈来源）；越大相位滞后越小、噪声越大。默认 2000（约 318 Hz），200 Hz 穿越点只吃 -13° 相位 |
 | `config.inertia` | 151 | float | rw | kg·m^2 | 0.0 .. 100.0 | 0.0006 | 是 | 输出端惯量（关节折算值）。可由 action.measure_inertia 测得（只写 RAM，不自动保存）；用于推荐增益与 pos_error_fault。0 = 未知 |
@@ -44,7 +50,7 @@ ID 由 `tools/endpoint_ids.json` 锁定，固件升级不会改变；`access` �
 | `config.r_nominal` | 18 | float | rw | Ohm | — | 0.0 | 是 | 标称电机电阻 |
 | `config.r_th` | 19 | float | rw | C/W | — | 0.0 | 是 | 热阻 |
 | `config.c_th` | 20 | float | rw | J/C | — | 0.0 | 是 | 热容 |
-| `config.temp_max` | 21 | float | rw | C | 0.0 .. 150.0 | 125.0 | 是 | 过温保护阈值（0 = 关闭） |
+| `config.temp_max` | 21 | float | rw | C | 0.0 .. 150.0 | 125.0 | 是 | 历史参数（温度观测器的短路阈值），当前未参与任何控制；温度保护请用 config.fet_temp_* / config.mot_temp_* |
 | `config.phase_order` | 22 | int32 | rw |  | 0 .. 1 | 0 | 是 | 相序（标定得出；门极关闭时才允许写） |
 | `config.can_id` | 23 | int32 | rw |  | 0 .. 127 | 1 | 是 | CAN 节点 ID |
 | `config.can_master` | 24 | int32 | rw |  | 0 .. 127 | 0 | 是 | CAN 主站 ID |
@@ -55,6 +61,17 @@ ID 由 `tools/endpoint_ids.json` 锁定，固件升级不会改变；`access` �
 | `config.can_tdc` | 162 | int32 | rw | tq | -1 .. 31 | -1 | 是 | CAN FD 发送延迟补偿偏移（数据域 tq）：-1 = 自动（= 数据域 tseg1，默认），0 = 关闭，>0 = 手动；5M 必须开，下次上电生效 |
 | `config.m_zero` | 26 | int32 | rw |  | — | 0 | 是 | 机械零位编码器计数（门极关闭时才允许写） |
 | `config.e_zero` | 27 | int32 | rw |  | — | 0 | 是 | 电角度零点编码器计数（门极关闭时才允许写） |
+| `config.vbus_ov_trip` | 163 | float | rw | V | 10.0 .. 100.0 | 67.0 | 是 | 母线过压硬故障阈值；超过即锁存 FAULT_OV 并关闭门极（原编译期常量 V_BUS_FAULT） |
+| `config.vbus_uv_trip` | 164 | float | rw | V | 0.0 .. 100.0 | 0.0 | 是 | 母线欠压故障阈值（0 = 关闭）；只在门极使能时判定，并带 ~10 ms 去抖 |
+| `config.i_dc_max` | 165 | float | rw | A | 0.0 .. 100.0 | 0.0 | 是 | 母线电流软限幅（0 = 关闭）。硬件没有直流分流器，按 P=1.5·V_PER_CMD·(v_d·i_d+v_q·i_q) 估算，只做软限流、不锁故障 |
+| `config.torque_lim` | 166 | float | rw | N-m | 0.0 .. 100.0 | 0.0 | 是 | 输出端转矩上限（0 = 关闭）；与 command.t_ff / telemetry.torque 同一量纲，内部换算 i_q_lim = torque_lim/(KT·GR) |
+| `config.fet_temp_en` | 167 | bool | rw |  | — | 0 | 是 | MOS/FET 温度保护开关（默认关，关闭时温度只上报不参与控制） |
+| `config.fet_temp_lo` | 168 | float | rw | C | 0.0 .. 200.0 | 75.0 | 是 | MOS 温度降流起点：达到该温度开始线性压低电流上限 |
+| `config.fet_temp_hi` | 169 | float | rw | C | 0.0 .. 200.0 | 95.0 | 是 | MOS 温度上限：达到该温度电流上限降为 0，再超过 5 °C 锁存 FAULT_FET_OT |
+| `config.mot_temp_en` | 170 | bool | rw |  | — | 0 | 是 | 电机温度保护开关（默认关，关闭时温度只上报不参与控制） |
+| `config.mot_temp_lo` | 171 | float | rw | C | 0.0 .. 200.0 | 75.0 | 是 | 电机温度降流起点 |
+| `config.mot_temp_hi` | 172 | float | rw | C | 0.0 .. 200.0 | 95.0 | 是 | 电机温度上限：达到该温度电流上限降为 0，再超过 5 °C 锁存 FAULT_MOT_OT |
+| `config.pre_calibrated` | 173 | bool | rw |  | — | 0 | 是 | 电机/编码器是否已标定：false 时拒绝进入电机模式（action.calibrate 成功后自动置 1，进入标定或恢复默认时清 0；门极使能时不可写） |
 
 ## command：运行命令（电机模式下有效）
 
@@ -62,7 +79,7 @@ ID 由 `tools/endpoint_ids.json` 锁定，固件升级不会改变；`access` �
 |---|---|---|---|---|---|---|---|---|
 | `command.t_ff` | 128 | float | rw | N-m | 运行期：`-I_MAX*KT*GR` .. `I_MAX*KT*GR` | — | 否 | 前馈转矩（输出轴 N·m）；写入会刷新命令租约，进入 MOTOR_MODE 时清零 |
 | `command.p_des` | 129 | float | rw | rad | 运行期：`P_MIN` .. `P_MAX` | — | 否 | 位置设定值（输出轴 rad）；范围由 config.p_max 决定，进入 MOTOR_MODE 时清零 |
-| `command.v_des` | 130 | float | rw | rad/s | 运行期：`V_MIN` .. `V_MAX` | — | 否 | 速度设定值（输出轴 rad/s）；范围由 config.v_max 决定，进入 MOTOR_MODE 时清零 |
+| `command.v_des` | 130 | float | rw | rad/s | -200.0 .. 200.0 | — | 否 | 速度设定值（输出轴 rad/s），进入 MOTOR_MODE 时清零。运行期限幅：config.enable_vel_limit=true 时压到 ±config.v_max，false 时只受 ±200 rad/s 的物理范围约束 |
 | `command.kp` | 131 | float | rw |  | 运行期：0.0 .. `KP_MAX` | — | 否 | 位置增益；上限由 config.kp_max 决定，进入 MOTOR_MODE 时清零 |
 | `command.kd` | 132 | float | rw |  | 运行期：0.0 .. `KD_MAX` | — | 否 | 速度增益；上限由 config.kd_max 决定，进入 MOTOR_MODE 时清零 |
 | `command.mode` | 145 | int32 | rw |  | 0 .. 2 | — | 否 | 控制律：0 = 阻抗/MIT（默认，kp·p_des·kd·v_des·t_ff），1 = 速度环（CSV，用 command.v_des），2 = 位置环（CSP，用 command.p_des）。写完刷新命令租约；进入 MOTOR_MODE 时回 0 |
@@ -104,7 +121,13 @@ ID 由 `tools/endpoint_ids.json` 锁定，固件升级不会改变；`access` �
 | `telemetry.mode` | 58 | uint8 | r |  | — | — | 否 | 当前 FSM 状态（MENU_MODE 等） |
 | `telemetry.loop_count` | 59 | uint32 | r |  | — | — | 否 | 控制周期计数 |
 | `telemetry.can_timeout_count` | 60 | int32 | r |  | — | — | 否 | 距上一帧控制命令的控制周期数（40 拍 = 1 ms，饱和在 can_timeout 对应值） |
-| `telemetry.temperature` | 61 | float | r | C | — | — | 否 | 温度观测器估计值 |
+| `telemetry.temperature` | 61 | float | r | C | — | — | 否 | MOS/FET 温度（NTC 换算；NTC 未接或系数不符时读数不可信） |
+| `telemetry.mos_temp` | 174 | float | r | C | — | — | 否 | MOS/FET 温度（MOS_TEMP / ADC2_CH2） |
+| `telemetry.mot_temp` | 175 | float | r | C | — | — | 否 | 电机温度（MOT_TEMP / ADC3_CH6） |
+| `telemetry.i_bus` | 176 | float | r | A | — | — | 否 | 估算母线电流（无直流分流器，由 dq 功率除以母线电压得到，仅用于监控与软限幅） |
+| `telemetry.i_d_des` | 177 | float | r | A | — | — | 否 | d 轴电流给定（对应 ODrive 的 Id_setpoint；Iq_setpoint 见 telemetry.i_q_des） |
+| `telemetry.mechanical_power` | 178 | float | r | W | — | — | 否 | 机械功率 = 输出端转矩 × 输出轴角速度（>0 输出机械功，<0 回馈） |
+| `telemetry.sensor_mode` | 179 | uint8 | r |  | — | — | 否 | 位置传感器模式：本固件只有 SPI 编码器 + PLL，恒为 0（无无感/混合估计器） |
 | `telemetry.resistance` | 62 | float | r | Ohm | — | — | 否 | 温度观测器估计电阻 |
 | `telemetry.can_tec` | 63 | uint8 | r |  | — | — | 否 | CAN 发送错误计数 |
 | `telemetry.can_rec` | 64 | uint8 | r |  | — | — | 否 | CAN 接收错误计数 |
@@ -169,7 +192,14 @@ ID 由 `tools/endpoint_ids.json` 锁定，固件升级不会改变；`access` �
 
 | 名称 | ID | 类型 | 访问 | 单位 | 范围 | 默认 | 持久化 | 说明 |
 |---|---|---|---|---|---|---|---|---|
-| `system.version` | 68 | float | r |  | — | — | 否 | 固件版本号 |
+| `system.fw_version_major` | 187 | uint8 | r |  | — | — | 否 | 固件主版本号（对应 ODrive 的 fw_version_major） |
+| `system.fw_version_minor` | 188 | uint8 | r |  | — | — | 否 | 固件次版本号（对应 ODrive 的 fw_version_minor） |
+| `system.fw_version_revision` | 189 | uint8 | r |  | — | — | 否 | 固件修订号（对应 ODrive 的 fw_version_revision） |
+| `system.fw_version_unreleased` | 194 | uint8 | r |  | — | — | 否 | 1 = 非正式发布构建（ODrive 的 fw_version_unreleased）；0 = 正式版 |
+| `system.hw_version_major` | 190 | uint8 | r |  | — | — | 否 | 硬件主版本号（对应 ODrive 的 hw_version_major；CBL89 板，定义在 hw_config.h） |
+| `system.hw_version_minor` | 191 | uint8 | r |  | — | — | 否 | 硬件次版本号 |
+| `system.hw_version_variant` | 192 | uint8 | r |  | — | — | 否 | 硬件装配变体号 |
+| `system.serial_number` | 193 | uint64 | r |  | — | — | 否 | 芯片 96 位唯一 ID 的低 64 位（对应 ODrive 的 serial_number，但这里直接取自 MCU UID，不依赖板载 EEPROM） |
 | `system.prefs_sequence` | 69 | uint32 | r |  | — | — | 否 | 当前配置块的序号 |
 | `system.config_schema` | 117 | uint16 | r |  | — | — | 否 | 配置记录的格式版本（PREFS_SCHEMA），用于升级迁移 |
 | `system.prefs_loaded` | 70 | bool | r |  | — | — | 否 | 是否从 flash 成功加载过配置 |
@@ -187,10 +217,11 @@ ID 由 `tools/endpoint_ids.json` 锁定，固件升级不会改变；`access` �
 | `action.zero` | 72 | function | w |  | — | — | 否 | 把当前位置设为零点并保存（仅菜单状态） |
 | `action.idle_mode` | 73 | function | w |  | — | — | 否 | 空闲/停机：关门极、清锁存故障、回到菜单（退出电机模式、急停用） |
 | `action.clear_fault` | 74 | function | w |  | — | — | 否 | 清除锁存故障（等价于 action.idle_mode） |
-| `action.motor_mode` | 75 | function | w |  | — | — | 否 | 进入电机模式（仅菜单状态） |
-| `action.calibrate` | 76 | function | w |  | — | — | 否 | 进入标定（相序/极对数、编码器零位与 LUT、R/L/Ld-Lq/磁链；仅菜单状态） |
+| `action.motor_mode` | 75 | function | w |  | — | — | 否 | 进入电机模式（仅菜单状态，且 config.pre_calibrated 必须为 true） |
+| `action.calibrate` | 76 | function | w |  | — | — | 否 | 进入标定（相序/极对数、编码器零位与 LUT、R/L/Ld-Lq/磁链；仅菜单状态）。成功后自动置 config.pre_calibrated 并保存；失败不写 flash 且保持未标定 |
 | `action.reset_config` | 126 | function | w |  | — | — | 否 | 恢复出厂默认值并写入 flash（要求门极关闭；会清掉标定，需重新标定并重启） |
 | `action.reboot` | 127 | function | w |  | — | — | 否 | 重启控制器（应答发出后约 0.5 s 复位，配置按已保存的值重新加载） |
+| `action.enter_dfu_mode` | 180 | function | w |  | — | — | 否 | 先应答、约 0.5 s 后复位并跳进 ROM DFU 引导程序（之后约 2 s 跳转，USB 会重新枚举）。与串口菜单的 'd' 同义，用于救砖/整片烧写；配置与标定是否保留取决于下载的地址范围（只写 app 区就保留） |
 | `action.reset_timing` | 116 | function | w |  | — | — | 否 | 清零 ISR 耗时统计 |
 | `action.measure_inertia` | 154 | function | w |  | — | — | 否 | 一条指令完成惯量标定：自动进电机模式 → 打两个电流台阶测输出端惯量 → 回菜单。约 1.5 s、关节行程 ~0.1 rad。结果写 config.inertia（**只写 RAM，不自动保存**），进度/结果读 system.inertia_status；测完自动回菜单，可直接 action.save |
 | `action.tune_gains` | 161 | function | w |  | — | — | 否 | 用 config.inertia 算外环增益并写进 RAM（不自动保存）：vel_gain = tune_margin·J·omega_c/(KT·GR)；vel_integrator_gain = vel_gain·clamp(omega_c/25, 5, 30)；pos_gain = omega_c/20。写完用 csv/csp 子命令验证，满意再 action.save |

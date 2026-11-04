@@ -60,6 +60,23 @@ const prefs_entry_t prefs_entries[] = {
 	{159, PREFS_T_F32, 4, (void *)&(OMEGA_C)},
 	{160, PREFS_T_F32, 4, (void *)&(TUNE_MARGIN)},
 	{162, PREFS_T_I32, 4, (void *)&(CAN_TDC)},
+	{163, PREFS_T_F32, 4, (void *)&(VBUS_OV_TRIP)},
+	{164, PREFS_T_F32, 4, (void *)&(VBUS_UV_TRIP)},
+	{165, PREFS_T_F32, 4, (void *)&(I_DC_MAX)},
+	{166, PREFS_T_F32, 4, (void *)&(TORQUE_LIM)},
+	{167, PREFS_T_BOOL, 1, (void *)&(FET_TEMP_EN)},
+	{168, PREFS_T_F32, 4, (void *)&(FET_TEMP_LO)},
+	{169, PREFS_T_F32, 4, (void *)&(FET_TEMP_HI)},
+	{170, PREFS_T_BOOL, 1, (void *)&(MOT_TEMP_EN)},
+	{171, PREFS_T_F32, 4, (void *)&(MOT_TEMP_LO)},
+	{172, PREFS_T_F32, 4, (void *)&(MOT_TEMP_HI)},
+	{173, PREFS_T_BOOL, 1, (void *)&(PRE_CALIBRATED)},
+	{181, PREFS_T_F32, 4, (void *)&(DECEL_LIMIT)},
+	{182, PREFS_T_I32, 4, (void *)&(INPUT_MODE)},
+	{183, PREFS_T_F32, 4, (void *)&(INPUT_BW)},
+	{184, PREFS_T_F32, 4, (void *)&(TORQUE_RAMP_RATE)},
+	{185, PREFS_T_BOOL, 1, (void *)&(VEL_LIMIT_EN)},
+	{186, PREFS_T_BOOL, 1, (void *)&(TORQUE_VEL_LIM_EN)},
 };
 const unsigned prefs_entry_count = sizeof(prefs_entries) / sizeof(prefs_entries[0]);
 
@@ -114,6 +131,23 @@ void config_apply_defaults(void){
 	OMEGA_C = 450.0f;
 	TUNE_MARGIN = 2.2f;
 	CAN_TDC = -1;
+	VBUS_OV_TRIP = 67.0f;
+	VBUS_UV_TRIP = 0.0f;
+	I_DC_MAX = 0.0f;
+	TORQUE_LIM = 0.0f;
+	FET_TEMP_EN = 0;
+	FET_TEMP_LO = 75.0f;
+	FET_TEMP_HI = 95.0f;
+	MOT_TEMP_EN = 0;
+	MOT_TEMP_LO = 75.0f;
+	MOT_TEMP_HI = 95.0f;
+	PRE_CALIBRATED = 0;
+	DECEL_LIMIT = 50.0f;
+	INPUT_MODE = 2;
+	INPUT_BW = 10.0f;
+	TORQUE_RAMP_RATE = 1.0f;
+	VEL_LIMIT_EN = 1;
+	TORQUE_VEL_LIM_EN = 0;
 }
 
 void config_apply_limits(void){
@@ -216,4 +250,44 @@ void config_apply_limits(void){
 	if(TUNE_MARGIN > 5.0f){TUNE_MARGIN = 5.0f;}
 	if(CAN_TDC < -1){CAN_TDC = -1;}
 	if(CAN_TDC > 31){CAN_TDC = 31;}
+	if(!isfinite(VBUS_OV_TRIP)){VBUS_OV_TRIP = 67.0f;}
+	if(VBUS_OV_TRIP < 10.0f){VBUS_OV_TRIP = 10.0f;}
+	if(VBUS_OV_TRIP > 100.0f){VBUS_OV_TRIP = 100.0f;}
+	if(!isfinite(VBUS_UV_TRIP)){VBUS_UV_TRIP = 0.0f;}
+	if(VBUS_UV_TRIP < 0.0f){VBUS_UV_TRIP = 0.0f;}
+	if(VBUS_UV_TRIP > 100.0f){VBUS_UV_TRIP = 100.0f;}
+	if(!isfinite(I_DC_MAX)){I_DC_MAX = 0.0f;}
+	if(I_DC_MAX < 0.0f){I_DC_MAX = 0.0f;}
+	if(I_DC_MAX > 100.0f){I_DC_MAX = 100.0f;}
+	if(!isfinite(TORQUE_LIM)){TORQUE_LIM = 0.0f;}
+	if(TORQUE_LIM < 0.0f){TORQUE_LIM = 0.0f;}
+	if(TORQUE_LIM > 100.0f){TORQUE_LIM = 100.0f;}
+	if(FET_TEMP_EN > 1){FET_TEMP_EN = 1;}
+	if(!isfinite(FET_TEMP_LO)){FET_TEMP_LO = 75.0f;}
+	if(FET_TEMP_LO < 0.0f){FET_TEMP_LO = 0.0f;}
+	if(FET_TEMP_LO > 200.0f){FET_TEMP_LO = 200.0f;}
+	if(!isfinite(FET_TEMP_HI)){FET_TEMP_HI = 95.0f;}
+	if(FET_TEMP_HI < 0.0f){FET_TEMP_HI = 0.0f;}
+	if(FET_TEMP_HI > 200.0f){FET_TEMP_HI = 200.0f;}
+	if(MOT_TEMP_EN > 1){MOT_TEMP_EN = 1;}
+	if(!isfinite(MOT_TEMP_LO)){MOT_TEMP_LO = 75.0f;}
+	if(MOT_TEMP_LO < 0.0f){MOT_TEMP_LO = 0.0f;}
+	if(MOT_TEMP_LO > 200.0f){MOT_TEMP_LO = 200.0f;}
+	if(!isfinite(MOT_TEMP_HI)){MOT_TEMP_HI = 95.0f;}
+	if(MOT_TEMP_HI < 0.0f){MOT_TEMP_HI = 0.0f;}
+	if(MOT_TEMP_HI > 200.0f){MOT_TEMP_HI = 200.0f;}
+	if(PRE_CALIBRATED > 1){PRE_CALIBRATED = 1;}
+	if(!isfinite(DECEL_LIMIT)){DECEL_LIMIT = 50.0f;}
+	if(DECEL_LIMIT < 0.0f){DECEL_LIMIT = 0.0f;}
+	if(DECEL_LIMIT > 100000.0f){DECEL_LIMIT = 100000.0f;}
+	if(INPUT_MODE < 0){INPUT_MODE = 0;}
+	if(INPUT_MODE > 9){INPUT_MODE = 9;}
+	if(!isfinite(INPUT_BW)){INPUT_BW = 10.0f;}
+	if(INPUT_BW < 1.0f){INPUT_BW = 1.0f;}
+	if(INPUT_BW > 200.0f){INPUT_BW = 200.0f;}
+	if(!isfinite(TORQUE_RAMP_RATE)){TORQUE_RAMP_RATE = 1.0f;}
+	if(TORQUE_RAMP_RATE < 0.0f){TORQUE_RAMP_RATE = 0.0f;}
+	if(TORQUE_RAMP_RATE > 10000.0f){TORQUE_RAMP_RATE = 10000.0f;}
+	if(VEL_LIMIT_EN > 1){VEL_LIMIT_EN = 1;}
+	if(TORQUE_VEL_LIM_EN > 1){TORQUE_VEL_LIM_EN = 1;}
 }

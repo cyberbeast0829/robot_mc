@@ -50,7 +50,9 @@ typedef struct{
 	volatile uint8_t save_pending;			// write the current config to flash (endpoint action.save)
 	volatile uint8_t reset_config_pending;		// restore factory defaults + save (endpoint action.reset_config)
 	volatile uint8_t reboot_pending;		// reboot after the reply went out (endpoint action.reboot)
+	volatile uint8_t dfu_pending;			// reset into the ROM DFU bootloader after the reply (endpoint action.enter_dfu_mode)
 	volatile uint8_t inertia_pending;		// run the inertia calibration (endpoint action.measure_inertia)
+	volatile uint8_t motor_refused;		// a MOTOR_MODE request was rejected because the motor is not calibrated
 	volatile uint8_t save_status;			// result of the last save: 1 ok, 2 skipped, 3 failed
 }FSMStruct;
 

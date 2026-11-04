@@ -106,8 +106,9 @@ ADC，采样点在 PWM 峰值、低侧采样窗口内。
 - **电压单位换算**：控制环里的 dq 电压并不是物理伏特。`svm()` 把
   `(u - v_offset)` 变成 `0.5/v_scale` 的占空比偏移，而
   `v_scale = v_bus·(DTC_MAX-DTC_MIN)·√(1/3)`，所以实际相电压 = `CAL_V_PER_CMD ×
-  指令电压`，`CAL_V_PER_CMD = 0.5/((DTC_MAX-DTC_MIN)·√(1/3))`（当前 DTC 0…0.7
-  时约 1.237）。`measure_lr()` 在计算 R/L/λ 前把电压项乘上这个因子，落盘的都是
+  指令电压`，`CAL_V_PER_CMD = V_PER_CMD = 0.5/((DTC_MAX-DTC_MIN)·√(1/3))`（当前 DTC 0…0.7
+  时约 1.237；定义在 `hw_config.h`，母线功率估算也用它）。`measure_lr()` 在计算 R/L/λ
+  前把电压项乘上这个因子，落盘的都是
   SI 值；**改 `svm()`、`DTC_MAX/DTC_MIN` 或 `OVERMODULATION` 时必须一起改它**，
   否则 R/L/Kt 会按比例失准。台架上可用万用表量相电阻做一次核对。
 - 任何一段失败（电流差太小、母线/过调制限制、`Iβ` 不平衡、λ 超范围）都会置
@@ -115,6 +116,70 @@ ADC，采样点在 PWM 峰值、低侧采样窗口内。
 - 标定顺序有依赖：Ld/Lq 用同一测试电流把转子锁在 alpha/beta 上，磁链公式要用
   刚测出的 R 和 L_D（以及极对数算 Kt）。因此 `measure_lr()` 必须排在
   `order_phases()` 之后；失败会中止整轮标定。
+
+### `config.pre_calibrated`（进电机模式的前置条件）
+
+- `run_fsm_slow()` 在 `done_ordering && done_cal && done_rl` 全部完成后先置
+  `PRE_CALIBRATED = 1` 再存盘，三段的产物（相序、`e_zero`+LUT、R/L/Kt）一起落盘。
+- **进入 `CALIBRATION_MODE` 时立刻清 0**：中途失败会回菜单，此时"已标定"不再成立。
+  `action.reset_config` 走 `config_apply_defaults()`，也会清 0。
+- 门禁有三层，缺一不可：`action.motor_mode` / `action.measure_inertia` /
+  `action.tune_gains` 的 `require` 直接返回 `EP_ERR_STATE`；`cb_start_motor()`
+  （CYBERBEAST `0x61`）直接忽略；`run_fsm()` 里对所有入口（含 ASCII 菜单）兜底，
+  拒绝后把 `next_state` 改回当前状态，并置 `state.motor_refused` 由主循环打印一次。
+- 只能在门极关闭时写（`require: "!controller.gate_drive_enabled"`），避免运行中把
+  自己和自己的标定数据"注销"。
+
+## 保护与限幅
+
+四类限制，全部由 `config.*` 参数控制，**默认行为与改动前一致**（温度保护默认关，
+OV 阈值仍是 67 V，UV / 母线电流 / 转矩上限默认关）：
+
+| 参数 | 默认 | 作用点 | 行为 |
+|---|---|---|---|
+| `config.vbus_ov_trip` | 67 V | `check_faults()` | 超过即锁 `FAULT_OV`（原编译期常量 `V_BUS_FAULT`，已删除）。**任何状态都检查**：门极关断时母线也可能被外部推高 |
+| `config.vbus_uv_trip` | 0 = 关 | `check_faults()` | **只在门极使能时**检查，~10 ms 去抖（400 拍）后锁 `FAULT_UV`。若在任何状态都查，USB 单独供电（`v_bus = 0`）会一上电就锁故障、把人挡在菜单外 |
+| `config.i_dc_max` | 0 = 关 | `commutate()` | 母线电流**软限幅**：估算值超过上限时按比例回压 `i_d_des`/`i_q_des`。只压不抬，**不锁故障**——没有直流分流器，估算值不足以当保护用 |
+| `config.torque_lim` | 0 = 关 | `commutate()` | **输出端** N·m，换算 `i_q_lim = torque_lim/(KT·GR)` 后并入电流上限。与 `command.t_ff`/`telemetry.torque` 同量纲 |
+| `config.fet_temp_en` / `_lo` / `_hi` | 关 / 75 / 95 °C | `commutate()` + `check_faults()` | 在 `[lo, hi]` 间线性降流（到 `hi` 时电流上限为 0），超过 `hi + 5 °C` 锁 `FAULT_FET_OT`（与 ODrive 的 `do_checks()` 一致，避免在阈值上抖动） |
+| `config.mot_temp_en` / `_lo` / `_hi` | 关 / 75 / 95 °C | 同上 | 同上，锁 `FAULT_MOT_OT` |
+
+新增故障位：`FAULT_UV (1<<4)`、`FAULT_FET_OT (1<<5)`、`FAULT_MOT_OT (1<<6)`。
+CYBERBEAST 侧 `FAULT_UV` 与 `FAULT_OV` 都映射 `CB_ERR_VOLTAGE`；过温没有专用错误码，
+归 `CB_ERR_MULTIPLE`（精确原因读 `telemetry.fault` 或 `0x45 QUERY_ERROR`）。
+
+### NTC 温度（照搬 ODrive）
+
+`foc.c` 的 `update_thermistors()` 移植自 ODrive 的 `ThermistorCurrentLimiter`：
+
+- 归一化 `x = adc_measurements_[ch]/4096`，四阶 Horner 多项式换算 °C。
+  MOS = `adc_measurements_[0]`（ADC2_CH2/PA7），系数 `{296.7, -385.7, 257.1, -26.81}`；
+  电机 = `adc_measurements_[2]`（ADC3_CH6/PE8），系数 `{-296.7, 504.3, -375.8, 141.3}`。
+- 两级一阶低通，每级 `tau = 0.1 s`。**在主循环里更新**（`run_fsm_slow()` 第一件事），
+  `dt` 由 `controller.loop_count` 的差算出：主循环没有固定周期（打印、擦 flash 都会
+  拉长一拍），用固定 dt 会让滤波时间常数随固件行为漂移。
+- ⚠ 系数和分压网络都是从 ODrive 板子搬来的。CBL89 若不同，读数会系统性偏移——
+  **上台架必须先用室温核对一次**，偏差大就改这两组系数（换算结构不变）。
+- 换算是 `isfinite` 保护的：通道/系数异常时写 0，不会把 NaN 灌进比较。
+- 温度**只上报 +（默认关闭的）保护**，不参与电流环；`telemetry.temperature` 现在
+  等于 MOS 温度（原来是恒 0 的温度观测器输出，`update_observer()` 整个函数体是被
+  注释掉的）。
+
+### 母线电流 / 功率估算
+
+没有直流分流器，`commutate()` 用上一拍的 dq 量反推：
+
+```
+P_elec = 1.5 · V_PER_CMD · (v_d·i_d + v_q·i_q)      [W]
+i_bus  = P_elec / v_bus_filt                        [A]
+mech_power = i_q_filt · KT · GR · dtheta_mech       [W]
+```
+
+`V_PER_CMD` 现在定义在 `hw_config.h`（`calibration.c` 的 `CAL_V_PER_CMD` 也改用它，
+只有一处定义）。`v_d/v_q` 是上一拍的输出，误差在一个控制周期内——对监控与软限幅
+足够，**不能当保护**。遥测见 `telemetry.i_bus` / `telemetry.mechanical_power`；
+CYBERBEAST 的 `0x44 QUERY_BUS`（第二字段）与 `0x47 QUERY_POWER`（电/机械功率）
+也已填上。
 
 ## 速度环与位置环（CSV / CSP）
 
@@ -201,6 +266,51 @@ vel_integ = clamp(vel_integ, ±i_cmd_max);
 
 与 ODrive 的 `vel_integrator_torque_ *= 0.99f` 同款。位置环没有积分器，所以不存在
 位置积分饱和；位置误差通过 `v_limit` 钳位转成“按速度上限追赶”。
+
+### 输入整形（`config.input_mode`）
+
+`config.input_mode` 只整形**喂给控制环的设定值**，不选控制环（那是
+`command.mode`）。编号与 ODrive 的 `InputMode` 一致：
+
+| 值 | 名称 | 行为 | 适用控制环 |
+|---|---|---|---|
+| 0 | INACTIVE | 忽略输入，保持上一拍的设定值 | 任意 |
+| 1 | PASSTHROUGH | 设定值直通，不做斜率限制 | 任意 |
+| **2** | **VEL_RAMP** | **速度设定值按 `accel_limit`/`decel_limit` 限斜率（默认 = 旧行为）** | CSV / CSP |
+| 3 | POS_FILTER | 二阶位置跟踪滤波（`config.input_bw`），速度作前馈 | CSP |
+| 4 | MIX_CHANNELS | 不支持 → 按 PASSTHROUGH | — |
+| 5 | TRAP_TRAJ | 梯形位置规划（`accel_limit`/`decel_limit`/`v_max`），速度作前馈 | CSP |
+| 6 | TORQUE_RAMP | `t_ff` 按 `config.torque_ramp_rate`（N·m/s）限斜率 | 阻抗/MIT |
+| 7/8 | MIRROR / TUNING | 不支持 → 按 PASSTHROUGH | — |
+| 9 | MIT | 等同 PASSTHROUGH（阻抗律本来就是 MIT 语义） | 阻抗/MIT |
+
+实现要点：
+
+- 3/5 是**轨迹发生器**：在位置环频率上产生 `(pos_setpoint, vel_setpoint)`，位置环
+  对它做 `pos_gain*误差 + pos_ff_gain*轨迹速度`。轨迹速度**取代**帧间差分前馈
+  （`pos_ff`），两者叠加会过冲 —— 所以这两个模式下 `pos_ff` 不参与。
+- 轨迹模式自己就是平滑的，**不再叠加** `accel_limit` 的斜率限制；只有 VEL_RAMP 走。
+- 模式改变或进/出电机模式时，`motion_seed()` 把滤波/规划状态清掉，下一拍从
+  **实测位置**起步（`ml_posf_reset()` / `planned = 0`），不会从 0 跳过去。
+- 纯数学在 `motion_law.h`（`ml_trap_*` / `ml_posf_*` / `ml_slew2`），
+  `tools/test_motion_law.c` 覆盖：梯形/三角形规划、时长与终点精度、时间冻结、
+  中途改目标不跳变、滤波收敛不过冲、带宽过大时自动压低增益。
+
+**TRAP_TRAJ 是 ODrive `trapTraj.cpp` 的逐行移植**：按"当前速度的最小制动距离"
+决定巡航方向 `s`，行程够就走梯形（加速/匀速/减速），不够就退化成三角形；
+起始速度高于巡航速度时先减速（"double deceleration move"）。规划结束时间冻结在
+`tf`，避免 float32 长时间累加丢精度。
+
+### 速度限制的两个开关
+
+- `config.enable_vel_limit`（默认 **true**）：关掉后 CSV/CSP 与 CYBERBEAST 帧解析
+  都不再把速度压到 `config.v_max`。`command.v_des` 端点的范围也随之放开成固定的
+  ±200 rad/s（不再是动态的 `V_MIN..V_MAX`），否则"关掉限速"仍然写不进去。
+- `config.enable_torque_vel_lim`（默认 **false** = 与改动前一致）：在**阻抗/力矩/
+  电流模式**下也限制速度，做法与 ODrive 的 `limitVel()` 相同，只是直接在安培域：
+  `i_q = clamp(i_q, (v_max − v)·vel_gain, (−v_max − v)·vel_gain)`。
+  我们的 `vel_gain` 正好是 A/(rad/s)，量纲天然成立。高速时它会把推力压向"刹车"
+  一侧，超过 `v_max` 就没有继续往超速方向推的余量。
 
 ### 编码器速度 PLL
 
@@ -648,12 +758,17 @@ payload = 03 00 | 47 40 | 00 00 | 56 34      ; 0x4047 = 71 | EP_REQ_WRITE
 | 端点 | ID | 行为 |
 |---|---|---|
 | `action.reboot` | 127 | `state.reboot_pending = 1` → 先 `request_fsm_state(MENU_MODE)`（关栅），0.5 s 后（`REBOOT_DELAY_CYCLES`）`NVIC_SystemReset()`。**不动 `_reboot_cookie`**：正常启动后它本来就是 42，而 `main.c` 的 `!= 42 → 再复位一次` 是"启动状态不确定"的保险，不该由这里关掉。没保存的改动会丢 |
+| `action.enter_dfu_mode` | 180 | `state.dfu_pending = 1` → 与 `action.reboot` 同一条延迟复位路径（共用 `reboot_armed/reboot_deadline`，用 `reboot_dfu` 区分），但复位前把 `_reboot_cookie` 写成 **`0xDEADBEEF`**，`early_start_checks()` 会先延时 ~2 s 再 `Jump_To_BOOT()` —— 与串口菜单的 `d`（`DFU_CMD`）完全同义。`require` 要求门极关闭；**handler 里不能直接复位**，否则应答发不出去 |
 | `action.reset_config` | 126 | `state.reset_config_pending = 1` → `config_apply_defaults()` + `config_apply_limits()` + `save_preferences()`，**保存成功后自动 `reboot_pending = 1`**（`CAN_ID/CAN_PROT/CAN_BAUD` 是运行期读取的，改了不重启会让主站失联，而且 `config.*` 与 `comm_encoder.*` 会处于混合状态）；`require` 要求门极关闭（否则端点返回 `EP_ERR_STATE=6`），主循环里再加一道 `save_status = 2` 兜底。写 flash 失败时**不**重启 |
 
 **`action.encoder_mode`(77) / `action.setup_mode`(78) 已退役**：固件不再提供它们
 （串口菜单里的 `e`/`s` 入口仍然保留）。按“ID 只增不改”的规则，这两个 ID 仍在
 `tools/endpoint_ids.json` 的 map 里占位，**永远不要重新分配给别的参数**；新动作取
 126/127。
+
+**`system.version`(68) 已删除**：版本号改用 `system.fw_version_major/minor/revision/
+unreleased`（`main.h` 的 `FW_VERSION_*` 是唯一真源，不再维护 float 版本号）。
+ID 68 同样保留空号，**不要复用**；`tools/cb_bench.py` 已改为读 187/188/189。
 
 **一次性例外**：`action.enter_menu` 曾原地改名为 `action.idle_mode` 但**保留 ID 73**
 （工程尚未交付客户，不欠外部兼容）。今后再改名必须走"新名字 = 新 ID，旧 ID 留空号"。
@@ -834,7 +949,7 @@ bootloader 契约（本仓库不含 bootloader，app 链接在 `0x08000000`）�
 1. 记录 `config.gr`、`config.m_zero`、`system.prefs_sequence`，以及某固定机械
    角度下的 `telemetry.encoder_raw`。
 2. 用客户同款流程执行一次真实 OTA。
-3. 读回：`system.version` 为新版；`system.prefs_loaded = true`；
+3. 读回：`system.fw_version_major/minor/revision` 为新版；`system.prefs_loaded = true`；
    `config.gr`/`m_zero` 一致；`prefs_sequence` 未变；同一角度 `encoder_raw` 一致。
 4. `call action.save` → `prefs_sequence` +1、`save_status = 1`；断电重启再抽查。
 
@@ -848,6 +963,41 @@ bootloader 契约（本仓库不含 bootloader，app 链接在 `0x08000000`）�
 `CAN_ID/CAN_PROT/CAN_BAUD` 也回默认（出厂默认 **CYBERBEAST + Classic 1 Mbit/s**），所以保存成功后
 固件会自动重启（0.5 s），之后要重新配 CAN 并重新标定。运行中的 `comm_encoder` 副本
 故意不跟着改：重启前继续用旧标定，比拿全零 LUT 去换相安全。
+
+## 与 ODrive 端点的对照（缺什么、为什么）
+
+客户上位机按 ODrive 的 fibre 路径做的对照表，本工程的补齐情况：
+
+| ODrive 参数 | 本工程 | 说明 |
+|---|---|---|
+| `config.dc_bus_overvoltage_trip_level` / `undervoltage` | `config.vbus_ov_trip` / `vbus_uv_trip` | ✅ |
+| `config.dc_max_positive_current` | `config.i_dc_max` | ✅ 软限幅（估算，非保护） |
+| `motor.fet_thermistor.config.*` / `motor_thermistor.config.*` | `config.fet_temp_*` / `mot_temp_*` | ✅ |
+| `motor.config.pre_calibrated` | `config.pre_calibrated` | ✅ 且作为进电机模式门禁 |
+| `motor.config.torque_lim` | `config.torque_lim` | ✅ 输出端 N·m |
+| `controller.config.input_mode` / `input_filter_bandwidth` / `torque_ramp_rate` | `config.input_mode` / `input_bw` / `torque_ramp_rate` | ✅ 见"输入整形" |
+| `controller.config.enable_vel_limit` / `enable_torque_mode_vel_limit` | `config.enable_vel_limit` / `enable_torque_vel_lim` | ✅ |
+| `trap_traj.config.decel_limit` | `config.decel_limit` | ✅（TRAP_TRAJ 为完整移植） |
+| `config.sensor_mode`（遥测） | `telemetry.sensor_mode` | ✅ 恒 0（无无感估计器） |
+| `controller.mechanical_power`（遥测） | `telemetry.mechanical_power` | ✅ |
+| `current_control.Id_setpoint` / `Iq_setpoint`（遥测） | `telemetry.i_d_des` / `telemetry.i_q_des` | ✅ |
+| `fet_thermistor.temperature`（遥测） | `telemetry.mos_temp` | ✅ |
+| `ODrive.fw_version_major/minor/revision` / `unreleased` | `system.fw_version_major/minor/revision` / `unreleased` | ✅ 全部由 `main.h` 的 `FW_VERSION_*` 派生（**没有**单独的 float 版本号；老协议 `CAN_VAR_VERSION` 仍按协议给 float，编码 `major + 0.01*minor`） |
+| `ODrive.hw_version_major/minor/variant` | `system.hw_version_major/minor/variant` | ✅ `hw_config.h` 的 `HW_VERSION_*`（CBL89 = 1.0.0） |
+| `ODrive.serial_number`（uint64） | `system.serial_number`（uint64） | ✅ 直接取 MCU 的 96 位唯一 ID 低 64 位（`GetUID()`），不依赖 EEPROM。为它给 endpoint 协议加了 **uint64** 类型（`ep_get_u64`/`ep_put_u64`），描述符里的类型名与 ODrive 一致 |
+| `ODrive.vbus_voltage` / `ibus` / `error` | `telemetry.v_bus` / `i_bus` / `fault` | ✅ 只是命名不同 |
+| `ODrive.n_evt_sampling` / `n_evt_control_loop` | `timing.count` / `telemetry.loop_count` | ✅ 只是命名不同 |
+| `ODrive.ibus_report_filter_k` | 固定用 `VBUS_FILT_ALPHA`（0.1）滤波 | 未提供；需要按主站要求调上报滤波时再加 |
+| `ODrive.brake_resistor_*` | **不提供** | 本硬件没有制动电阻通路（`RM_EN` 在 CBL89 上已是 `GLS_V`） |
+| `ODrive.user_config_loaded` / `misconfigured` | `system.prefs_loaded` 覆盖前者 | 后者无对应概念（没有会互相冲突的外设配置） |
+| `config.comm_intf_mux` | **不提供** | 本硬件没有可用的接口复用开关：`MUX1`(PB15)/`RM_EN`(PB14) 这两个旧板宏在 CBL89 上已是 `GLS_W`/`GLS_V`（ATIM1 下管驱动）。RS485/脉冲/PWM 输入未实现，需要时按新板定义重做 |
+| `can.config.enable_r120` | **不提供** | 板上 120 Ω 终端不可控（无 GPIO），给了端点也只会"写了没效果"，违反参数必须有语义的原则 |
+
+> 命名策略：本工程用扁平短名（上位机做一次映射），只有这些必要的才与 ODrive 同名。
+> `Id_setpoint`/`Iq_setpoint` 这种大写开头的名字与 `params.json` 的小写命名规则
+> 冲突，所以用 `i_d_des`/`i_q_des` 对应。ODrive 根节点的名字（`serial_number`、
+> `fw_version_major`…）在本工程挂在 `system.` 前缀下，因为 `params.json` 要求名字
+> 至少带一个点；如果主站坚持按原名探测，再补一组别名（新 ID，同一 getter）即可。
 
 ## CAN：协议选择与 CYBERBEAST
 
@@ -898,7 +1048,7 @@ CubeMX 的 SysInit 段移到了配置加载之后
 | `0x20/0x21` SDO | 直接 `endpoint_handler()`；值小端；Classic 下 ReqLen 钳到 4；`>4` 字节走分段写；批量读回 ERR |
 | `0x22` SAVE | 置 `state.save_pending`（门极关闭时由主循环写 flash） |
 | `0x24/0x25` 描述符 | 元数据 + 定长分片（8/64 B，末尾补 0），2 帧/ms |
-| `0x40..0x49` 查询 | 状态/位置速度/电流/温度/母线/错误/版本；功率与母线电流返回 0 |
+| `0x40..0x49` 查询 | 状态/位置速度/电流/温度/母线/错误/版本；`0x44` 母线电流与 `0x47` 电/机械功率是**估算值**（无直流分流器，见"母线电流 / 功率估算"） |
 | `0x48` 心跳 | Classic 8 B / FD 19 B；pos/vel 按**原始计数域**钳位（F32 教训）；字节 18 是映射后的 ODrive AxisState |
 | `0x60..0x65` | SET_NODE_ID（RAM，需 save 持久化）/ SET_ZERO / START（仅 MENU）/ STOP / RESET / CLEAR |
 | `0xC0` ESTOP | `controller.fault |= FAULT_ESTOP` → FAULT_MODE 关栅，需显式回菜单清除 |
@@ -1060,10 +1210,27 @@ python tools/flash_jlink.py --bin build/motorcontrol.bin   # GNU 构建产物也
 | 21 | CSP 时连发 3×`can_timeout` 不刷新 | 卸力（零转矩），不是“保持位置” |
 | 22 | `set config.pos_error_fault 0.2`，堵住关节让 CSP 追不上 | 约 100 ms 后 `telemetry.fault` 出现 `FAULT_POS(8)`，进 FAULT_MODE 关栅 |
 | 23 | `set config.vel_loop_prescaler 1` / `pos_loop_prescaler 1` | `timing.overrun` 仍为 0，`timing.period_max` < 0.6×`isr_period` |
+| 24 | `call action.enter_dfu_mode`（门极关闭） | 应答先返回（`EP_OK`）、串口打印 `Entering ROM DFU bootloader`；~0.5 s 后复位、~2 s 后设备从 USB 消失（进入 ROM DFU），可用 DFU 工具重新烧写 |
+| 25 | 门极使能时 `call action.enter_dfu_mode` | `status 6`（`EP_ERR_STATE`），不复位、门极保持 |
+| 26 | `set config.pre_calibrated 0` 后 `call action.motor_mode` | `status 6`；串口按 `m` 打印 `Motor mode refused`；CYBERBEAST `START_MOTOR` 后状态仍是 IDLE |
+| 27 | 标定成功后读 `config.pre_calibrated` | `1`；进一次标定（即使失败回菜单）后变回 `0` |
+| 28 | 可调电源拉到 `config.vbus_ov_trip` 以上 | 锁 `FAULT_OV(1)`；串口故障报告打印实际峰值与阈值 |
+| 29 | 门极使能时把母线降到 `config.vbus_uv_trip`（>0）以下并保持 >10 ms | 锁 `FAULT_UV(16)`；门极关闭时同样的电压不报 |
+| 30 | 打开 `config.fet_temp_en`，`fet_temp_hi` 设成低于当前 MOS 温度 + 5 | 电流上限按 `[lo,hi]` 线性下降，超过 `hi+5 °C` 锁 `FAULT_FET_OT(32)` |
+| 31 | `set config.torque_lim 0.5`，然后下大转矩指令 | `telemetry.torque` 被压在 ~0.5 N·m；设回 0 后恢复 |
+| 32 | 母线电压/电流、`telemetry.mos_temp`/`mot_temp` 与万用表/热电偶对照 | `i_bus` 与电源读数同量级同符号；`mos_temp`/`mot_temp` 室温下与实测相差 < 5 °C（偏差大说明 NTC 分压与 ODrive 板不同，需改系数） |
+| 33 | `set config.input_mode 5` + CSP 走 1 rad 的阶跃 | 速度曲线是梯形（加速/匀速/减速都可见），到点无过冲；`telemetry.v_setpoint` 不超 `config.v_max` |
+| 34 | 同上，中途改 `command.p_des` 到反方向 | 从当前速度减速再反向，不跳变、不触发 `FAULT_POS` |
+| 35 | `set config.input_mode 3`，`config.input_bw 10` | 位置平滑跟到目标，无超调；`input_bw` 调到 100 仍稳定（增益被自动压低） |
+| 36 | `set config.input_mode 1`（直通）+ CSP 阶跃 | `accel_limit` 不再生效（速度指令瞬间到位），电流冲击明显变大 —— 确认这就是预期 |
+| 37 | `set config.input_mode 6` + `config.torque_ramp_rate 2`，MIT 下给 `t_ff` 阶跃 | `telemetry.t_ff` 按 ~2 N·m/s 爬升，不是瞬间到位 |
+| 38 | `set config.enable_torque_vel_lim 1` + MIT 推到超速 | `i_q_des` 被压向刹车侧，实际速度被限在 `config.v_max` 附近 |
+| 39 | `set config.enable_vel_limit 0` + `set command.v_des 100` | 写入成功（不再是 65），CSV 按 100 rad/s 转（注意机械安全）；设回 1 后回 `v_max` |
 
 ## 发布检查表
 
-- [ ] `VERSION_NUM`、`EP_PROTOCOL_VERSION`、`PREFS_SCHEMA` 是否变化已确认；
+- [ ] `FW_VERSION_MAJOR/MINOR/REVISION/UNRELEASED`（`main.h`）、`EP_PROTOCOL_VERSION`、
+      `PREFS_SCHEMA` 是否变化已确认；`FW_VERSION_UNRELEASED` 只在预发布构建里为 1；
 - [ ] ID 注册表只追加、没有复用/重排；
 - [ ] `make check` 通过，生成物与文档一起提交；
 - [ ] GNU Make 和 Keil AC6 都能干净构建；`make size` 镜像 < `0x0807C000`；

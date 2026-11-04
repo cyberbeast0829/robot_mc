@@ -35,6 +35,17 @@ extern uint32_t _reboot_cookie;
 		 fsmstate->ready = 0;
 	 }
 
+	 /* 未标定（config.pre_calibrated == false）就不许打开门极：电角度零点、极对数和
+	  * 相序都还没测过，闭环只会乱转甚至倒灌。这里是**所有**入口的兜底
+	  * （ASCII 菜单、CYBERBEAST 的 START_MOTOR、endpoint action.*）；
+	  * endpoint 侧另有 require 会直接返回 EP_ERR_STATE，用户能立刻看到原因。
+	  * 标定成功后 PRE_CALIBRATED 置 1，进标定/恢复默认时清 0。 */
+	 if((fsmstate->next_state == MOTOR_MODE) && (fsmstate->state != MOTOR_MODE) && !PRE_CALIBRATED){
+		 fsmstate->next_state = fsmstate->state;	// 留在原地（通常是菜单）
+		 fsmstate->ready = 0;
+		 fsmstate->motor_refused = 1;			// 主循环打印一次
+	 }
+
 	 /* state transition management */
 	 if(fsmstate->next_state != fsmstate->state){
 		 fsm_exit_state(fsmstate);		// safely exit the old state
@@ -173,6 +184,9 @@ extern uint32_t _reboot_cookie;
 				break;
 			case CALIBRATION_MODE:
 				//myprintf("Entering Calibration Mode\r\n");
+				/* 重新标定期间“已标定”不再成立：中途失败（comm_encoder_cal.failed）
+				 * 会回菜单，此时必须保持 false，否则失败后还能进电机模式 */
+				PRE_CALIBRATED = 0;
 				/* zero out all calibrations before starting */
 
 				comm_encoder_cal.done_cal = 0;
@@ -487,6 +501,7 @@ extern uint32_t _reboot_cookie;
 	 static int encoder_print_count = 0;
 	 static uint8_t reboot_armed = 0;		// 1 = a reset is queued
 	 static uint32_t reboot_deadline = 0;	// loop_count threshold (valid when reboot_armed)
+	 static uint8_t reboot_dfu = 0;		// 1 = reset into the ROM DFU bootloader (cookie), 0 = plain reset
 	 static uint8_t inertia_phase = 0;		// 0 idle / 1 等门极 / 2 等结果 / 3 等回菜单
 	 static uint8_t inertia_started = 0;	// ISR 是否已经把请求转成状态机
 	 static uint32_t inertia_deadline = 0;
@@ -494,6 +509,17 @@ extern uint32_t _reboot_cookie;
 	 /* Print any calibration milestone messages queued by the ISR (calibration
 	  * runs in the control interrupt and must not print there) */
 	 cal_print_flush(&comm_encoder_cal);
+
+	 /* NTC 温度换算 + 滤波。放在主循环而不是 40 kHz 中断里：多项式要几十条
+	  * 浮点指令，而温度的时间常数是 0.1 s 量级，1 ms 更新一次绰绰有余。
+	  * dt 由 loop_count 的差算出，与主循环节奏无关（见 update_thermistors） */
+	 update_thermistors(&controller);
+
+	 /* 未标定被拒绝进入电机模式：打印一次，让串口/菜单用户知道原因 */
+	 if(fsmstate->motor_refused){
+		 fsmstate->motor_refused = 0;
+		 myprintf("\r\n!!! Motor mode refused: config.pre_calibrated is false - run calibration (c / action.calibrate) first !!!\r\n");
+	 }
 
 	 /* 惯量标定的编排：用户只发一条 action.measure_inertia，这里负责
 	  * 进电机模式 → 触发 ISR 里的状态机 → 等它跑完 → 回菜单。
@@ -559,8 +585,11 @@ extern uint32_t _reboot_cookie;
 		 else if(fsmstate->state == SETUP_MODE){enter_setup_state();}
 		 else if(fsmstate->state == FAULT_MODE){
 			 myprintf("\n\r!!! FAULT - gate drive disabled !!!\r\n");
-			 if(controller.fault & FAULT_OV){myprintf("  Overvoltage: bus hit %.2f V (limit %.1f V)\r\n", controller.fault_vbus, V_BUS_FAULT);}
+			 if(controller.fault & FAULT_OV){myprintf("  Overvoltage: bus hit %.2f V (limit %.1f V)\r\n", controller.fault_vbus, VBUS_OV_TRIP);}
+			 if(controller.fault & FAULT_UV){myprintf("  Undervoltage: bus hit %.2f V (limit %.1f V)\r\n", controller.fault_vbus, VBUS_UV_TRIP);}
 			 if(controller.fault & FAULT_OC){myprintf("  Overcurrent: phase current hit %.1f A (limit %.1f A)\r\n", controller.fault_iabs, controller.i_oc_limit);}
+			 if(controller.fault & FAULT_FET_OT){myprintf("  FET over-temperature: %.1f C (limit %.1f C)\r\n", controller.mos_temp, FET_TEMP_HI);}
+			 if(controller.fault & FAULT_MOT_OT){myprintf("  Motor over-temperature: %.1f C (limit %.1f C)\r\n", controller.mot_temp, MOT_TEMP_HI);}
 			 if(controller.fault & FAULT_POS){myprintf("  Position following error: %.3f rad (limit %.3f rad)\r\n", controller.pos_err, POS_ERROR_FAULT);}
 			 if(controller.fault & FAULT_ESTOP){myprintf("  E-stop requested over CAN\r\n");}
 			 myprintf("  esc (or the CAN menu command) to clear\r\n");
@@ -636,20 +665,35 @@ extern uint32_t _reboot_cookie;
 		 }
 	 }
 
-	 /* endpoint action.reboot：应答已经发完（调用者已返回）才复位。
-	  * 用控制 ISR 的 loop_count 计时，不在主循环里阻塞。
-	  * 不动 _reboot_cookie：正常启动之后它本来就是 42，而 main.c 的
-	  * "启动状态不确定就再复位一次"（!= 42）是故意留的保险，不该由这里关掉。 */
+	 /* endpoint action.reboot / action.enter_dfu_mode：应答已经发完（调用者已返回）
+	  * 才复位。用控制 ISR 的 loop_count 计时，不在主循环里阻塞。
+	  * 先回菜单：由控制 ISR 走 fsm_enter_state() 把门极关掉，0.5 s 后才真正复位，
+	  * 避免带着 PWM 直接复位（引脚复位成输入，功率级状态不确定）。
+	  *
+	  * reboot_dfu = 0（action.reboot）：普通复位，**不动** _reboot_cookie ——
+	  *   正常启动之后它本来就是 42，而 main.c 的 "启动状态不确定就再复位一次"
+	  *   （!= 42）是故意留的保险，不该由这里关掉。
+	  * reboot_dfu = 1（action.enter_dfu_mode）：与菜单里的 'd'（DFU_CMD）同义，
+	  *   cookie 置 0xDEADBEEF，early_start_checks() 会先延时 ~2 s（等功率级放电）
+	  *   再 Jump_To_BOOT()。 */
 	 if(fsmstate->reboot_pending){
 		 fsmstate->reboot_pending = 0;
-		 /* 先回菜单：由控制 ISR 走 fsm_enter_state() 把门极关掉，0.5 s 后才真正复位，
-		  * 避免带着 PWM 直接掉电（引脚复位成输入，功率级状态不确定） */
 		 request_fsm_state(fsmstate, MENU_MODE);
+		 reboot_dfu = 0;
 		 reboot_deadline = (uint32_t)controller.loop_count + REBOOT_DELAY_CYCLES;
 		 reboot_armed = 1;
 	 }
+	 if(fsmstate->dfu_pending){
+		 fsmstate->dfu_pending = 0;
+		 request_fsm_state(fsmstate, MENU_MODE);
+		 reboot_dfu = 1;
+		 reboot_deadline = (uint32_t)controller.loop_count + REBOOT_DELAY_CYCLES;
+		 reboot_armed = 1;
+		 myprintf("\r\n  Entering ROM DFU bootloader in 0.5 s...\r\n");
+	 }
 	 if(reboot_armed && ((int32_t)((uint32_t)controller.loop_count - reboot_deadline) >= 0)){
 		 reboot_armed = 0;
+		 if(reboot_dfu){_reboot_cookie = 0xDEADBEEF;}
 		 __disable_irq();
 		 NVIC_SystemReset();
 	 }
@@ -680,6 +724,9 @@ extern uint32_t _reboot_cookie;
 			 comm_encoder.m_zero = M_ZERO;
 			 memcpy(&comm_encoder.offset_lut, comm_encoder_cal.lut_arr, sizeof(comm_encoder.offset_lut));
 			 memcpy(&ENCODER_LUT, comm_encoder_cal.lut_arr, sizeof(comm_encoder_cal.lut_arr));
+			 /* 全部三段（相序 / 编码器零点 / R-L-Ld-Lq-磁链）都跑完才会到这里，
+			  * 所以这就是“已标定”。先置标志再存盘，一条记录里一起落盘 */
+			 PRE_CALIBRATED = 1;
 			 fsmstate->save_status = save_preferences() ? 1 : 3;
 			 myprintf("E_ZERO: %d  %f\r\n", E_ZERO, TWO_PI_F*fmodf((comm_encoder.ppairs*(float)(-E_ZERO))/((float)ENC_CPR), 1.0f));
 			 for(int i = 0; i<N_LUT; i++){myprintf("%d %d\r\n", i, comm_encoder_cal.lut_arr[i]);}

@@ -205,9 +205,74 @@
       "min": 0.0,
       "max": 100000.0,
       "unit": "rad/s^2",
-      "brief": "速度设定值的斜率限制（输出轴）；0 = 关闭。非零默认值能在指令阶跃时压住电流冲击，对稳态无影响",
+      "brief": "速度设定值的**加速**斜率限制（输出轴），也用于 TRAP_TRAJ 的加速段；0 = 关闭。非零默认值能在指令阶跃时压住电流冲击，对稳态无影响",
       "persist": true,
       "default": 50.0
+    },
+    {
+      "name": "config.decel_limit",
+      "type": "float",
+      "access": "rw",
+      "ref": "DECEL_LIMIT",
+      "min": 0.0,
+      "max": 100000.0,
+      "unit": "rad/s^2",
+      "brief": "速度设定值的**减速**斜率限制（输出轴），也用于 TRAP_TRAJ 的减速段；0 = 与 accel_limit 相同（不单独限制）",
+      "persist": true,
+      "default": 50.0
+    },
+    {
+      "name": "config.input_mode",
+      "type": "int32",
+      "access": "rw",
+      "ref": "INPUT_MODE",
+      "min": 0,
+      "max": 9,
+      "brief": "输入整形模式（与 ODrive InputMode 编号一致）：0=忽略输入保持、1=直通、2=速度斜率（默认）、3=位置跟踪滤波、5=梯形位置规划、6=转矩斜坡、9=MIT(同直通)；4/7/8 不支持，按直通处理。它只整形设定值，控制环仍由 command.mode 选择",
+      "persist": true,
+      "default": 2
+    },
+    {
+      "name": "config.input_bw",
+      "type": "float",
+      "access": "rw",
+      "ref": "INPUT_BW",
+      "min": 1.0,
+      "max": 200.0,
+      "unit": "1/s",
+      "brief": "input_mode=3（位置跟踪滤波）的跟踪带宽；离散稳定限制在 4 kHz 位置环上约 45 1/s，超了固件会自动压低增益",
+      "persist": true,
+      "default": 10.0
+    },
+    {
+      "name": "config.torque_ramp_rate",
+      "type": "float",
+      "access": "rw",
+      "ref": "TORQUE_RAMP_RATE",
+      "min": 0.0,
+      "max": 10000.0,
+      "unit": "N-m/s",
+      "brief": "input_mode=6（转矩斜坡）下前馈转矩的变化率；0 = 不限（直通）。只在阻抗/MIT 模式下生效",
+      "persist": true,
+      "default": 1.0
+    },
+    {
+      "name": "config.enable_vel_limit",
+      "type": "bool",
+      "access": "rw",
+      "ref": "VEL_LIMIT_EN",
+      "brief": "速度设定值限幅总开关：false 时 CSV/CSP/帧内 vel_limit 都不再受 config.v_max 约束（此时 command.v_des 的物理范围是 ±200 rad/s）。默认 true",
+      "persist": true,
+      "default": 1
+    },
+    {
+      "name": "config.enable_torque_vel_lim",
+      "type": "bool",
+      "access": "rw",
+      "ref": "TORQUE_VEL_LIM_EN",
+      "brief": "阻抗/力矩/电流模式下的速度限制开关：打开后按 i_q <= (v_max - v)·vel_gain 限制推力，防止超过 v_max（默认关，与改动前行为一致）",
+      "persist": true,
+      "default": 0
     },
     {
       "name": "config.pos_error_fault",
@@ -401,7 +466,7 @@
       "min": 0.0,
       "max": 150.0,
       "unit": "C",
-      "brief": "过温保护阈值（0 = 关闭）",
+      "brief": "历史参数（温度观测器的短路阈值），当前未参与任何控制；温度保护请用 config.fet_temp_* / config.mot_temp_*",
       "persist": true,
       "default": 125.0
     },
@@ -521,6 +586,130 @@
       "default": 0
     },
     {
+      "name": "config.vbus_ov_trip",
+      "type": "float",
+      "access": "rw",
+      "ref": "VBUS_OV_TRIP",
+      "min": 10.0,
+      "max": 100.0,
+      "unit": "V",
+      "brief": "母线过压硬故障阈值；超过即锁存 FAULT_OV 并关闭门极（原编译期常量 V_BUS_FAULT）",
+      "persist": true,
+      "default": 67.0
+    },
+    {
+      "name": "config.vbus_uv_trip",
+      "type": "float",
+      "access": "rw",
+      "ref": "VBUS_UV_TRIP",
+      "min": 0.0,
+      "max": 100.0,
+      "unit": "V",
+      "brief": "母线欠压故障阈值（0 = 关闭）；只在门极使能时判定，并带 ~10 ms 去抖",
+      "persist": true,
+      "default": 0.0
+    },
+    {
+      "name": "config.i_dc_max",
+      "type": "float",
+      "access": "rw",
+      "ref": "I_DC_MAX",
+      "min": 0.0,
+      "max": 100.0,
+      "unit": "A",
+      "brief": "母线电流软限幅（0 = 关闭）。硬件没有直流分流器，按 P=1.5·V_PER_CMD·(v_d·i_d+v_q·i_q) 估算，只做软限流、不锁故障",
+      "persist": true,
+      "default": 0.0
+    },
+    {
+      "name": "config.torque_lim",
+      "type": "float",
+      "access": "rw",
+      "ref": "TORQUE_LIM",
+      "min": 0.0,
+      "max": 100.0,
+      "unit": "N-m",
+      "brief": "输出端转矩上限（0 = 关闭）；与 command.t_ff / telemetry.torque 同一量纲，内部换算 i_q_lim = torque_lim/(KT·GR)",
+      "persist": true,
+      "default": 0.0
+    },
+    {
+      "name": "config.fet_temp_en",
+      "type": "bool",
+      "access": "rw",
+      "ref": "FET_TEMP_EN",
+      "brief": "MOS/FET 温度保护开关（默认关，关闭时温度只上报不参与控制）",
+      "persist": true,
+      "default": 0
+    },
+    {
+      "name": "config.fet_temp_lo",
+      "type": "float",
+      "access": "rw",
+      "ref": "FET_TEMP_LO",
+      "min": 0.0,
+      "max": 200.0,
+      "unit": "C",
+      "brief": "MOS 温度降流起点：达到该温度开始线性压低电流上限",
+      "persist": true,
+      "default": 75.0
+    },
+    {
+      "name": "config.fet_temp_hi",
+      "type": "float",
+      "access": "rw",
+      "ref": "FET_TEMP_HI",
+      "min": 0.0,
+      "max": 200.0,
+      "unit": "C",
+      "brief": "MOS 温度上限：达到该温度电流上限降为 0，再超过 5 °C 锁存 FAULT_FET_OT",
+      "persist": true,
+      "default": 95.0
+    },
+    {
+      "name": "config.mot_temp_en",
+      "type": "bool",
+      "access": "rw",
+      "ref": "MOT_TEMP_EN",
+      "brief": "电机温度保护开关（默认关，关闭时温度只上报不参与控制）",
+      "persist": true,
+      "default": 0
+    },
+    {
+      "name": "config.mot_temp_lo",
+      "type": "float",
+      "access": "rw",
+      "ref": "MOT_TEMP_LO",
+      "min": 0.0,
+      "max": 200.0,
+      "unit": "C",
+      "brief": "电机温度降流起点",
+      "persist": true,
+      "default": 75.0
+    },
+    {
+      "name": "config.mot_temp_hi",
+      "type": "float",
+      "access": "rw",
+      "ref": "MOT_TEMP_HI",
+      "min": 0.0,
+      "max": 200.0,
+      "unit": "C",
+      "brief": "电机温度上限：达到该温度电流上限降为 0，再超过 5 °C 锁存 FAULT_MOT_OT",
+      "persist": true,
+      "default": 95.0
+    },
+    {
+      "name": "config.pre_calibrated",
+      "type": "bool",
+      "access": "rw",
+      "ref": "PRE_CALIBRATED",
+      "require": "!controller.gate_drive_enabled",
+      "brief": "电机/编码器是否已标定：false 时拒绝进入电机模式（action.calibrate 成功后自动置 1，进入标定或恢复默认时清 0；门极使能时不可写）",
+      "persist": true,
+      "default": 0
+    },
+    {
       "name": "command.t_ff",
       "type": "float",
       "access": "rw",
@@ -554,13 +743,10 @@
       "access": "rw",
       "ref": "controller.v_des",
       "unit": "rad/s",
-      "min": -100.0,
-      "max": 100.0,
-      "min_expr": "V_MIN",
-      "max_expr": "V_MAX",
-      "range_dynamic": true,
+      "min": -200.0,
+      "max": 200.0,
       "set": "controller.v_des = v; controller.timeout = 0;",
-      "brief": "速度设定值（输出轴 rad/s）；范围由 config.v_max 决定，进入 MOTOR_MODE 时清零"
+      "brief": "速度设定值（输出轴 rad/s），进入 MOTOR_MODE 时清零。运行期限幅：config.enable_vel_limit=true 时压到 ±config.v_max，false 时只受 ±200 rad/s 的物理范围约束"
     },
     {
       "name": "command.kp",
@@ -847,9 +1033,56 @@
       "name": "telemetry.temperature",
       "type": "float",
       "access": "r",
-      "get": "observer.temp_measured",
+      "get": "controller.mos_temp",
       "unit": "C",
-      "brief": "温度观测器估计值"
+      "brief": "MOS/FET 温度（NTC 换算；NTC 未接或系数不符时读数不可信）"
+    },
+    {
+      "name": "telemetry.mos_temp",
+      "type": "float",
+      "access": "r",
+      "get": "controller.mos_temp",
+      "unit": "C",
+      "brief": "MOS/FET 温度（MOS_TEMP / ADC2_CH2）"
+    },
+    {
+      "name": "telemetry.mot_temp",
+      "type": "float",
+      "access": "r",
+      "get": "controller.mot_temp",
+      "unit": "C",
+      "brief": "电机温度（MOT_TEMP / ADC3_CH6）"
+    },
+    {
+      "name": "telemetry.i_bus",
+      "type": "float",
+      "access": "r",
+      "get": "controller.i_bus_filt",
+      "unit": "A",
+      "brief": "估算母线电流（无直流分流器，由 dq 功率除以母线电压得到，仅用于监控与软限幅）"
+    },
+    {
+      "name": "telemetry.i_d_des",
+      "type": "float",
+      "access": "r",
+      "get": "controller.i_d_des",
+      "unit": "A",
+      "brief": "d 轴电流给定（对应 ODrive 的 Id_setpoint；Iq_setpoint 见 telemetry.i_q_des）"
+    },
+    {
+      "name": "telemetry.mechanical_power",
+      "type": "float",
+      "access": "r",
+      "get": "controller.mech_power",
+      "unit": "W",
+      "brief": "机械功率 = 输出端转矩 × 输出轴角速度（>0 输出机械功，<0 回馈）"
+    },
+    {
+      "name": "telemetry.sensor_mode",
+      "type": "uint8",
+      "access": "r",
+      "get": "0",
+      "brief": "位置传感器模式：本固件只有 SPI 编码器 + PLL，恒为 0（无无感/混合估计器）"
     },
     {
       "name": "telemetry.resistance",
@@ -1247,11 +1480,60 @@
       "brief": "注入 ADC 等待最大耗时"
     },
     {
-      "name": "system.version",
-      "type": "float",
+      "name": "system.fw_version_major",
+      "type": "uint8",
       "access": "r",
-      "get": "VERSION_NUM",
-      "brief": "固件版本号"
+      "get": "FW_VERSION_MAJOR",
+      "brief": "固件主版本号（对应 ODrive 的 fw_version_major）"
+    },
+    {
+      "name": "system.fw_version_minor",
+      "type": "uint8",
+      "access": "r",
+      "get": "FW_VERSION_MINOR",
+      "brief": "固件次版本号（对应 ODrive 的 fw_version_minor）"
+    },
+    {
+      "name": "system.fw_version_revision",
+      "type": "uint8",
+      "access": "r",
+      "get": "FW_VERSION_REVISION",
+      "brief": "固件修订号（对应 ODrive 的 fw_version_revision）"
+    },
+    {
+      "name": "system.fw_version_unreleased",
+      "type": "uint8",
+      "access": "r",
+      "get": "FW_VERSION_UNRELEASED",
+      "brief": "1 = 非正式发布构建（ODrive 的 fw_version_unreleased）；0 = 正式版"
+    },
+    {
+      "name": "system.hw_version_major",
+      "type": "uint8",
+      "access": "r",
+      "get": "HW_VERSION_MAJOR",
+      "brief": "硬件主版本号（对应 ODrive 的 hw_version_major；CBL89 板，定义在 hw_config.h）"
+    },
+    {
+      "name": "system.hw_version_minor",
+      "type": "uint8",
+      "access": "r",
+      "get": "HW_VERSION_MINOR",
+      "brief": "硬件次版本号"
+    },
+    {
+      "name": "system.hw_version_variant",
+      "type": "uint8",
+      "access": "r",
+      "get": "HW_VERSION_VARIANT",
+      "brief": "硬件装配变体号"
+    },
+    {
+      "name": "system.serial_number",
+      "type": "uint64",
+      "access": "r",
+      "get": "board_serial_number()",
+      "brief": "芯片 96 位唯一 ID 的低 64 位（对应 ODrive 的 serial_number，但这里直接取自 MCU UID，不依赖板载 EEPROM）"
     },
     {
       "name": "system.prefs_sequence",
@@ -1347,15 +1629,15 @@
       "name": "action.motor_mode",
       "type": "void",
       "access": "w",
-      "brief": "进入电机模式（仅菜单状态）",
-      "require": "state.state == MENU_MODE",
+      "brief": "进入电机模式（仅菜单状态，且 config.pre_calibrated 必须为 true）",
+      "require": "state.state == MENU_MODE && PRE_CALIBRATED",
       "call": "request_fsm_state(&state, MOTOR_MODE);"
     },
     {
       "name": "action.calibrate",
       "type": "void",
       "access": "w",
-      "brief": "进入标定（相序/极对数、编码器零位与 LUT、R/L/Ld-Lq/磁链；仅菜单状态）",
+      "brief": "进入标定（相序/极对数、编码器零位与 LUT、R/L/Ld-Lq/磁链；仅菜单状态）。成功后自动置 config.pre_calibrated 并保存；失败不写 flash 且保持未标定",
       "require": "state.state == MENU_MODE",
       "call": "request_fsm_state(&state, CALIBRATION_MODE);"
     },
@@ -1375,6 +1657,14 @@
       "call": "state.reboot_pending = 1;"
     },
     {
+      "name": "action.enter_dfu_mode",
+      "type": "void",
+      "access": "w",
+      "brief": "先应答、约 0.5 s 后复位并跳进 ROM DFU 引导程序（之后约 2 s 跳转，USB 会重新枚举）。与串口菜单的 'd' 同义，用于救砖/整片烧写；配置与标定是否保留取决于下载的地址范围（只写 app 区就保留）",
+      "require": "!controller.gate_drive_enabled",
+      "call": "state.dfu_pending = 1;"
+    },
+    {
       "name": "action.reset_timing",
       "type": "void",
       "access": "w",
@@ -1386,7 +1676,7 @@
       "type": "void",
       "access": "w",
       "brief": "一条指令完成惯量标定：自动进电机模式 → 打两个电流台阶测输出端惯量 → 回菜单。约 1.5 s、关节行程 ~0.1 rad。结果写 config.inertia（**只写 RAM，不自动保存**），进度/结果读 system.inertia_status；测完自动回菜单，可直接 action.save",
-      "require": "state.state == MENU_MODE && KT > 0.0f && GR > 0.0f",
+      "require": "state.state == MENU_MODE && KT > 0.0f && GR > 0.0f && PRE_CALIBRATED",
       "call": "state.inertia_pending = 1;"
     },
     {
@@ -1394,7 +1684,7 @@
       "type": "void",
       "access": "w",
       "brief": "用 config.inertia 算外环增益并写进 RAM（不自动保存）：vel_gain = tune_margin·J·omega_c/(KT·GR)；vel_integrator_gain = vel_gain·clamp(omega_c/25, 5, 30)；pos_gain = omega_c/20。写完用 csv/csp 子命令验证，满意再 action.save",
-      "require": "state.state == MENU_MODE && INERTIA > 0.0f && KT > 0.0f && GR > 0.0f",
+      "require": "state.state == MENU_MODE && INERTIA > 0.0f && KT > 0.0f && GR > 0.0f && PRE_CALIBRATED",
       "call": "motion_tune_gains(&controller);"
     },
     {

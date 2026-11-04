@@ -177,6 +177,30 @@ static void test_no_reply_and_short(void){
 	CHECK(!endpoint_process(raw, 4, resp, sizeof(resp), &out));
 }
 
+static void test_u64_codec(void){
+	/* 8 字节小端：序列号/UID 这类不参与控制的整数 */
+	uint8_t buf[16];
+	ep_buf_t out = { buf, buf + sizeof(buf) };
+	uint64_t v = 0x0123456789ABCDEFull;
+	uint64_t back = 0;
+	ep_cbuf_t in;
+
+	CHECK(ep_put_u64(&out, v));
+	CHECK(out.begin == buf + 8);
+	CHECK(buf[0] == 0xEF && buf[1] == 0xCD && buf[7] == 0x01);
+
+	in.begin = buf; in.end = buf + 8;
+	CHECK(ep_get_u64(&in, &back));
+	CHECK(back == v);
+	CHECK(in.begin == in.end);
+
+	/* 空间不足时必须失败且不动游标 */
+	in.begin = buf; in.end = buf + 7;
+	back = 0;
+	CHECK(!ep_get_u64(&in, &back));
+	CHECK(in.begin == buf);
+}
+
 int main(void){
 	test_descriptor_probe();
 	test_read();
@@ -187,6 +211,7 @@ int main(void){
 	test_version_mismatch();
 	test_truncate_to_want();
 	test_no_reply_and_short();
+	test_u64_codec();
 
 	if(failures){
 		printf("test_endpoint_proto: %d failure(s)\n", failures);

@@ -95,6 +95,7 @@ bool ep_get_u16(ep_cbuf_t *b, uint16_t *v);
 bool ep_get_i16(ep_cbuf_t *b, int16_t *v);
 bool ep_get_u32(ep_cbuf_t *b, uint32_t *v);
 bool ep_get_i32(ep_cbuf_t *b, int32_t *v);
+bool ep_get_u64(ep_cbuf_t *b, uint64_t *v);
 bool ep_get_f32(ep_cbuf_t *b, float *v);
 
 bool ep_put_u8(ep_buf_t *b, uint8_t v);
@@ -103,6 +104,7 @@ bool ep_put_u16(ep_buf_t *b, uint16_t v);
 bool ep_put_i16(ep_buf_t *b, int16_t v);
 bool ep_put_u32(ep_buf_t *b, uint32_t v);
 bool ep_put_i32(ep_buf_t *b, int32_t v);
+bool ep_put_u64(ep_buf_t *b, uint64_t v);
 bool ep_put_f32(ep_buf_t *b, float v);
 
 float ep_clampf(float v, float lo, float hi);

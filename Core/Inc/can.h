@@ -162,7 +162,7 @@ typedef struct{
 #define CAN_VAR_KT			19		// torque constant (N-m/A)
 #define CAN_VAR_GR			20		// gear ratio
 #define CAN_VAR_CAN_TIMEOUT	21		// command timeout in ms (0 = disabled)
-#define CAN_VAR_VERSION		22		// firmware version (VERSION_NUM)
+#define CAN_VAR_VERSION		22		// firmware version, float = major + 0.01*minor (main.h 的 FW_VERSION_*)
 #define CAN_VAR_MODE		23		// current FSM state (the *_MODE values in fsm.h)
 
 /* FDCAN error counters, straight out of the ECR / PSR registers.  A host seeing

@@ -3,6 +3,8 @@
 #ifndef USER_CONFIG_H
 #define USER_CONFIG_H
 
+#include <stdint.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -44,6 +46,21 @@ extern "C" {
 #define INERTIA					__float_reg[32]									// 输出端惯量 kg·m^2（action.measure_inertia 测得，不自动保存）
 #define OMEGA_C					__float_reg[33]									// action.tune_gains 的目标穿越频率 rad/s
 #define TUNE_MARGIN				__float_reg[34]									// action.tune_gains 的速度环放大系数（补摩擦/齿隙造成的低估）
+/* ---- 保护与限幅（P0）----
+ * 温度上下限是 °C；enabled = 0 时温度只上报、不参与控制（默认就是关，
+ * 因为 NTC 型号/分压需要台架核对后才可信）。 */
+#define VBUS_OV_TRIP			__float_reg[35]									// 母线过压硬故障阈值 V
+#define VBUS_UV_TRIP			__float_reg[36]									// 母线欠压故障阈值 V（0 = 关闭）
+#define I_DC_MAX				__float_reg[37]									// 母线电流软限幅 A（0 = 关闭）
+#define TORQUE_LIM				__float_reg[38]									// 输出端转矩上限 N·m（0 = 关闭）
+#define FET_TEMP_LO				__float_reg[39]									// MOS 温度降流起点 °C
+#define FET_TEMP_HI				__float_reg[40]									// MOS 温度上限 °C
+#define MOT_TEMP_LO				__float_reg[41]									// 电机温度降流起点 °C
+#define MOT_TEMP_HI				__float_reg[42]									// 电机温度上限 °C
+/* ---- 输入整形（P1）---- */
+#define INPUT_BW				__float_reg[43]									// POS_FILTER 的跟踪带宽 rad/s
+#define TORQUE_RAMP_RATE		__float_reg[44]									// TORQUE_RAMP 的转矩斜率 N·m/s
+#define DECEL_LIMIT				__float_reg[45]									// 速度设定值减速度 rad/s²（与 ACCEL_LIMIT 配对）
 
 
 #define PHASE_ORDER             __int_reg[0]                                    // Phase swapping during calibration
@@ -74,6 +91,16 @@ extern "C" {
  * 设备会把自己发出的帧判成错误帧 → TEC 涨到 bus-off、总线上什么都看不到。
  * 只在 FD 模式下生效，且**下次上电**才应用（DBTP/TDCR 只能在 init 模式写）。 */
 #define CAN_TDC                 __int_reg[139]
+#define INPUT_MODE              __int_reg[140]									// 输入整形模式（INPUT_MODE_x，见 foc.h）
+/* 布尔/标志类配置单独用 uint8_t 存：TLV 里 bool 记录只有 1 字节，塞进 __int_reg
+ * （int）会只写低字节，虽然在小端上能用，但不如独立字节干净。 */
+#define PRE_CALIBRATED          pre_calibrated_flag		// 标定完成标志（0 = 未标定，禁止进电机模式）
+#define FET_TEMP_EN             fet_temp_en_flag			// MOS 温度保护开关
+#define MOT_TEMP_EN             mot_temp_en_flag			// 电机温度保护开关
+#define VEL_LIMIT_EN            vel_limit_en_flag			// 速度设定值限幅开关（config.enable_vel_limit）
+#define TORQUE_VEL_LIM_EN       torque_vel_lim_en_flag		// 阻抗/力矩模式下的速度限制开关
+extern uint8_t pre_calibrated_flag, fet_temp_en_flag, mot_temp_en_flag;
+extern uint8_t vel_limit_en_flag, torque_vel_lim_en_flag;
 
 
 

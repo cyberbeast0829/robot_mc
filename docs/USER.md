@@ -52,7 +52,7 @@ python tools/mc_ep.py --port COM7 monitor <name>... --rate 20
 | `command.*` | 运行命令：`t_ff`/`p_des`/`v_des`/`kp`/`kd`（不持久化） | `rw` |
 | `telemetry.*` | 实时测量 | `r` |
 | `timing.*` | ISR 耗时统计 | `r` |
-| `system.*` | 版本、配置序号、schema、保存状态 | `r` |
+| `system.*` | 版本、硬件版本、序列号、配置序号、schema、保存状态 | `r` |
 | `action.*` | 保存、置零、切模式、标定 | `w` |
 
 规则：
@@ -66,6 +66,32 @@ python tools/mc_ep.py --port COM7 monitor <name>... --rate 20
 
 状态码：0 OK、1 未知 ID、2 长度错、3 数值非法、4 只读、5 只写、6 状态不允许、
 7 描述符版本不匹配（工具会自动重新下载描述符）。
+
+### 设备身份
+
+```bash
+python tools/mc_ep.py --port COM7 get system.fw_version_major      # 2
+python tools/mc_ep.py --port COM7 get system.fw_version_minor      # 3
+python tools/mc_ep.py --port COM7 get system.fw_version_revision   # 0
+python tools/mc_ep.py --port COM7 get system.fw_version_unreleased # 0 = 正式版
+python tools/mc_ep.py --port COM7 get system.hw_version_major      # 1 (CBL89)
+python tools/mc_ep.py --port COM7 get system.serial_number         # 十进制
+```
+
+- 版本号只有**整数三元组**这一个来源：`fw_version_major.minor.revision`
+  （本版 `2.3.0`），`fw_version_unreleased` 为 1 表示这是带 `-dirty`/预发布后缀的
+  构建。启动横幅（`Firmware Version Number: 2.3.0`）报的也是同一组数。
+- 老协议的 CAN 版本变量（`CAN_VAR_VERSION`）仍然是 float32，编码为
+  `major + 0.01×minor`（本版 `2.3.0` → `2.03`，读作 "V2.03"；minor 可以 0–99）。
+  修订号不进 float，需要时读 `system.fw_version_revision`。因为协议里那个位置
+  就是浮点数，所以只能用这种打包方式 —— 用 `0.1` 的话 minor ≥ 10 会进位到整数
+  部分（`2.10` 变成 `3.0`）。
+- **`system.serial_number`** 是芯片 96 位唯一 ID 的低 64 位，**每个芯片不同**，
+  适合当设备指纹（多台设备同一条总线上区分、日志/标定记录归档）。
+  它不依赖 EEPROM，所以换固件/整片擦除都不会变。
+- CYBERBEAST 的 `QUERY_DEVICE_INFO (0x46)` 报的是同一组值；CAN FD 下 8–15 字节
+  还带 64 位序列号（大端），Classic 帧只有 8 字节，序列号用 `PARAM_READ` 读
+  `system.serial_number`。
 
 ### 在 Python 脚本里用
 
@@ -194,7 +220,13 @@ python tools/mc_ep.py --port COM7 call action.idle_mode
 | `config.vel_gain` | A/(rad/s) | 2.469 | 速度误差 × 它 = 电流指令 |
 | `config.vel_integrator_gain` | A/(rad/s)/s | 44.44 | 消掉重力/摩擦下的稳态误差 |
 | `config.pos_ff_gain` | — | 1.0 | CSP 帧间速度前馈；1 = 全前馈，0 = 关 |
-| `config.accel_limit` | rad/s² | 50 | 速度设定值斜率限制（输出轴）；0 = 关。**CSP 想快就先放开它**（30~100），比加 `pos_gain` 安全 |
+| `config.accel_limit` | rad/s² | 50 | 速度设定值的**加速**斜率（输出轴），TRAP_TRAJ 的加速段也用它；0 = 关。**CSP 想快就先放开它**（30~100），比加 `pos_gain` 安全 |
+| `config.decel_limit` | rad/s² | 50 | 速度设定值的**减速**斜率，TRAP_TRAJ 的减速段也用它；0 = 与 `accel_limit` 相同 |
+| `config.input_mode` | — | 2 | 输入整形：0 忽略、1 直通、**2 速度斜率（默认）**、3 位置跟踪滤波、5 梯形位置规划、6 转矩斜坡、9 MIT；4/7/8 不支持（按直通） |
+| `config.input_bw` | 1/s | 10 | 只对 `input_mode=3` 有效；4 kHz 位置环上实际可用上限约 45，超了固件会自动压低增益 |
+| `config.torque_ramp_rate` | N·m/s | 1.0 | 只对 `input_mode=6` 有效：前馈转矩的斜率；0 = 不限 |
+| `config.enable_vel_limit` | — | true | 关掉后 CSV/CSP 不再受 `config.v_max` 约束（`command.v_des` 的物理范围变成 ±200 rad/s） |
+| `config.enable_torque_vel_lim` | — | false | 打开后在 MIT/力矩/电流模式也按 `v_max` 限速（`i_q ≤ (v_max−v)·vel_gain`） |
 | `config.pos_error_fault` | rad | 0 | 跟随误差故障阈值，0 = 关 |
 | `config.pll_bandwidth` | rad/s | 2000 | 编码器速度估计带宽（约 318 Hz）；低速抖就降到 1000，想要更高带宽就升到 3000 |
 | `config.inertia` | kg·m² | 0.0006 | 输出端惯量，由 `action.measure_inertia` 测得（只写 RAM）。**默认值只是本台架的实测值**，换电机/换关节必须重测 |
@@ -289,7 +321,33 @@ python tools/mc_ep.py --port COM6 set config.can_timeout 100
   固件就把命令清零 → **卸力**，不是保持位置。周期同步的主站不会碰到这个问题。
 - 进电机模式、超时、故障都会把 `command.mode` 复位成 0（阻抗）。
 - 速度限幅：CSV 用 `config.v_max`，CSP 用帧里的 `vel_limit`（RPM，输出端）。
-  帧里给 0 视为“未指定”，按 `config.v_max` 处理。
+  帧里给 0 视为“未指定”，按 `config.v_max` 处理。把 `config.enable_vel_limit`
+  设成 0 就完全不受 `config.v_max` 约束（只剩 ±200 rad/s 的物理范围）。
+
+#### 输入整形：轨迹模式（关节更顺、少冲击）
+
+默认 `config.input_mode = 2`（速度斜率，与旧固件一致）。想让点到点运动真正平滑
+（先加速、匀速、再减速），用梯形规划：
+
+```bash
+python tools/mc_ep.py --port COM6 set config.input_mode 5      # 5 = TRAP_TRAJ
+python tools/mc_ep.py --port COM6 set config.v_max 2.0         # 巡航速度（输出轴 rad/s）
+python tools/mc_ep.py --port COM6 set config.accel_limit 10    # rad/s²
+python tools/mc_ep.py --port COM6 set config.decel_limit 5     # 减速更缓
+python tools/mc_ep.py --port COM6 set command.mode 2           # CSP
+python tools/mc_ep.py --port COM6 set command.p_des 1.0
+```
+
+- TRAP_TRAJ 会在**位置环**里生成位置+速度设定，速度直接做位置环前馈；中途改
+  `command.p_des` 会从当前位置/速度重新规划，不会跳变。
+- `config.input_mode = 3` 是二阶跟踪滤波（不是规划，只是把设定值"跟"过去），
+  调节 `config.input_bw`（默认 10 1/s，越大跟得越快；4 kHz 位置环上约 45 就饱和）。
+- 这两个模式下 `config.pos_ff_gain` 的帧间前馈不参与（轨迹速度取代它）。
+- `config.input_mode = 1/9` 是直通（不做任何斜率限制）；`0` 是忽略输入（保持设定值）。
+- 阻抗/MIT 模式下想让力矩缓慢建立，用 `config.input_mode = 6` +
+  `config.torque_ramp_rate`（N·m/s）。
+- ⚠ **`input_mode` 不是 `command.mode`**：前者整形设定值，后者选控制环。两者都设。
+
 - **位置跟随误差故障**默认关闭。打开后（`config.pos_error_fault > 0`）只要位置环
   没被速度限幅饱和、误差又连续超过阈值 100 ms，就锁存故障、关栅停机，需要
   `action.idle_mode` 才能清除。阈值必须**小于 `config.v_max / config.pos_gain`**，
@@ -330,6 +388,28 @@ python tools/mc_ep.py --port COM6 set config.can_timeout 100
   电流 0.15–0.25 A、输出轴净行程 ~0.1 rad（5.7°），末了自动回菜单。用
   `get system.inertia_status` 判断（1 运行中 / 2 成功 / 3 关节本来在动 /
   4 加电流也不动 / 5 台阶太短 / 6 激励不足）；`call` 只表示"请求已受理"。
+
+### 保护与限幅
+
+| 参数 | 默认 | 说明 |
+|---|---|---|
+| `config.vbus_ov_trip` | 67 V | 母线**过压**硬故障：超过即锁 `FAULT_OV`、关栅。任何状态都检查（门极关着也可能被外部推高） |
+| `config.vbus_uv_trip` | 0 = 关 | 母线**欠压**故障：只在门极使能时判定，约 10 ms 去抖。0 表示关闭；只有 USB 供电时不会误跳 |
+| `config.i_dc_max` | 0 = 关 | 母线电流**软限幅**。硬件没有直流分流器，固件按 `P = 1.5·V_PER_CMD·(v_d·i_d+v_q·i_q)` 估算母线电流并回压电流指令。**只限流不报错**，别当保护用 |
+| `config.torque_lim` | 0 = 关 | **输出端**转矩上限（N·m，与 `command.t_ff`/`telemetry.torque` 同量纲）。0 = 不限 |
+| `config.fet_temp_en` / `_lo` / `_hi` | 关 / 75 / 95 °C | MOS 温度保护：`lo` 开始线性降流、到 `hi` 电流上限降到 0、超过 `hi+5 °C` 锁 `FAULT_FET_OT` |
+| `config.mot_temp_en` / `_lo` / `_hi` | 关 / 75 / 95 °C | 电机温度保护，同上（`FAULT_MOT_OT`） |
+
+温度全程可读（即使保护关着）：`telemetry.mos_temp` / `telemetry.mot_temp`
+（`telemetry.temperature` 是 MOS 温度的别名）。
+
+> ⚠ **NTC 换算是照搬 ODrive 板的系数**。第一次上台架请用室温核对这两个读数：
+> 明显偏离（例如 25 °C 读到 60 °C 或负值）说明 CBL89 的分压网络不同，需要改
+> `foc.c` 里的多项式系数，**在校正前不要打开 `fet_temp_en` / `mot_temp_en`**。
+
+新增故障位：`4 = FAULT_UV`（欠压）、`32 = FAULT_FET_OT`（MOS 过温）、
+`64 = FAULT_MOT_OT`（电机过温）。清除方式与其他故障一样：`action.idle_mode`
+（回菜单即清）。
 
 ## 5. 标定
 
@@ -378,6 +458,18 @@ python tools/mc_ep.py --port COM7 get telemetry.ld_lq_diff    # Ld-Lq
 `telemetry.flux_linkage` 是 `kt` 与极对数换算出来的只读值（λ = Kt/(1.5·极对数)），
 因此重启后仍能读到标定得到的磁链。
 
+**`config.pre_calibrated`（已标定标志）**：标定全部成功并保存后会置 1，它同时是
+**进入电机模式的前置条件**——为 0 时 `action.motor_mode` 返回状态码 6（`EP_ERR_STATE`），
+串口按 `m` 会打印"Motor mode refused"，CYBERBEAST 的 `START_MOTOR` 也不会生效
+（状态一直停在 IDLE）。以下情况会重新变成 0：
+
+- 进入标定模式（哪怕中途失败）；
+- `action.reset_config`（恢复出厂默认值）。
+
+所以"换了板子 / 整片擦除 / 恢复默认值后电机使能不了"是**正常行为**：重新
+`call action.calibrate` 即可。也可以手工 `set config.pre_calibrated 1` 跳过检查
+（仅在标定数据确实有效时这么做；门极使能时该参数不可写）。
+
 ## 6. 备份与恢复
 
 只备份"持久化 = 是"的参数（见 [parameters.md](parameters.md)）。LUT 是隐藏记录，
@@ -416,10 +508,12 @@ python tools/mc_ep.py --port COM7 get config.m_zero
 升级后核对：
 
 ```bash
-python tools/mc_ep.py --port COM7 get system.version        # 新版本
-python tools/mc_ep.py --port COM7 get system.prefs_loaded   # true
-python tools/mc_ep.py --port COM7 get system.config_schema  # 与发布说明一致
-python tools/mc_ep.py --port COM7 get config.gr             # 与基线一致
+python tools/mc_ep.py --port COM7 get system.fw_version_major   # 与发布说明一致
+python tools/mc_ep.py --port COM7 get system.fw_version_minor
+python tools/mc_ep.py --port COM7 get system.fw_version_revision
+python tools/mc_ep.py --port COM7 get system.prefs_loaded       # true
+python tools/mc_ep.py --port COM7 get system.config_schema      # 与发布说明一致
+python tools/mc_ep.py --port COM7 get config.gr                 # 与基线一致
 ```
 
 LUT 的验证：把电机停到升级前同一机械角度，比较 `telemetry.encoder_raw`。
@@ -428,11 +522,29 @@ LUT 的验证：把电机停到升级前同一机械角度，比较 `telemetry.e
 |---|---|---|
 | `prefs_loaded = false`，参数全默认 | 配置页被擦了 | 查 OTA 擦除范围；从备份恢复；重新标定 |
 | 个别参数变默认 | 该 ID 的类型/长度变了（不应发生） | 查发布说明；备份恢复 |
-| `system.version` 没变 | 没烧进去 | 重试 |
+| `system.fw_version_*` 没变 | 没烧进去 | 重试 |
 | 工具报状态 7 | 描述符 CRC 变了 | 用新版 `mc_ep.py`，自动重下描述符 |
 
 **第一次刷入 TLV 配置格式的固件**（本仓库之前的版本用的是裸数组）会忽略旧块，
 参数回默认值，需要重新设置 + 标定一次；之后每次升级都会保留。
+
+### 进 DFU 引导程序（救砖 / 整片烧写）
+
+如果固件已经跑不起来、或者需要用 DFU 工具整片烧写，可以让设备自己跳进 ROM
+bootloader：
+
+```bash
+python tools/mc_ep.py --port COM7 call action.enter_dfu_mode
+```
+
+要求门极关闭（菜单/设置/故障状态都可以）。固件会先在总线上把应答发完，约 0.5 s
+后复位，再过约 2 s 跳到 ROM DFU——之后设备在 USB 上会**重新枚举**（Windows 上
+可能换一个 COM 号或需要装 DFU 驱动），配置页/标定是否保留取决于你下载的地址
+范围：**只写 app 区就保留，整片擦除就全丢**（见上一节）。这和串口菜单里按 `d`
+是同一个动作，区别只是走了 endpoint，脚本里用更方便。
+
+> ⚠ 别在电机还在转的时候用（门极使能时该动作返回状态 6）。跳 DFU 前固件会先
+> 关栅并等 0.5 s，但这不是给"运行中急停"用的——急停请用 `action.idle_mode`。
 
 回退到旧固件：旧固件不认识新格式，参数回默认值；在旧固件里保存会覆盖配置页，
 再升回来也回不到新格式的值。回退前先备份。
@@ -454,6 +566,10 @@ LUT 的验证：把电机停到升级前同一机械角度，比较 `telemetry.e
 | CSP 命令发了但关节完全不动 | 绝对位置已漂到 `config.p_max` 外，`command.p_des` 被**钳位**在边界（不报错） | 放大 `config.p_max`，或 `action.zero` + `action.reboot` 重新对零 |
 | CSP 大阶跃过冲很大 | `config.accel_limit` 太小（速度设定值被斜率限制拖慢） | 先放开 `accel_limit`（30~100），再考虑动 `pos_gain` |
 | 高速跑一段时间后突然卸力、`telemetry.fault=2` | `FAULT_OC`：相电流超过 1.5×`config.i_max`（猛加速或高压纹波） | `action.idle_mode` 清故障；降 `accel_limit` 或确认 `i_max` 与电机匹配 |
+| `telemetry.fault=4` | `FAULT_UV`：母线低于 `config.vbus_uv_trip`（只在门极使能时判定） | 查电源/电池与线束压降；不需要就把它设 0 关掉 |
+| `telemetry.fault=32 / 64` | MOS / 电机过温（`hi + 5 °C`） | 降温；确认 `config.fet_temp_*` / `mot_temp_*` 的阈值合理；NTC 读数明显不对先看 `telemetry.mos_temp` 是否可信 |
+| `set` 大转矩/大电流但输出被压住 | `config.torque_lim` 或 `config.i_dc_max` 生效了（或温度降流） | 读 `telemetry.torque` / `telemetry.i_bus` / `telemetry.mos_temp` 确认；把对应参数设 0 关闭 |
+| 使能电机没反应、串口提示 `Motor mode refused` | `config.pre_calibrated = false` | 重新 `call action.calibrate`；或确认标定数据有效后 `set config.pre_calibrated 1` |
 | 烧了新固件但行为没变（新参数不存在、遥测自相矛盾） | **其实没烧进去**：高 SWD 时钟下读回不稳，J-Link/Keil 的 verify 会失败但编程只写了一部分，设备继续跑旧镜像 | 用 `python tools/flash_jlink.py`（250 kHz + 分块写 + 回读校验）重烧；烧完核对 `system.prefs_loaded`、`config.kt` |
 | 整片擦除后电流环/惯量标定结果离谱 | 标定数据被擦掉，跑的是默认值 | 重新 `action.calibrate`，再 `action.save`；然后重测惯量 |
 

@@ -18,6 +18,9 @@
 #define FAULT_OC		(1<<1)		// phase overcurrent
 #define FAULT_ESTOP		(1<<2)		// E-stop requested over CAN (CYBERBEAST 0xC0)
 #define FAULT_POS		(1<<3)		// position following error (config.pos_error_fault)
+#define FAULT_UV		(1<<4)		// bus undervoltage (config.vbus_uv_trip, gate drive only)
+#define FAULT_FET_OT	(1<<5)		// MOS/FET over-temperature (config.fet_temp_*)
+#define FAULT_MOT_OT	(1<<6)		// motor over-temperature (config.mot_temp_*)
 
 /* Control law selection for MOTOR_MODE (motion.c).  The default is the
  * impedance law that MIT / legacy / torque / current frames have always used;
@@ -27,6 +30,20 @@
 #define CTRL_IMPEDANCE	0			// kp/kd/t_ff as-is (MIT, legacy packed, 0x03, 0x04)
 #define CTRL_VELOCITY	1			// CSV: velocity PI -> i_q
 #define CTRL_POSITION	2			// CSP: position P -> velocity PI -> i_q
+
+/* 输入整形模式（config.input_mode，与 ODrive 的 InputMode 编号一致）。
+ * 它只负责**整形喂给控制环的设定值**，不选择控制环——控制环是 command.mode。
+ * 4/7/8 本固件不支持（按 PASSTHROUGH 处理）。 */
+#define INPUT_MODE_INACTIVE		0	// 忽略输入，保持上一拍的设定值
+#define INPUT_MODE_PASSTHROUGH	1	// 设定值直通（不做斜率限制）
+#define INPUT_MODE_VEL_RAMP		2	// 速度设定值按 accel/decel 限斜率（**默认**，与旧行为一致）
+#define INPUT_MODE_POS_FILTER	3	// 二阶位置跟踪滤波（config.input_bw），速度作前馈
+#define INPUT_MODE_MIX_CHANNELS	4	// 不支持
+#define INPUT_MODE_TRAP_TRAJ	5	// 梯形位置规划（accel/decel 限值），速度作前馈
+#define INPUT_MODE_TORQUE_RAMP	6	// 阻抗模式的 t_ff 按 config.torque_ramp_rate 斜坡
+#define INPUT_MODE_MIRROR		7	// 不支持
+#define INPUT_MODE_TUNING		8	// 不支持
+#define INPUT_MODE_MIT			9	// 等同 PASSTHROUGH（我们的阻抗律本来就是 MIT 语义）
 
 /* 惯量标定（action.measure_inertia）的阶段。非 0 时 motion_control() 独占控制权，
  * 顺序执行：静置 → 试探突破电流 → 静置 → 电流台阶 LO → 静置 → 台阶 HI → 计算。
@@ -73,6 +90,16 @@ typedef struct{
                                                             // Overcurrent is only meaningful while driving
     float fault_vbus, fault_iabs;                           // Values captured when a fault first latched
 
+    /* ---- 保护：温度 / 母线电流估算（见 foc.c 的 update_thermistors / commutate）----
+     * mos_temp / mot_temp 由主循环按 NTC 换算后写入（不在 40 kHz 中断里算），
+     * check_faults() 与 commutate() 只读。i_bus 是估算值，不是测量值。 */
+    float mos_temp, mot_temp;                               // NTC 温度（°C）
+    float i_bus, i_bus_filt;                                // 估算母线电流（A，滤波前后）
+    float p_elec;                                           // 估算电功率（W，见 commutate）
+    float mech_power;                                       // 机械功率（W）：输出端转矩 × 输出轴角速度
+    float temp_i_lim;                                        // 温度降流 + 转矩上限后的电流上限（A，debug）
+    uint16_t uv_cycles;                                     // 欠压去抖计数（控制周期）
+
     /* ---- 速度环 / 位置环（motion.c；CTRL_IMPEDANCE 下不用这些字段）----
      * 全部是输出轴量（除 i_q_ref / i_cmd_max / vel_integ 是电机端安培）。
      * 分频运行：速度环每 vel_prescale 个控制周期算一次，位置环再每
@@ -92,6 +119,14 @@ typedef struct{
     float pos_ff_last;                                      // previous CSP position command (output rad)
     int32_t pos_ff_cycle;                                   // loop_count of the previous CSP frame
     float pos_fault_t;                                      // following-error fault debounce timer (s)
+
+    /* ---- 输入整形（config.input_mode；见 motion_law.h / motion.c）----
+     * POS_FILTER / TRAP_TRAJ 产生 (位置, 速度) 设定给位置环跟踪；
+     * TORQUE_RAMP 在阻抗模式下给 t_ff 限斜率。切模式时由 motion_seed() 对齐。 */
+    uint8_t input_mode_prev;                                // 上一拍的 INPUT_MODE_x（检测模式切换）
+    ml_trap_t pos_trap;                                     // TRAP_TRAJ 规划器
+    ml_posf_t pos_filter;                                   // POS_FILTER 滤波状态
+    float t_ff_slew;                                        // TORQUE_RAMP 斜坡后的 t_ff（N·m）
 
     /* ---- 惯量标定（action.measure_inertia；inertia_state == INERTIA_IDLE 时全 0）----
      * 测出来的是**输出端**惯量 J（kg·m^2），写 config.inertia，但**不写 flash**。 */
@@ -142,6 +177,9 @@ void motion_control(ControllerStruct *controller, EncoderStruct *encoder);
  * 并写进 RAM（不落盘）。受 config.omega_c 与 config.tune_margin 控制。 */
 void motion_tune_gains(ControllerStruct *controller);
 void check_faults(ControllerStruct *controller);
+/* NTC → °C 换算（照搬 ODrive Board/v3 的 Horner 多项式）+ 一阶滤波。
+ * 只在主循环调用：dt 由 controller.loop_count 的差算出，与主循环的实际节奏无关。 */
+void update_thermistors(ControllerStruct *controller);
 void update_observer(ControllerStruct *controller, ObserverStruct *observer);
 void field_weaken(ControllerStruct *controller);
 void zero_commands(ControllerStruct * controller);

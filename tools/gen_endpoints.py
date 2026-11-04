@@ -46,6 +46,7 @@ TYPES = {
     "uint16": {"c": "uint16_t", "size": 2, "get": "ep_get_u16", "put": "ep_put_u16", "kind": "uint"},
     "int32":  {"c": "int32_t",  "size": 4, "get": "ep_get_i32", "put": "ep_put_i32", "kind": "int"},
     "uint32": {"c": "uint32_t", "size": 4, "get": "ep_get_u32", "put": "ep_put_u32", "kind": "uint"},
+    "uint64": {"c": "uint64_t", "size": 8, "get": "ep_get_u64", "put": "ep_put_u64", "kind": "uint"},
     "float":  {"c": "float",    "size": 4, "get": "ep_get_f32", "put": "ep_put_f32", "kind": "float"},
     "void":   {"c": None,       "size": 0},
     "blob":   {"c": None,       "size": 0},   # 只用于 hidden 持久化条目，不进 wire 描述符

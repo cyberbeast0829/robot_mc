@@ -439,7 +439,10 @@ float can_read_variable(uint8_t var_id){
         case CAN_VAR_KT:			return KT;
         case CAN_VAR_GR:			return GR;
         case CAN_VAR_CAN_TIMEOUT:	return (float)CAN_TIMEOUT;
-        case CAN_VAR_VERSION:		return VERSION_NUM;
+        /* 老协议的版本变量是 float32，编码成 major + 0.01*minor（本版 2.3.0 → 2.03，
+         * minor 占百分位，0..99；见 main.h 的 _Static_assert）。
+         * 完整版本（含 revision）读 endpoint system.fw_version_* */
+        case CAN_VAR_VERSION:		return (float)FW_VERSION_MAJOR + 0.01f*(float)FW_VERSION_MINOR;
         case CAN_VAR_MODE:			return (float)state.state;
 
         /* Bus health, read straight from the FDCAN error counter / protocol

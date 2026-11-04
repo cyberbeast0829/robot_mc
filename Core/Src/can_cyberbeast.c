@@ -212,9 +212,11 @@ static bool cb_is_for_me(uint32_t id)
 static uint8_t cb_error_code(void)
 {
     if (controller.fault & FAULT_ESTOP) { return CB_ERR_CAN_TIMEOUT; }
-    if (controller.fault & FAULT_OV)    { return CB_ERR_VOLTAGE; }
+    if ((controller.fault & FAULT_OV) || (controller.fault & FAULT_UV)) { return CB_ERR_VOLTAGE; }
     if (controller.fault & FAULT_OC)    { return CB_ERR_OVER_CURRENT; }
     if (controller.fault & FAULT_POS)   { return CB_ERR_CONTROLLER; }
+    /* 过温没有专用错误码（协议里只有 0~0x9/0xF 这几个），归到 MULTIPLE；
+     * 精确原因读 telemetry.fault 或 0x45 QUERY_ERROR */
     if (controller.fault != 0)          { return CB_ERR_MULTIPLE; }
     /* 只有真正在闭环里才可能“命令超时”；出 MOTOR 后 timeout 计数保留旧值，
      * 不能拿它去骗上位机。CAN_TIMEOUT 是毫秒，计数器是控制周期（25 us）。 */
@@ -266,8 +268,8 @@ static void cb_send_mit_response(uint8_t dest, uint8_t seq)
                     controller.i_q_filt,
                     cb_error_code(),
                     cb_mode_state_now(),
-                    observer.temp_measured,
-                    observer.temp_measured);    /* 本硬件没有 MOS 温度传感器 */
+                    controller.mot_temp,
+                    controller.mos_temp);
 
     (void)cb_send(CB_PRI_HIGH_CTRL, CB_MSG_MIT_CONTROL, dest, seq, d, 8);
 }
@@ -343,7 +345,11 @@ static float cb_vel_limit(float rpm)
 {
     float v = rpm * (TWO_PI_F / 60.0f);
     if (!(v > 0.0f)) { v = V_MAX; }
-    if (v > V_MAX) { v = V_MAX; }
+    /* config.enable_vel_limit 关掉时不再压到 config.v_max（帧里的限速仍然生效，
+     * 只是不受 v_max 约束）。但物理上限 200 rad/s 始终保留 —— 与 command.v_des
+     * 端点的取值范围一致，避免一个荒谬的帧把关节甩出去 */
+    if (VEL_LIMIT_EN && (v > V_MAX)) { v = V_MAX; }
+    if (v > 200.0f) { v = 200.0f; }
     return v;
 }
 
@@ -471,8 +477,12 @@ static void cb_start_motor(void)
 {
     /* 只允许从菜单进入：request_fsm_state() 不做状态校验，直接写 next_state。
      * 客户端的使能序列是 CLEAR_ERRORS → START_MOTOR，两步之间状态机已经在
-     * 25 us 内回到 MENU。 */
+     * 25 us 内回到 MENU。
+     * 未标定直接拒绝（run_fsm() 里还有一层兜底）：此时电角度零点/极对数/相序
+     * 都不可信，闭环会乱转。客户端看到的是“状态一直停在 IDLE”。
+     * 注意：FAULT_MODE 也走不进 MOTOR —— 必须先从菜单清故障。 */
     if (state.state != MENU_MODE) { return; }
+    if (!PRE_CALIBRATED) { return; }
     zero_commands(&controller);
     controller.timeout = 0;
     request_fsm_state(&state, MOTOR_MODE);
@@ -691,8 +701,9 @@ static void cb_send_heartbeat(void)
 
     uint8_t err_flags = 0;
     if (controller.fault != 0) { err_flags |= 0x01; }                       /* AXIS */
-    if (controller.fault & FAULT_OC) { err_flags |= 0x02; }                 /* MOTOR */
-    if (controller.fault & FAULT_OV) { err_flags |= 0x10; }                 /* BOARD */
+    if (controller.fault & (FAULT_OC | FAULT_MOT_OT)) { err_flags |= 0x02; } /* MOTOR */
+    if (controller.fault & FAULT_POS) { err_flags |= 0x08; }                /* CONTROLLER */
+    if (controller.fault & (FAULT_OV | FAULT_UV | FAULT_FET_OT)) { err_flags |= 0x10; }  /* BOARD */
 
     if (my == 0) { return; }
 
@@ -701,19 +712,19 @@ static void cb_send_heartbeat(void)
     /* Byte 1 = AxisState(高 4 bit) | control_mode(低 4 bit)。AxisState 与 ODrive
      * 对齐（1=IDLE, 4=编码器标定, 8=CLOSED_LOOP），不是 ModeState nibble。 */
     d[1] = (uint8_t)(((cb_axis_state_byte() & 0x0Fu) << 4) | (cb_ctrl_mode_now() & 0x0Fu));
-    d[2] = cb_temp_u8(observer.temp_measured);
+    d[2] = cb_temp_u8(controller.mot_temp);                     /* Byte 2 = 电机温度 */
 
     float pos_turns = comm_encoder.angle_multiturn * INV_TWO_PI_F;   /* 电机端 turns */
     float vel_turns = comm_encoder.velocity * INV_TWO_PI_F;          /* 电机端 turns/s */
 
     if (can_is_fd()) {
-        d[3] = cb_temp_u8(observer.temp_measured);                  /* MOS：无传感器，用同一估计 */
+        d[3] = cb_temp_u8(controller.mos_temp);                     /* Byte 3 = MOS 温度（仅 FD 心跳有） */
         /* 母线电压 uint16、0.1 V/LSB（与 ODrive 心跳一致） */
         float vbus_v = controller.v_bus_filt * 10.0f;
         if (!(vbus_v > 0.0f)) { vbus_v = 0.0f; }
         if (vbus_v > 65535.0f) { vbus_v = 65535.0f; }
         cb_be_put_u16(&d[4], (uint16_t)vbus_v);
-        cb_be_put_i16(&d[6], 0);                                    /* 母线电流未测量 */
+        cb_be_put_i16(&d[6], cb_scale_i16(controller.i_bus_filt, 100.0f));  /* 母线电流，0.01 A/LSB（估算） */
         cb_be_put_i32(&d[8], cb_scale_i32(pos_turns, 10000.0f));
         cb_be_put_i32(&d[12], cb_scale_i32(vel_turns, 10000.0f));
         cb_be_put_i16(&d[16], cb_scale_i16(controller.i_q_filt, 100.0f));
@@ -742,7 +753,7 @@ static void cb_query_error(const can_frame_t *f)
     switch (type) {
     case 0:  value = controller.fault & FAULT_OC; break;                    /* motor */
     case 3:  value = controller.fault & FAULT_POS; break;                   /* controller */
-    case 4:  value = controller.fault & FAULT_OV; break;                    /* system */
+    case 4:  value = controller.fault & (FAULT_OV | FAULT_UV); break;       /* system: 母线电压 */
     case 5:  value = controller.fault; break;                               /* axis */
     default: value = 0; break;
     }
@@ -761,12 +772,23 @@ static void cb_query_device_info(const can_frame_t *f)
 
     uint8_t d[16];
     memset(d, 0, sizeof(d));
-    uint32_t hw = 1u;
-    /* ODrive 的编码是 (major<<16)|(minor<<8)|revision；VERSION_NUM 是 2.0f */
-    uint32_t fw = ((uint32_t)VERSION_NUM << 16);
+    /* 与 system.hw_version_* / fw_version_* 同源：hw_config.h / main.h 里的宏 */
+    uint32_t hw = ((uint32_t)HW_VERSION_MAJOR << 16)
+                | ((uint32_t)HW_VERSION_MINOR << 8)
+                | (uint32_t)HW_VERSION_VARIANT;
+    uint32_t fw = ((uint32_t)FW_VERSION_MAJOR << 16)
+                | ((uint32_t)FW_VERSION_MINOR << 8)
+                | (uint32_t)FW_VERSION_REVISION;
     cb_be_put_u32(&d[0], hw);
     cb_be_put_u32(&d[4], fw);
-    /* FD 版尾部是 64 位序列号；本硬件没有，留 0 */
+    if (can_is_fd()) {
+        /* Byte 8-15：序列号（芯片 UID 低 64 位，大端）。
+         * Classic 帧只有 8 字节，主站按协议走 PARAM_READ 读 system.serial_number */
+        uint64_t sn = board_serial_number();
+        for (int i = 0; i < 8; i++) {
+            d[8 + i] = (uint8_t)((sn >> (8 * (7 - i))) & 0xFF);
+        }
+    }
     cb_send_query(CB_MSG_QUERY_DEVICE_INFO, dest, cb_get_seq(f->id), d,
                   can_is_fd() ? 16u : 8u);
 }
@@ -850,8 +872,8 @@ static void cb_rx(const can_frame_t *f)
     case CB_MSG_QUERY_TEMPERATURE:
         if (src != 0) {
             uint8_t d[8];
-            cb_be_put_f32(&d[0], observer.temp_measured);
-            cb_be_put_f32(&d[4], observer.temp_measured);
+            cb_be_put_f32(&d[0], controller.mot_temp);     /* Byte 0-3 电机温度 */
+            cb_be_put_f32(&d[4], controller.mos_temp);     /* Byte 4-7 FET/MOS 温度 */
             cb_send_query(CB_MSG_QUERY_TEMPERATURE, src, seq, d, 8);
         }
         break;
@@ -860,7 +882,7 @@ static void cb_rx(const can_frame_t *f)
         if (src != 0) {
             uint8_t d[8];
             cb_be_put_f32(&d[0], controller.v_bus_filt);
-            cb_be_put_f32(&d[4], 0.0f);                 /* 母线电流未测量 */
+            cb_be_put_f32(&d[4], controller.i_bus_filt);   /* 估算值，见 foc.c */
             cb_send_query(CB_MSG_QUERY_BUS, src, seq, d, 8);
         }
         break;
@@ -876,7 +898,9 @@ static void cb_rx(const can_frame_t *f)
     case CB_MSG_QUERY_POWER:
         if (src != 0) {
             uint8_t d[8];
-            memset(d, 0, sizeof(d));
+            /* 电功率 / 机械功率（都是估算值：没有直流分流器，见 foc.c 的 commutate） */
+            cb_be_put_f32(&d[0], controller.p_elec);
+            cb_be_put_f32(&d[4], controller.mech_power);
             cb_send_query(CB_MSG_QUERY_POWER, src, seq, d, 8);
         }
         break;

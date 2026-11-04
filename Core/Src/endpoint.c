@@ -91,6 +91,15 @@ bool ep_get_f32(ep_cbuf_t *b, float *v){
 	return true;
 }
 
+bool ep_get_u64(ep_cbuf_t *b, uint64_t *v){
+	const uint8_t *p;
+	if(!ep_take(b, &p, 8)){return false;}
+	*v = (uint64_t)p[0] | ((uint64_t)p[1] << 8) | ((uint64_t)p[2] << 16)
+	   | ((uint64_t)p[3] << 24) | ((uint64_t)p[4] << 32) | ((uint64_t)p[5] << 40)
+	   | ((uint64_t)p[6] << 48) | ((uint64_t)p[7] << 56);
+	return true;
+}
+
 bool ep_put_u8(ep_buf_t *b, uint8_t v){
 	if(!ep_room(b, 1)){return false;}
 	*b->begin++ = v;
@@ -129,6 +138,14 @@ bool ep_put_f32(ep_buf_t *b, float v){
 	uint32_t u;
 	memcpy(&u, &v, sizeof(u));
 	return ep_put_u32(b, u);
+}
+
+bool ep_put_u64(ep_buf_t *b, uint64_t v){
+	if(!ep_room(b, 8)){return false;}
+	for(int i = 0; i < 8; i++){
+		*b->begin++ = (uint8_t)((v >> (8*i)) & 0xFF);
+	}
+	return true;
 }
 
 float ep_clampf(float v, float lo, float hi){

@@ -70,7 +70,8 @@
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
 
-/* VERSION_NUM moved to main.h so can_read_variable() can report it over CAN */
+/* 版本号（FW_VERSION_MAJOR/MINOR/REVISION/UNRELEASED）在 main.h，因为
+ * can_read_variable()、endpoint 生成代码和 CYBERBEAST 的设备信息帧都要用 */
 
 
 /* USER CODE END PM */
@@ -82,6 +83,12 @@
 /* Flash Registers */
 float __float_reg[64];
 int __int_reg[256];
+/* 布尔/标志类配置（见 user_config.h 的说明：TLV 里 bool 记录是 1 字节） */
+uint8_t pre_calibrated_flag = 0;
+uint8_t fet_temp_en_flag = 0;
+uint8_t mot_temp_en_flag = 0;
+uint8_t vel_limit_en_flag = 1;			// config.enable_vel_limit 默认 true：与改动前行为一致
+uint8_t torque_vel_lim_en_flag = 0;		// config.enable_torque_vel_lim 默认 false
 PreferenceWriter prefs;
 
 /* Structs for control, etc */
@@ -424,7 +431,7 @@ int main(void)
   preference_writer_load(&prefs);
   config_apply_limits();
 
-  myprintf("\r\nFirmware Version Number: %.2f\r\n", VERSION_NUM);
+  myprintf("\r\nFirmware Version Number: %u.%u.%u%s\r\n", FW_VERSION_MAJOR, FW_VERSION_MINOR, FW_VERSION_REVISION, FW_VERSION_UNRELEASED ? "-unreleased" : "");
   if(watchdog_reset_flag){
 	  myprintf("!!! Last reset was caused by the watchdog - the control loop had stopped running !!!\r\n");
   }
@@ -648,6 +655,20 @@ void myprintf(const char *fmt, ...)
   vsnprintf(printf_buf, sizeof(printf_buf), fmt, args);
   va_end(args);
   console_write_raw((const uint8_t *)printf_buf, (uint32_t)strlen(printf_buf));
+}
+
+uint64_t board_serial_number(void)
+{
+	/* 芯片 96 位唯一 ID 的低 64 位。用 SDK 的 GetUID() 而不是直接读地址：
+	 * 它会处理两种 UID 基址（老片 0x1FFFF270 / 新片 0x1FFFC760），直接读会
+	 * 在部分批次上拿到 0xFFFFFFFF。返回的 12 字节是小端序，前 8 字节就是
+	 * 低 64 位；96 位 ID 的低 64 位已经足够区分器件，ODrive 的 serial_number
+	 * 也是 64 位。 */
+	uint8_t uid[12];
+	uint64_t v = 0;
+	GetUID(uid);
+	for (int i = 7; i >= 0; i--) { v = (v << 8) | (uint64_t)uid[i]; }
+	return v;
 }
 
 /**

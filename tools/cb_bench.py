@@ -39,7 +39,9 @@ EP_POSITION = 43
 EP_I_Q_FILT = 36
 EP_FAULT = 56
 EP_MODE = 58
-EP_VERSION = 68
+EP_FW_MAJOR = 187
+EP_FW_MINOR = 188
+EP_FW_REV = 189
 EP_ENCODER_RAW = 79
 EP_GATE_DRIVE = 57
 EP_VELOCITY = 45
@@ -360,7 +362,9 @@ def read_all_sdo(bus):
     for name, ep, kind in [("gr", EP_GR, "f32"), ("i_max", EP_I_MAX, "f32"),
                            ("p_max", EP_P_MAX, "f32"), ("v_max", EP_V_MAX, "f32"),
                            ("kp_max", EP_KP_MAX, "f32"), ("kd_max", EP_KD_MAX, "f32"),
-                           ("version", EP_VERSION, "f32"), ("mode", EP_MODE, "u8"),
+                           ("fw_major", EP_FW_MAJOR, "u8"), ("fw_minor", EP_FW_MINOR, "u8"),
+                           ("fw_rev", EP_FW_REV, "u8"),
+                           ("mode", EP_MODE, "u8"),
                            ("fault", EP_FAULT, "i32"), ("encoder_raw", EP_ENCODER_RAW, "i32"),
                            ("v_bus", EP_V_BUS, "f32"), ("can_hb_ms", EP_CAN_HB_MS, "i32")]:
         raw, ln = sdo_read(bus, ep)

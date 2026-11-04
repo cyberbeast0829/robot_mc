@@ -59,6 +59,26 @@ static inline float ml_slew(float current, float target, float accel, float dt)
 	return current + delta;
 }
 
+/* 加速/减速分开的斜率限制（config.accel_limit / config.decel_limit）。
+ * "在减速"的判据：目标与当前同号（或目标为 0，即往零收）且 |target| < |current|。
+ * 反向跨越零点按加速处理（那是两段运动，用 accel 更保守）。
+ * decel <= 0 时退回 accel，所以只配 accel 的老参数含义不变。 */
+static inline float ml_slew2(float current, float target, float accel, float decel, float dt)
+{
+	if (!(target == target)) { return current; }
+	float rate = accel;
+	if ((decel > 0.0f) && ((target * current) >= 0.0f)
+	    && (fabsf(target) < fabsf(current))) {
+		rate = decel;
+	}
+	if (!(rate > 0.0f)) { return target; }
+	float step = rate * dt;
+	float delta = target - current;
+	if (delta > step) { delta = step; }
+	if (delta < -step) { delta = -step; }
+	return current + delta;
+}
+
 /* 速度 PI：i_q = clamp(vel_gain*err + integ)。
  * 抗饱和用 ODrive 的做法：输出被限幅的那一拍积分器按 ML_INT_DECAY 衰减而不是
  * 继续累积，未限幅才正常积分。任何 NaN 输入都退化为 0 —— 绝不让 NaN 走进电流环。 */
@@ -107,6 +127,188 @@ static inline int ml_pos_fault(float limit, float *timer, float pos_err,
 
 	*timer += dt;
 	return (*timer > ML_POS_FAULT_TIME) ? 1 : 0;
+}
+
+/* ---- 输入整形：位置轨迹发生器 ------------------------------------------
+ *
+ * POS_FILTER 与 TRAP_TRAJ 都输出**位置 + 速度**设定（输出轴 rad / rad/s），交给
+ * 现有的位置环去跟踪，所以电流环与速度环一行都不用改。两种模式都可能在运动中
+ * 被改目标，因此状态要从**上一次的输出**续起（而不是从 0），否则会跳。
+ */
+
+/* 梯形位置规划器：ODrive TrapezoidalTrajectory（trapTraj.cpp）的移植。
+ * 按 vel/accel/decel 三个限值把"以当前速度从当前点走到目标"拆成
+ * 加速 / 匀速 / 减速三段；行程不够时自动退化成三角形（无匀速段），
+ * 起始速度已经高于巡航速度时会先减速（"double deceleration move"）。 */
+typedef struct{
+	float xi, xf, vi;		// 起点、终点、起始速度
+	float ar, vr, dr;		// 实际使用的（带符号）加速度 / 巡航速度 / 减速度
+	float ta, tv, td, tf;	// 加速 / 匀速 / 减速 / 总时长
+	float y_accel;			// 加速段结束时的位置
+	float t;				// 规划内时间
+	float goal;				// 上次规划的目标（指令变了就重规划）
+	uint8_t planned;		// 0 = 还没规划过（第一拍要从实测位置起步）
+} ml_trap_t;
+
+/* 二阶位置跟踪滤波（ODrive INPUT_MODE_POS_FILTER）的状态 */
+typedef struct{
+	float pos, vel;
+	uint8_t seeded;
+} ml_posf_t;
+
+/* 与 ODrive 的 sign_hard 一致：-0.0 也算负号（否则 dx == 0 的边界会翻方向） */
+static inline float ml_sign_hard(float v)
+{
+	return signbit(v) ? -1.0f : 1.0f;
+}
+
+/* 规划一条梯形轨迹。参数非法（vel/accel/decel 非正、输入含 NaN）时返回 0，
+ * 调用方应退化成直接跟随。 */
+static inline int ml_trap_plan(ml_trap_t *tr, float xf, float xi, float vi,
+                               float vmax, float amax, float dmax)
+{
+	if (!(vmax > 0.0f) || !(amax > 0.0f) || !(dmax > 0.0f)) { return 0; }
+	if (!(xf == xf) || !(xi == xi) || !(vi == vi)) { return 0; }
+
+	float dx = xf - xi;
+	float stop_dist = (vi*vi) / (2.0f*dmax);		// 当前速度下的最小制动距离
+	float dxstop = copysignf(stop_dist, vi);
+	float s = ml_sign_hard(dx - dxstop);			// 巡航速度的方向
+
+	tr->ar = s*amax;
+	tr->dr = -s*dmax;
+	tr->vr = s*vmax;
+
+	/* 起始速度已经比巡航速度快 → 这一段其实是减速 */
+	if ((s*vi) > (s*tr->vr)) { tr->ar = -s*amax; }
+
+	tr->ta = (tr->vr - vi) / tr->ar;
+	tr->td = -tr->vr / tr->dr;
+	float dxmin = 0.5f*tr->ta*(tr->vr + vi) + 0.5f*tr->td*tr->vr;
+
+	if (s*dx < s*dxmin) {
+		/* 行程不够：三角形曲线，去掉匀速段 */
+		float den = tr->dr - tr->ar;
+		float num = tr->dr*(vi*vi) + 2.0f*tr->ar*tr->dr*dx;
+		tr->vr = s*sqrtf(fmaxf((den != 0.0f) ? (num/den) : 0.0f, 0.0f));
+		tr->ta = fmaxf(0.0f, (tr->vr - vi) / tr->ar);
+		tr->td = fmaxf(0.0f, -tr->vr / tr->dr);
+		tr->tv = 0.0f;
+	}
+	else {
+		tr->tv = (dx - dxmin) / tr->vr;
+	}
+
+	tr->tf = tr->ta + tr->tv + tr->td;
+	tr->xi = xi;
+	tr->xf = xf;
+	tr->vi = vi;
+	tr->y_accel = xi + vi*tr->ta + 0.5f*tr->ar*tr->ta*tr->ta;
+	tr->t = 0.0f;
+	tr->goal = xf;
+	tr->planned = 1;
+	return 1;
+}
+
+/* 按规划内时间 t 求 (位置, 速度, 加速度)；指针可为 NULL */
+static inline void ml_trap_eval(const ml_trap_t *tr, float t,
+                                float *pos, float *vel, float *acc)
+{
+	float y, yd, ydd;
+
+	if (t < 0.0f) {								// 初始条件
+		y = tr->xi;  yd = tr->vi;  ydd = 0.0f;
+	}
+	else if (t < tr->ta) {						// 加速
+		y = tr->xi + tr->vi*t + 0.5f*tr->ar*t*t;
+		yd = tr->vi + tr->ar*t;
+		ydd = tr->ar;
+	}
+	else if (t < (tr->ta + tr->tv)) {			// 匀速
+		y = tr->y_accel + tr->vr*(t - tr->ta);
+		yd = tr->vr;
+		ydd = 0.0f;
+	}
+	else if (t < tr->tf) {						// 减速（相对终点的反向时间）
+		float td = t - tr->tf;
+		y = tr->xf + 0.5f*tr->dr*td*td;
+		yd = tr->dr*td;
+		ydd = tr->dr;
+	}
+	else {										// 结束
+		y = tr->xf;  yd = 0.0f;  ydd = 0.0f;
+	}
+
+	if (pos) { *pos = y; }
+	if (vel) { *vel = yd; }
+	if (acc) { *acc = ydd; }
+}
+
+/* 推进一拍（在位置环频率上调用）。目标变了会从**上一拍的输出**重新规划。
+ * 返回 1 = 还在走，0 = 已到终点（此时 *pos 精确等于目标）。
+ * 时间在结束时冻结在 tf，不会无限增长（float32 长时间累加会丢精度）。 */
+static inline int ml_trap_step(ml_trap_t *tr, float dt, float goal,
+                               float vmax, float amax, float dmax,
+                               float *pos, float *vel)
+{
+	if (!tr->planned || !(goal == tr->goal)) {
+		float xi = pos ? *pos : goal;
+		float vi = vel ? *vel : 0.0f;
+		if (!ml_trap_plan(tr, goal, xi, vi, vmax, amax, dmax)) {
+			/* 参数非法：直接跟随目标，至少不能把关节卡在旧设定值上 */
+			tr->planned = 0;
+			if (pos) { *pos = goal; }
+			if (vel) { *vel = 0.0f; }
+			return 0;
+		}
+	}
+
+	if (tr->t >= tr->tf) {
+		if (pos) { *pos = tr->xf; }
+		if (vel) { *vel = 0.0f; }
+		return 0;
+	}
+
+	ml_trap_eval(tr, tr->t, pos, vel, 0);
+	tr->t += dt;
+	/* 时间冻结在 tf：长时间停在终点时 float32 也不会丢精度 */
+	if (tr->t > tr->tf) { tr->t = tr->tf; }
+	return 1;
+}
+
+/* 把滤波状态对齐到 (pos, vel)：进入 POS_FILTER 时从实测位置起步 */
+static inline void ml_posf_reset(ml_posf_t *f, float pos, float vel)
+{
+	f->pos = pos;
+	f->vel = vel;
+	f->seeded = 1;
+}
+
+/* 二阶跟踪滤波一拍：ki = 2*bw，kp = ki²/4（临界阻尼，与 ODrive 相同）。
+ * 离散稳定要求 kp*dt <= 0.5 ⇔ ki <= sqrt(2/dt)；超过就压低 ki（4 kHz 位置环上
+ * bw 的实际上限约 45 rad/s），否则会自激。 */
+static inline void ml_posf_step(ml_posf_t *f, float target_pos, float target_vel,
+                                float bw, float dt, float *pos, float *vel)
+{
+	if (!(bw > 0.0f)) { bw = 10.0f; }
+	float ki = 2.0f*bw;
+	float kp = 0.25f*ki*ki;
+	if ((dt > 0.0f) && ((kp*dt) > 0.5f)) {
+		ki = sqrtf(2.0f/dt);
+		kp = 0.25f*ki*ki;
+	}
+	if (!(target_pos == target_pos)) { target_pos = f->pos; }
+	if (!(target_vel == target_vel)) { target_vel = 0.0f; }
+
+	float dpos = target_pos - f->pos;
+	float dvel = target_vel - f->vel;
+	float acc = kp*dpos + ki*dvel;
+
+	f->vel += acc*dt;
+	f->pos += f->vel*dt;
+
+	if (pos) { *pos = f->pos; }
+	if (vel) { *vel = f->vel; }
 }
 
 /* 临界阻尼 PLL 增益：kp = 2*bw，ki = 0.25*kp^2（bw 单位 rad/s，与 ODrive 一致）。
