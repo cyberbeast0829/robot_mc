@@ -54,6 +54,7 @@
 #include "usb.h"
 #include "usb_pwr.h"
 #include "endpoint_serial.h"
+#include "endpoint_usb.h"
 #include "prefs_defs.h"
 /* USER CODE END Includes */
 
@@ -564,8 +565,10 @@ int main(void)
   while (1)
   {
 	  /* endpoint 请求的解析和应答（USB 中断只负责收帧）。放在打印/存 flash
-	   * 之前，避免应答被菜单输出拖慢 */
+	   * 之前，避免应答被菜单输出拖慢。两条传输共用 endpoint_process()：
+	   * CDC 上是 0xAA 帧，vendor interface 上一个 USB 包就是一帧 */
 	  endpoint_serial_poll();
+	  endpoint_usb_poll();
 
       /* CAN 协议的慢活（目前是 CYBERBEAST 的 JSON 描述符流式发送）。
        * 收帧和心跳仍在 40 kHz 控制中断里 */

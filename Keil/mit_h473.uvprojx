@@ -430,6 +430,11 @@
               <FilePath>..\Core\Src\endpoint_serial.c</FilePath>
             </File>
             <File>
+              <FileName>endpoint_usb.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Core\Src\endpoint_usb.c</FilePath>
+            </File>
+            <File>
               <FileName>prefs_codec.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\Core\Src\prefs_codec.c</FilePath>

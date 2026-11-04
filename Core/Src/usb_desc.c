@@ -44,9 +44,9 @@ const uint8_t Virtual_Com_Port_DeviceDescriptor[] =
     USB_DEVICE_DESCRIPTOR_TYPE,     /* bDescriptorType */
     0x00,
     0x02,   /* bcdUSB = 2.00 */
-    0x02,   /* bDeviceClass: CDC */
-    0x00,   /* bDeviceSubClass */
-    0x00,   /* bDeviceProtocol */
+    0xEF,   /* bDeviceClass: Miscellaneous (composite device, IADs used) */
+    0x02,   /* bDeviceSubClass: Common Class */
+    0x01,   /* bDeviceProtocol: Interface Association Descriptor */
     0x40,   /* bMaxPacketSize0 */
     0x09,   /* idVendor (0x1209) */
     0x12,
@@ -62,17 +62,20 @@ const uint8_t Virtual_Com_Port_DeviceDescriptor[] =
 
 /* Configuration descriptor.
  *
- * This is the Nations N32H47x VCP example layout (usbfsd_desc.c), which is the
- * only shape verified with this USB library: a plain single-function CDC device -
- * bDeviceClass = 0x02 at the device level, NO Interface Association Descriptor,
- * 2 interfaces, and the data OUT endpoint on EP3 while the data IN endpoint is
- * EP1 (EP1 OUT is not used at all, see Virtual_Com_Port_Reset()).
+ * Composite device, mirroring the ODrive/N32 layout:
+ *   interface 0 + 1 : CDC (virtual COM port, ASCII menu + 0xAA endpoint frames)
+ *   interface 2     : vendor specific, fibre-style endpoint protocol
  *
- * It replaces the descriptor inherited from the STM32/ODrive code, which declared
- * bDeviceClass = 0xEF with two IADs plus a third (vendor specific) interface with
- * its own EP3 IN/OUT pair, and used EP1 for both data directions.  Windows gave
- * that device a COM port and answered the control requests, but never started the
- * data pipes - the failure this vendor layout avoids. */
+ * The CDC half keeps the Nations VCP example's endpoint assignment bit for bit
+ * (data IN = EP1, data OUT = EP3, notification = EP2): that is the shape verified
+ * on this board.  The fibre interface uses the opposite directions of the same
+ * endpoint numbers (EP1 OUT / EP3 IN), so adding it does not disturb the CDC
+ * pipes.  Both functions are described by an IAD because bDeviceClass = 0xEF.
+ *
+ * Note: the earlier composite attempt used the ODrive VID/PID 0x1209/0x0D32, for
+ * which Windows already had a driver bound; it enumerated a COM port but never
+ * started the data pipes.  Our own PID (0x4342) has no such history - see
+ * docs/DEV.md for the Windows/WinUSB setup of the vendor interface. */
 const uint8_t Virtual_Com_Port_ConfigDescriptor[] =
 {
     /*Configuration Descriptor*/
@@ -80,11 +83,21 @@ const uint8_t Virtual_Com_Port_ConfigDescriptor[] =
     USB_CONFIGURATION_DESCRIPTOR_TYPE,      /* bDescriptorType: Configuration */
     VIRTUAL_COM_PORT_SIZ_CONFIG_DESC,       /* wTotalLength:no of returned bytes */
     0x00,
-    0x02,   /* bNumInterfaces: 2 interface */
+    0x03,   /* bNumInterfaces: 3 interface */
     0x01,   /* bConfigurationValue: Configuration value */
     0x00,   /* iConfiguration: Index of string descriptor describing the configuration */
     0xC0,   /* bmAttributes: self powered */
     0x32,   /* MaxPower 100 mA */
+
+    /*Interface Association Descriptor: CDC (virtual COM port)*/
+    0x08,   /* bLength */
+    USB_INTERFACE_ASSOCIATION_DESCRIPTOR_TYPE,
+    0x00,   /* bFirstInterface */
+    0x02,   /* bInterfaceCount */
+    0x02,   /* bFunctionClass: Communication Interface Class */
+    0x02,   /* bFunctionSubClass: Abstract Control Model */
+    0x01,   /* bFunctionProtocol: Common AT commands */
+    0x04,   /* iFunction: "CyberBeast Virtual Port" */
 
     /*Interface Descriptor (CDC communication class interface = interface 0)*/
     0x09,   /* bLength: Interface Descriptor size */
@@ -95,7 +108,7 @@ const uint8_t Virtual_Com_Port_ConfigDescriptor[] =
     0x02,   /* bInterfaceClass: Communication Interface Class */
     0x02,   /* bInterfaceSubClass: Abstract Control Model */
     0x01,   /* bInterfaceProtocol: Common AT commands */
-    0x00,   /* iInterface: */
+    0x06,   /* iInterface: "Protocol" */
     /*Header Functional Descriptor*/
     0x05,   /* bLength: Endpoint Descriptor size */
     0x24,   /* bDescriptorType: CS_INTERFACE */
@@ -153,7 +166,44 @@ const uint8_t Virtual_Com_Port_ConfigDescriptor[] =
     0x02,   /* bmAttributes: Bulk */
     VIRTUAL_COM_PORT_DATA_SIZE,             /* wMaxPacketSize: */
     0x00,
-    0x00    /* bInterval */
+    0x00,   /* bInterval: ignore for Bulk transfer */
+
+    /*Interface Association Descriptor: vendor specific (fibre)*/
+    0x08,   /* bLength */
+    USB_INTERFACE_ASSOCIATION_DESCRIPTOR_TYPE,
+    0x02,   /* bFirstInterface */
+    0x01,   /* bInterfaceCount */
+    0xFF,   /* bFunctionClass: Vendor specific */
+    0xFF,   /* bFunctionSubClass */
+    0xFF,   /* bFunctionProtocol */
+    0x05,   /* iFunction: "CyberBeast Motor Driver Device" */
+
+    /*Vendor interface descriptor (interface 2, fibre)*/
+    0x09,   /* bLength: Interface Descriptor size */
+    USB_INTERFACE_DESCRIPTOR_TYPE,  /* bDescriptorType: Interface */
+    0x02,   /* bInterfaceNumber: Number of Interface */
+    0x00,   /* bAlternateSetting: Alternate setting */
+    0x02,   /* bNumEndpoints: Two endpoints used */
+    0xFF,   /* bInterfaceClass: Vendor specific */
+    0x01,   /* bInterfaceSubClass */
+    0x00,   /* bInterfaceProtocol */
+    0x07,   /* iInterface: "CBA Series" */
+    /*Endpoint 1 Descriptor (fibre OUT: host -> device)*/
+    0x07,   /* bLength: Endpoint Descriptor size */
+    USB_ENDPOINT_DESCRIPTOR_TYPE,   /* bDescriptorType: Endpoint */
+    0x01,   /* bEndpointAddress: (OUT1) */
+    0x02,   /* bmAttributes: Bulk */
+    VIRTUAL_COM_PORT_DATA_SIZE,             /* wMaxPacketSize: */
+    0x00,
+    0x00,   /* bInterval: ignore for Bulk transfer */
+    /*Endpoint 3 Descriptor (fibre IN: device -> host)*/
+    0x07,   /* bLength: Endpoint Descriptor size */
+    USB_ENDPOINT_DESCRIPTOR_TYPE,   /* bDescriptorType: Endpoint */
+    0x83,   /* bEndpointAddress: (IN3) */
+    0x02,   /* bmAttributes: Bulk */
+    VIRTUAL_COM_PORT_DATA_SIZE,             /* wMaxPacketSize: */
+    0x00,
+    0x00    /* bInterval: ignore for Bulk transfer */
 };
 
 /* USB String Descriptors */

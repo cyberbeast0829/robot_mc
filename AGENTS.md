@@ -35,7 +35,8 @@ Two equivalent builds produce the same firmware:
   `N32H473, ARM_MATH_CM4, HSE_VALUE=24000000, __FPU_PRESENT=1`. Also:
   `make DEBUG=1` (-Og/-g3), `make size`, `make clean`, and `make flash` (J-Link; override
   with `JLINK_DEVICE`/`JLINK_IF`/`JLINK_SPEED`; `flash-pyocd` / `flash-openocd` also exist).
-  `make check` 校验生成表/文档是否最新；`make hosttest` 在主机上跑 `prefs_codec` 单测。
+  `make check` 校验生成表/文档是否最新；`make hosttest` 在主机上跑 `prefs_codec`、
+  CAN codec、`motion_law` 和 `endpoint_process()` 单测。
   ⚠ The startup vector table must match the device IRQ numbering — a mismatch silently
   misroutes every ISR (keep it in sync if you ever edit it).
 - **Keil MDK (uVision)**: project `Keil/mit_h473.uvprojx`, target `mit_h473`, device
@@ -54,7 +55,8 @@ Two equivalent builds produce the same firmware:
   Bench-verify with the **Keil** image (`Keil/Objects/mit_h473.axf`) until this is fixed, and
   don't conclude "the firmware is broken" from a `make` image symptom.
 - Testing: `make check` (generated tables/docs are current) and `make hosttest`
-  (`tools/test_prefs_codec.c`, no target hardware) are the only automated checks.
+  (`tools/test_{prefs_codec,can_cyberbeast,motion_law,endpoint_proto}.c`, no target
+  hardware) are the only automated checks.
   Everything else is verified by a clean build + bench testing by the maintainer
   (`tools/cb_bench.py` drives the CYBERBEAST platform over slcan: `--stage-a/-b/-c/-c-static/-d`,
   `--reset-test`, `--timeout-test`; `tools/csv_csp_test.py` drives the velocity/position
@@ -154,9 +156,9 @@ Same shape as upstream, with these N32 names:
 - **`ATIM1_UP_IRQHandler`** (`Core/Src/n32h47x_48x_it.c`, priority 0), every PWM cycle:
   clear update flag → kick IWDG (`IWDG->KR = 0xAAAA`) → `analog_sample` → `ps_sample`
   → `check_faults` → `run_fsm` → `can_tx_rx` (25 µs 时基 + 最多 2 帧 → 协议分发).
-- **Main loop** calls `endpoint_serial_poll()` → `can_proto_poll()` → `run_fsm_slow(&state)`
-  — all printing, setup/zero command handling, and flash saves. ISR→main handoff is via
-  the `volatile *_pending` flags in `FSMStruct` (`fsm.h`).
+- **Main loop** calls `endpoint_serial_poll()` → `endpoint_usb_poll()` → `can_proto_poll()`
+  → `run_fsm_slow(&state)` — all printing, setup/zero command handling, and flash saves.
+  ISR→main handoff is via the `volatile *_pending` flags in `FSMStruct` (`fsm.h`).
 - `USART3_IRQHandler` → `update_fsm`; `USB_FS_LP_IRQHandler` → `USB_Istr`; USB CDC RX also
   feeds `update_fsm` through `usb_rx_process_packet`.
 - Control loop is 40 kHz (`DT = 25 µs` in `hw_config.h`).
@@ -251,6 +253,17 @@ CYBERBEAST (`can_cyberbeast.c`) gotchas verified on the bench:
 `usb_desc.c` 或合并冲突里遇到它必须改回 `0x4342`。`0x1209` 下的 PID 需在 pid.codes
 提 PR 注册（要求公开仓库），未注册前只是暂用；换 ID 会让 Windows 重新枚举出新的 COM 号。
 
+**复合设备**：`bDeviceClass=0xEF` + 两个 IAD，interface 0/1 = CDC（**端点分配和
+原来完全一样**：EP1 IN / EP3 OUT / EP2 通知），interface 2 = vendor specific
+（EP1 OUT / EP3 IN，走 fibre 风格的 endpoint 协议）。PMA 布局见 `usb_conf.h`。
+`endpoint_usb.c` 的约束不能破坏：USB 中断只把 ≤64 B 从 PMA 拷进邮箱并让端点
+保持 NAK，解析/应答全在主循环 `endpoint_usb_poll()`；这是“不损失 FOC 高带宽”
+的关键。响应 ≤63 B（短包），不要发 64 B 整包。Windows 上 interface 2 需要
+Zadig 装 WinUSB（CDC 不受影响）。
+
+（历史：早先的复合描述符用的是 ODrive 的 PID `0x1209/0x0D32`，Windows 已为它
+绑过驱动，于是只出 COM 口、数据管道不启动；换成我们自己的 PID 后复合布局可用。）
+
 ## Endpoint 参数访问层（fibre 风格）
 
 用 16 位 endpoint ID 访问任意参数/遥测/动作，灵感来自 ODrive 的 fibre：
@@ -274,11 +287,14 @@ CYBERBEAST (`can_cyberbeast.c`) gotchas verified on the bench:
   `w` 拒绝读）。**不要**退回“payload 为空就当读”的写法：那样一次读
   `action.idle_mode` 就会停机。USB 侧由 `mc_ep.py` 置位；CAN 侧由
   `PARAM_READ(0x20)`/`PARAM_WRITE(0x21)` 操作码映射。协议版本已升到 2。
-- 传输目前只有 **USB CDC**：二进制帧和 ASCII 菜单共用同一条数据流，
-  `0xAA` 帧头之外的字节仍然交给 `update_fsm()`。帧格式和状态码见
+- 两条传输共用 `endpoint_process()`（`endpoint.c`），只是外层不同：
+  **USB CDC** 是 `0xAA+LEN+CRC8/CRC16` 字节流（和 ASCII 菜单共用数据流，
+  `0xAA` 帧头之外的字节交给 `update_fsm()`）；**vendor interface 2** 上一个
+  USB bulk 包就是一帧（`endpoint_usb.c`，响应 ≤63 B 短包）。帧格式和状态码见
   `Core/Inc/endpoint.h`。
 - **实时性**：USB 中断里的 `endpoint_serial_feed()` 只做帧累积（含一次
-  最多 64 字节的 CRC）；解析、调用 handler、应答都在主循环的
+  最多 64 字节的 CRC）；`endpoint_usb_rx_isr()` 只做 64 B PMA 拷贝并保持端点
+  NAK（主循环处理完再 arm，用 USB 流控代替队列）。解析、调用 handler、应答都在主循环的
   `endpoint_serial_poll()` 里。不要在 handler 里 printf、写 flash 或阻塞。
 - **写入安全**：生成的代码统一做 NaN/Inf 检查和 JSON `min`/`max` 限幅；
   `require` 为假时返回 `EP_ERR_STATE`（例如 `config.ppairs` 要求门极关闭）。

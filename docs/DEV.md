@@ -15,9 +15,10 @@ N32H473CE，Cortex-M4F，裸机。控制环 **40 kHz**（`DT = 25 µs`），由
 ADC，采样点在 PWM 峰值、低侧采样窗口内。
 
 ```
-上位机 ──USB CDC──> endpoint_serial.c   中断只累积帧，主循环解析/应答
-                        └─ endpoint_handler(id, op, in, out)   [endpoint_defs.c 生成]
-                              └─ 直接读写 params.json 里的 C 变量
+上位机 ──USB CDC──────> endpoint_serial.c  中断累积 0xAA 帧，主循环解析/应答 ┐
+上位机 ──vendor i/f───> endpoint_usb.c     中断只搬 64 B 包，主循环解析/应答 ┤
+                              └─ endpoint_process() → endpoint_handler(id, op, in, out)
+                                    [endpoint_defs.c 生成，直接读写 params.json 的 C 变量]
 主循环 ──> run_fsm_slow() ──> save_preferences() ──> prefs_codec (TLV+CRC32)
                                                      └─ 0x0807C000 / 0x0807E000 ping-pong
 控制 ISR ──> analog_sample → ps_sample(+PLL) → check_faults → run_fsm(motion_control) → can_tx_rx
@@ -31,8 +32,9 @@ ADC，采样点在 PWM 峰值、低侧采样窗口内。
 | `motion_law.h` | 外环纯数学（PI/斜率/故障/PLL，可主机测试） | 是（纯计算） |
 | `position_sensor.c` | SPI1+DMA2 读编码器、速度 PLL | 是（唯一允许阻塞等 DMA） |
 | `fsm.c` | 状态机：`run_fsm`（ISR）/`run_fsm_slow`（主循环） | 分开 |
-| `endpoint.c` | CRC、LE 编解码、endpoint 0 描述符 | 是（纯计算） |
-| `endpoint_serial.c` | USB 帧收发 | `feed()` 是，`poll()` 否 |
+| `endpoint.c` | CRC、LE 编解码、endpoint 0 描述符、请求分发 `endpoint_process()` | 是（纯计算） |
+| `endpoint_serial.c` | CDC 帧收发（0xAA/CRC 外层） | `feed()` 是，`poll()` 否 |
+| `endpoint_usb.c` | vendor interface 收发（一个 USB 包 = 一帧，USB 流控） | `*_isr()` 是，`poll()` 否 |
 | `endpoint_defs.c` | 生成的 handler | 是（只读写变量/置标志） |
 | `prefs_codec.c` | TLV 编解码（纯逻辑，可主机测试） | 否 |
 | `preference_writer.c` | 擦/写/校验 flash | 否 |
@@ -407,7 +409,8 @@ suggest   = min(e_recover, e_limit)
 
 ### 台架测试脚本
 
-`tools/csv_csp_test.py`（USB endpoint，不需要 CAN 主站）。**它自己负责命令租约刷新**——
+`tools/csv_csp_test.py`（USB endpoint，不需要 CAN 主站；`--port COMx` 走 CDC，
+`--usb` 走 vendor interface，后者往返更短）。**它自己负责命令租约刷新**——
 `command.*` 的租约只有 `config.can_timeout`（默认 100 ms），用 `mc_ep.py set` 一条条
 敲根本无法维持，测出来的“环路不工作”其实是保护动作。
 
@@ -515,10 +518,24 @@ PLL 误差 ≤4%，19 点差分 9–16%。这也解释了为什么外环必须�
 
 ## endpoint 协议
 
-与 ODrive fibre v0.1 同构，跑在 USB CDC 上，和 ASCII 菜单共用数据流。
-实现见 `Core/Inc/endpoint.h`、`endpoint.c`、`endpoint_serial.c`。
+与 ODrive fibre v0.1 同构，有两条 USB 传输，共用同一份 payload 编解码
+（`endpoint_process()`）：
 
-### 帧
+| 传输 | 端点 | 外层 | 实现 |
+|---|---|---|---|
+| CDC 虚拟串口 | EP1 IN / EP3 OUT | `AA` + `LEN` + `CRC8` + payload + `CRC16`（和 ASCII 菜单共用数据流） | `endpoint_serial.c` |
+| vendor interface 2（fibre） | EP3 IN / EP1 OUT | 一个 USB bulk 包 = 一个 PAYLOAD（无外层、无 CRC） | `endpoint_usb.c` |
+
+USB 描述符是复合设备：interface 0/1 是 CDC（`bDeviceClass=0xEF` + IAD），
+interface 2 是 vendor specific（EP1 OUT / EP3 IN），见
+`Core/Src/usb_desc.c`、`usb_conf.h` 的 PMA 布局。CDC 的端点分配和以前完全一样。
+
+> **不是 odrivetool 的线上协议**：本固件保留 `EP_REQ_WRITE`（bit14）显式区分
+> 读写、响应多一个 `status` 字节、endpoint 0 的版本探测是 `[crc][len]`。
+> 优点是一次“读”绝不会执行 `action.*`；代价是标准 fibre 客户端不能直接用。
+> 上位机请用 `tools/mc_ep.py`（`--port` 或 `--usb`）。
+
+### CDC 帧
 
 ```
 AA | LEN | CRC8 | PAYLOAD[LEN] | CRC16_HI CRC16_LO
@@ -540,7 +557,10 @@ seq(2) | id|flags(2) | rxlen(2) | tx_data... | trailer(2)
 - `rxlen`：主机希望的返回字节数（超出被截断）。
 - `trailer`：endpoint 0 是 `EP_PROTOCOL_VERSION`（2），其它是描述符 CRC16
   （每次改参数表都会变）。
-- 一次只有一个未完成请求；`req_pending` 未清时新帧被丢弃。
+- 一次只有一个未完成请求。CDC 是字节流：`req_pending` 未清时新帧被丢弃；
+  vendor interface 有 USB 流控：收到后端点保持 NAK，主循环处理完再 arm，
+  请求不会丢。
+- vendor 传输的响应 ≤ 63 字节（短包），主机一次 64 字节 bulk 读即可收全。
 
 ### 响应
 
@@ -563,6 +583,39 @@ seq|0x8000(2) | status(1) | data...
 
 **由传输层显式给出**：USB 用 bit14，CyberBeast CAN 用 `0x20`/`0x21` 操作码。
 生成的 handler 按 `access` 统一校验：`r` 拒绝写、`w` 拒绝读、`rw` 写后回读新值。
+
+### USB 复合设备与实时性
+
+```
+interface 0 (CDC comm, EP2 IN 通知)
+interface 1 (CDC data, EP3 OUT / EP1 IN)     <- 和以前完全一样，ASCII 菜单 + 0xAA 帧
+interface 2 (vendor,    EP1 OUT / EP3 IN)    <- fibre：一个 USB 包 = 一帧
+```
+
+- `usb_conf.h` 的 PMA 布局（地址单位是 2 字节）：EP1 TX `0xC0`、EP2 TX `0x100`、
+  EP3 RX `0x110`、EP1 RX `0x150`、EP3 TX `0x190`；最后一块到字节 `0x360`，
+  在 1 KB 包内存以内。
+- **FOC 不受影响**是有意的设计：USB 中断（优先级 2，低于控制 ISR 的 0）只做
+  一次 ≤64 B 的 `USB_CopyPMAToUserBuf()` + 置标志，然后让端点保持 NAK；
+  CRC / 描述符下载 / handler / 应答全在主循环的 `endpoint_usb_poll()`。
+  USB 流控替代了软件队列，主机不会因为主循环繁忙而丢请求。
+- 响应上限 63 字节：64 字节整包不会产生“短包”，主机的 bulk 读会继续等下一包。
+
+Windows 上 vendor interface 需要 **Zadig** 给 interface 2 装 WinUSB **或
+libusb-win32**（两者都验证可用；CDC 的两个 interface 仍由 `usbser` 占用，
+不需要重装驱动）；Linux 需要 udev 权限；macOS 直接可用。上位机：
+
+```bash
+pip install pyusb libusb-package
+python tools/mc_ep.py --usb tree
+python tools/mc_ep.py --usb get telemetry.i_q
+```
+
+2026-11-04 台架（Keil 镜像，电机空闲）：vendor interface 连续读 `telemetry.i_q`
+约 3 kHz（两参数交替约 6 k 次事务/秒），期间 `telemetry.loop_count` 仍是
+39,990 Hz、`timing.overrun` 保持 0、`timing.period_max`/`total_max` 不变、
+`encoder_lost_frames` 不增长；CDC 与 vendor interface 两个线程同时收发也没有
+互相干扰。
 
 ### endpoint 0（描述符）
 
@@ -997,6 +1050,10 @@ python tools/flash_jlink.py --bin build/motorcontrol.bin   # GNU 构建产物也
 | 15 | `call action.reset_config`（先记下 `prefs_sequence`） | `save_status = 1`、序号 +1；`config.e_zero/ppairs` 回默认；**随后自动重启**，重启后 `prefs_loaded = true`、`config.can_prot = 1` / `can_baud = 1000000`（出厂默认）并重新标定 |
 | 16 | 门极使能时 `call action.reset_config` | `status 6`（`EP_ERR_STATE`），`save_status` 不变，配置不动 |
 | 17 | 空闲态 `set command.t_ff 5` 后 `call action.motor_mode` | 门极使能后 `telemetry.t_ff = 0`（进入模式时清零），电机不窜动 |
+| 18 | 插 USB，设备管理器 | 出现 COM 口（CDC）**和**一个 vendor interface；两者同时可用 |
+| 19 | `mc_ep.py --port COMx tree` | 和改复合描述符之前一致（ASCII 菜单也能用） |
+| 20 | Zadig 给 interface 2 装 WinUSB 后 `mc_ep.py --usb tree` | 参数树正常，`get/set/call` 与 CDC 结果一致 |
+| 21 | 电机模式 + `--usb monitor telemetry.i_q ... --rate 100` | FOC 不失步、`telemetry.lost_frames` 不增长（USB 只在主循环处理） |
 | 18 | 电机模式下写 `command.t_ff`，然后停发 3×`can_timeout` | 命令自动清零（租约到期），`telemetry.i_q_des → 0` |
 | 19 | `set command.mode 1` + `set command.v_des 1` | 电机按速度环转到 ~1 rad/s；`telemetry.v_setpoint`/`vel_err` 有值，`command.mode` 回读为 1 |
 | 20 | `set command.mode 2` + `set command.p_des <当前+0.5>` | 位置环把关节转过去并停住；`telemetry.pos_err → 0`，无过冲振荡 |
@@ -1010,7 +1067,7 @@ python tools/flash_jlink.py --bin build/motorcontrol.bin   # GNU 构建产物也
 - [ ] ID 注册表只追加、没有复用/重排；
 - [ ] `make check` 通过，生成物与文档一起提交；
 - [ ] GNU Make 和 Keil AC6 都能干净构建；`make size` 镜像 < `0x0807C000`；
-- [ ] `make hosttest` + 台架清单通过；
+- [ ] `make hosttest` + 台架清单通过（含 USB 复合设备的 CDC/vendor 两条传输）；
 - [ ] bootloader 擦除范围已确认，OTA 闭环验证通过（参数/零点/LUT 保留）；
 - [ ] [README](README.md) 的版本矩阵已更新；客户可见的接口变化写进发布说明。
 

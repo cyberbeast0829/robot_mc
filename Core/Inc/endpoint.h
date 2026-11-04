@@ -7,9 +7,9 @@
  * 维护，tools/gen_endpoints.py 生成 endpoint_defs.c/h；本文件是手写的
  * 协议核心：CRC、小端序列化、endpoint 0（JSON 描述符）。
  *
- * 协议帧（与 ODrive fibre v0.1 同构，细节见 AGENTS.md）：
- *
- *     AA | LEN | CRC8 | PAYLOAD[LEN] | CRC16_HI CRC16_LO
+ * 两种传输共用下面的 PAYLOAD 格式（细节见 AGENTS.md）：
+ *   CDC   : AA | LEN | CRC8 | PAYLOAD[LEN] | CRC16_HI CRC16_LO
+ *   vendor: 一个 USB bulk 包 = 一个 PAYLOAD（无外层、无 CRC）
  *
  * 请求 PAYLOAD: seq(2) | id|flags(2) | rxlen(2) | tx_data... | trailer(2)
  * 响应 PAYLOAD: seq|0x8000(2) | status(1) | rx_data...
@@ -113,6 +113,13 @@ uint32_t ep_clampu(uint32_t v, uint32_t lo, uint32_t hi);
  * offset == 0xFFFFFFFF 时返回 [json_crc u16][json_len u16]，供上位机
  * 一次性拿到版本和总长度。 */
 ep_status_t endpoint_descriptor(ep_cbuf_t *in, ep_buf_t *out);
+
+/* 把一帧请求 PAYLOAD 处理成一帧应答 PAYLOAD（seq|0x8000 | status | data）。
+ * 传输层只负责外层封装：CDC 用 0xAA+LEN+CRC8/CRC16 流，fibre 的 vendor
+ * 接口一个 USB 包就是一帧。返回 false 表示这帧不需要应答（或长度不够）。
+ * resp_cap 必须 >= 3；返回长度不会超过 resp_cap。 */
+bool endpoint_process(const uint8_t *req, uint16_t req_len,
+                      uint8_t *resp, uint16_t resp_cap, uint16_t *resp_len);
 
 #ifdef __cplusplus
 }

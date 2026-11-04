@@ -40,6 +40,7 @@
 #include "usb.h"
 #include "usb_istr.h"
 #include "usb_pwr.h"
+#include "endpoint_usb.h"
 
 /* Private typedef -----------------------------------------------------------*/
 /* Private define ------------------------------------------------------------*/
@@ -68,20 +69,24 @@ void EP1_IN_Callback (void)
 /**
  * @brief  EP1_OUT_Callback
  *
- * Not used: in the vendor CDC layout host -> device data arrives on EP3 (see
- * Virtual_Com_Port_Reset) and EP1 OUT is left disabled, so this never runs.
- * The entry has to stay because the library's callback table points at it.
+ * fibre (vendor interface): host -> device.  Only copies the packet into the
+ * mailbox; endpoint_usb_poll() parses it in the main loop and re-arms the
+ * endpoint, so the control ISR is never delayed by USB work.
  */
 void EP1_OUT_Callback(void)
 {
+    endpoint_usb_rx_isr(ENDP1_RXADDR, USB_GetEpRxCnt(ENDP1));
 }
 
 /**
  * @brief  EP3_IN_Callback
+ *
+ * fibre (vendor interface): device -> host packet done.
  */
 void EP3_IN_Callback (void)
 {
     SetEPTxStatus(ENDP3, EP_TX_NAK);
+    endpoint_usb_tx_isr();
 }
 
 /**

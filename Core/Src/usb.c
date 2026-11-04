@@ -129,18 +129,17 @@ void Leave_LowPowerMode(void)
 }
 
 /**
- * @brief  send the data received from the N32G45x to the PC through USB
+ * @brief  send one packet to the PC through a bulk IN endpoint
  * @param  ptrBuffer: send data pointer.
- * @param  Send_length: send data length.
+ * @param  Send_length: send data length (must be < 64; callers use <= 32).
+ * @param  endpoint_num: ENDP1 (CDC) or ENDP3 (fibre), both configured in Reset.
  */
 void USB_Send_DATA(uint8_t *ptrBuffer, uint8_t Send_length, uint8_t endpoint_num)
 {
-    /* The only TX endpoint with a buffer in this layout is EP1, the CDC data IN
-     * endpoint (see usb_conf.h) - do not pass anything else here */
-    /* send  packet to PMA*/
-    USB_CopyUserToPMABuf((unsigned char*)ptrBuffer, ENDP1_TXADDR,
-                        Send_length >= VIRTUAL_COM_PORT_DATA_SIZE ? VIRTUAL_COM_PORT_DATA_SIZE - 1 : Send_length);
-    USB_SetEpTxCnt(endpoint_num, Send_length);
+    uint16_t n = (Send_length >= VIRTUAL_COM_PORT_DATA_SIZE)
+                     ? VIRTUAL_COM_PORT_DATA_SIZE - 1 : Send_length;
+    USB_CopyUserToPMABuf((unsigned char*)ptrBuffer, USB_GetEpTxAddr(endpoint_num), n);
+    USB_SetEpTxCnt(endpoint_num, n);
     USB_SetEpTxValid(endpoint_num);
 }
 

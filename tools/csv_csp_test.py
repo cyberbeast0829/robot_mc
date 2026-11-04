@@ -51,7 +51,7 @@ LOG_FIELDS = [n.split(".")[-1] for n in READ]
 class Runner:
     def __init__(self, args):
         self.a = args
-        self.dev = Device(args.port)
+        self.dev = Device(port=args.port, use_usb=args.usb)
         self.dev.fetch_descriptor()
         self.rows = []
 
@@ -280,7 +280,7 @@ class Runner:
             print("restored vel_gain=%s vel_integrator_gain=%s" % (kv0, ki0))
 
 
-DEFAULTS = dict(port="COM7", min_bus=15.0, allow_low_bus=False, hold=1.0, move=2.0,
+DEFAULTS = dict(port="COM7", usb=False, min_bus=15.0, allow_low_bus=False, hold=1.0, move=2.0,
                 vel=1.0, step=0.10, gains="1,2,3,4", refresh_ms=25.0, sample_ms=60.0,
                 abort_vel=3.0, abort_pos_err=0.5, kp=None, kd=None, log=None)
 
@@ -291,6 +291,8 @@ def add_common_args(p):
     写在子命令前面的值覆盖掉。"""
     sup = argparse.SUPPRESS
     p.add_argument("--port", default=sup, help="设备串口")
+    p.add_argument("--usb", action="store_true", default=sup,
+                   help="走 vendor interface（fibre，需要 pyusb/WinUSB）")
     p.add_argument("--min-bus", type=float, default=sup, help="低于此母线电压拒绝做运动测试")
     p.add_argument("--allow-low-bus", action="store_true", default=sup,
                    help="无功率级时只验证逻辑")

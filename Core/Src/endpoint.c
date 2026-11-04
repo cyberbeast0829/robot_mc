@@ -168,3 +168,50 @@ ep_status_t endpoint_descriptor(ep_cbuf_t *in, ep_buf_t *out){
 	out->begin += n;
 	return EP_OK;
 }
+
+bool endpoint_process(const uint8_t *req, uint16_t req_len,
+                      uint8_t *resp, uint16_t resp_cap, uint16_t *resp_len){
+	if(resp_cap < 3){return false;}
+
+	ep_cbuf_t in = { req, req + req_len };
+	uint16_t seq, id_field, want;
+	if(!ep_get_u16(&in, &seq) || !ep_get_u16(&in, &id_field) || !ep_get_u16(&in, &want)){
+		return false;
+	}
+	if((id_field & EP_REQ_REPLY) == 0){return false;}		// 不需要回复
+	uint16_t id = id_field & EP_ID_MASK;
+	/* 读/写由主机显式声明（bit14）。不靠“有没有数据”猜，否则读一次
+	 * action.* 就会执行动作 */
+	ep_op_t op = (id_field & EP_REQ_WRITE) ? EP_OP_WRITE : EP_OP_READ;
+
+	if((size_t)(in.end - in.begin) < 2){return false;}	// 缺少 trailer
+	uint16_t trailer = (uint16_t)in.end[-2] | ((uint16_t)in.end[-1] << 8);
+	in.end -= 2;
+
+	uint8_t status;
+	size_t produced = 0;
+
+	if((id != 0) && (trailer != endpoint_json_crc)){
+		/* 上位机拿的是旧版描述符：拒绝，让它重新下载 */
+		status = EP_ERR_VERSION;
+	}
+	else{
+		ep_buf_t out = { resp + 3, resp + resp_cap };
+		if(id == 0){
+			status = (uint8_t)endpoint_descriptor(&in, &out);
+		}
+		else{
+			status = (uint8_t)endpoint_handler(id, op, &in, &out);
+		}
+		produced = (size_t)(out.begin - (resp + 3));
+		if(produced > want){produced = want;}		// 读多少由客户端决定
+	}
+
+	/* 响应 seq 的 bit15 置 1，和 fibre 一样用于区分请求/响应 */
+	uint16_t rseq = seq | 0x8000u;
+	resp[0] = (uint8_t)(rseq & 0xFF);
+	resp[1] = (uint8_t)(rseq >> 8);
+	resp[2] = (uint8_t)status;
+	*resp_len = (uint16_t)(3 + produced);
+	return true;
+}

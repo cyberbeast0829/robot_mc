@@ -5,13 +5,23 @@
 
 ## 1. 连接
 
-- 板子 USB 接电脑（USB CDC 虚拟串口）。Windows 记下 COM 号（如 `COM7`），
-  Linux 是 `/dev/ttyACM0`。
-- `pip install pyserial`
+板子的 USB 现在是一个复合设备，同一根线上有两个入口：
+
+| 入口 | 用途 | 需要 |
+|---|---|---|
+| CDC 虚拟串口 | ASCII 菜单 + `mc_ep.py --port`（和以前一样） | `pip install pyserial` |
+| vendor interface 2（fibre） | `mc_ep.py --usb`，一个 USB 包一帧，更快 | `pip install pyusb libusb-package`；Windows 用 Zadig 给 interface 2 装 WinUSB |
+
+- Windows 记下 COM 号（如 `COM7`），Linux 是 `/dev/ttyACM0`。
 - 工具：`tools/mc_ep.py`
+- Windows 装驱动：Zadig → Options → List All Devices → 选 `0x1209/0x4342`
+  的 **interface 2**（不是整个设备）→ 驱动选 WinUSB 或 libusb-win32
+  （两者都验证可用）→ Replace Driver。CDC 那两个 interface 保持 `usbser`
+  不动，COM 口照常可用。
 
 ```bash
-python tools/mc_ep.py --port COM7 tree
+python tools/mc_ep.py --port COM7 tree   # CDC
+python tools/mc_ep.py --usb tree         # vendor interface（fibre）
 ```
 
 设备会先回送一份 JSON 描述符（名字/ID/类型/权限），工具据此把名字映射到 ID，
@@ -20,6 +30,9 @@ python tools/mc_ep.py --port COM7 tree
 > 同一个串口只能有一个使用者：`mc_ep.py` 运行时不要再开串口终端。原来的
 > ASCII 菜单仍然可用（115200 8N1：`m` 电机、`c` 标定、`s` 设置、`e` 编码器、
 > `z` 零点、`d` DFU）。
+>
+> `--usb` 只占用 vendor interface，**不会**和 CDC 串口互相干扰；但请只在
+> 一个进程里同时使用（不要两个 `--usb` 进程抢同一组端点）。
 
 ## 2. 读写参数
 
@@ -61,7 +74,8 @@ import sys
 sys.path.insert(0, "tools")
 from mc_ep import Device
 
-dev = Device("COM7", 115200, 1.0)
+dev = Device("COM7", 115200, 1.0)      # CDC
+# dev = Device(use_usb=True)            # vendor interface（需要 pyusb/WinUSB）
 dev.fetch_descriptor()
 print(dev.read("config.gr"))
 dev.write("config.gr", 7.75)

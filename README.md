@@ -5,8 +5,9 @@
 **Nations N32H473CE**（Cortex-M4F）上，裸机、无 RTOS。
 
 - 控制环 40 kHz，`ATIM1` 触发三路注入 ADC，编码器走 SPI1 + DMA2。
-- 参数访问：USB CDC 上的 **fibre 风格 endpoint**，设备自带 JSON 描述符，
-  上位机按名字读写，固件升级不用改脚本。
+- 参数访问：**fibre 风格 endpoint**，USB 复合设备上有两条传输——CDC 串口
+  （ASCII 菜单 + 带 CRC 的帧）和 vendor interface（一个 USB 包一帧）；设备自带
+  JSON 描述符，上位机按名字读写，固件升级不用改脚本。
 - 配置持久化：ID-keyed TLV，双页 ping-pong + CRC32；**OTA 升级只擦 app 区时，
   配置和标定都会保留**。
 

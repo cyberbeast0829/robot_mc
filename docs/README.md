@@ -28,11 +28,14 @@ N32H473CE 三相 FOC 固件。只有三份要读的文档，按"你是谁"选一
 
 ```bash
 pip install pyserial
-python tools/mc_ep.py --port COM7 tree            # 参数树
+python tools/mc_ep.py --port COM7 tree            # 参数树（CDC）
 python tools/mc_ep.py --port COM7 get config.i_max
 python tools/mc_ep.py --port COM7 set config.i_max 3.5
 python tools/mc_ep.py --port COM7 call action.save
 python tools/mc_ep.py --port COM7 get system.save_status    # 1 = 保存成功
+
+# 或者走 vendor interface（fibre，需要 pyusb；Windows 用 Zadig 给 interface 2 装 WinUSB）
+python tools/mc_ep.py --usb tree
 ```
 
 改完参数要 `action.save` 才写 flash；门极使能时保存会被拒绝（先
@@ -41,7 +44,8 @@ python tools/mc_ep.py --port COM7 get system.save_status    # 1 = 保存成功
 ## 一页纸数据流
 
 ```
-上位机 ──USB CDC──> endpoint_serial.c ──> endpoint_handler(id, op, ...)  [生成]
+上位机 ──USB CDC──────> endpoint_serial.c ┐
+上位机 ──USB vendor i/f─> endpoint_usb.c  ┴─> endpoint_process() → endpoint_handler [生成]
                                               └─ 直接读写 params.json 里的变量
 主循环 ──> run_fsm_slow() ──> save_preferences() ──> TLV + CRC32 ──> 双页 ping-pong
 控制 ISR (40 kHz) ──> 采样 → 故障检查 → 状态机 → CAN

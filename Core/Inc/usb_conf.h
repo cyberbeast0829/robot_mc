@@ -59,15 +59,21 @@
 
 /* EP1/EP2/EP3 buffer addresses.
  *
- * NOTE: these are the Nations VCP example's addresses (usbfsd_conf.h), not the
- * ODrive/STM32 ones this port started from.  In this layout EP1 is the CDC data
- * IN endpoint (device -> host), EP2 the notification endpoint and EP3 the CDC
- * data OUT endpoint (host -> device) - there is deliberately no EP1 RX and no
- * EP3 TX buffer, see Virtual_Com_Port_Reset().  Keeping the addresses identical
- * to the example also keeps the whole table inside the packet memory */
+ * The CDC data buffers keep the Nations VCP example's addresses (usbfsd_conf.h):
+ * EP1 IN (0xC0) is CDC device -> host, EP2 IN (0x100) the notification endpoint
+ * and EP3 OUT (0x110) the CDC host -> device pipe.
+ *
+ * The fibre (vendor) interface added on top uses the *other* direction of the
+ * same endpoint numbers, so the verified CDC layout is untouched:
+ *   EP1 OUT (0x150) = fibre RX (host -> device)
+ *   EP3 IN  (0x190) = fibre TX (device -> host)
+ * Addresses are in 2-byte PMA units: the last buffer ends at byte
+ * (0x190 * 2 + 64) = 0x360, inside the 1 KB USBFS packet memory. */
 #define ENDP1_TXADDR        (0xC0)
 #define ENDP2_TXADDR        (0x100)
 #define ENDP3_RXADDR        (0x110)
+#define ENDP1_RXADDR        (0x150)
+#define ENDP3_TXADDR        (0x190)
 
 
 /*-------------------------------------------------------------*/

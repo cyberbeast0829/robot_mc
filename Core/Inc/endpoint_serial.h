@@ -1,7 +1,9 @@
 /*
  * endpoint_serial.h
  *
- * USB CDC 上的 endpoint 帧收发。
+ * USB CDC 上的 endpoint 帧收发（0xAA + LEN + CRC8/CRC16 外层）。
+ * vendor interface 的传输在 endpoint_usb.c，payload 编解码两边共用
+ * endpoint_process()。
  *
  * endpoint_serial_feed() 在 USB 中断里逐字节调用，只做帧累积；收齐一帧后
  * 由主循环的 endpoint_serial_poll() 解析并应答。ASCII 菜单和二进制帧共用
