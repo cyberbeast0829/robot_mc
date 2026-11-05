@@ -362,10 +362,10 @@
       "access": "rw",
       "ref": "GR",
       "min": 0.001,
-      "brief": "减速比（门极关闭时才允许写）",
+      "brief": "减速比：转子圈 / 输出圈（门极关闭时才允许写）。CBL89 + MZW55 实测 9.0",
       "require": "!controller.gate_drive_enabled",
       "persist": true,
-      "default": 7.75
+      "default": 9.0
     },
     {
       "name": "config.kt",
@@ -568,9 +568,9 @@
       "type": "int32",
       "access": "rw",
       "ref": "M_ZERO",
-      "brief": "机械零位编码器计数（门极关闭时才允许写）",
+      "brief": "机械零位编码器计数（门极关闭时才允许写）。会同时平移双编参考（ps_set_m_zero），所以断电再上电的位置仍然连续",
       "require": "!controller.gate_drive_enabled",
-      "set": "M_ZERO = v; comm_encoder.m_zero = v;",
+      "set": "ps_set_m_zero((int32_t)v);",
       "persist": true,
       "default": 0
     },
@@ -706,6 +706,72 @@
       "ref": "PRE_CALIBRATED",
       "require": "!controller.gate_drive_enabled",
       "brief": "电机/编码器是否已标定：false 时拒绝进入电机模式（action.calibrate 成功后自动置 1，进入标定或恢复默认时清 0；门极使能时不可写）",
+      "persist": true,
+      "default": 0
+    },
+    {
+      "name": "config.gear_teeth_first",
+      "type": "int32",
+      "access": "rw",
+      "ref": "GEAR_TEETH_FIRST",
+      "min": 1,
+      "max": 400,
+      "require": "!controller.gate_drive_enabled",
+      "brief": "齿轮式双编：转子（主编码器）侧齿轮齿数 T1。量程 = ±T2/(2|T1-T2|) 转子圈（30/27 给 ±4.5），所以要接近但不等；成比例齿数（10/9 = 20/18 = 30/27）行为相同",
+      "persist": true,
+      "default": 30
+    },
+    {
+      "name": "config.gear_teeth_sec",
+      "type": "int32",
+      "access": "rw",
+      "ref": "GEAR_TEETH_SEC",
+      "min": 1,
+      "max": 400,
+      "require": "!controller.gate_drive_enabled",
+      "brief": "齿轮式双编：副编码器（输出轴侧）齿轮齿数 T2。断电期间转子移动超过 ±T2/(2|T1-T2|) 圈就会差整整一个相位周期 T2/|T1-T2|",
+      "persist": true,
+      "default": 27
+    },
+    {
+      "name": "config.gear_sec_reversed",
+      "type": "bool",
+      "access": "rw",
+      "ref": "GEAR_SEC_REVERSED",
+      "require": "!controller.gate_drive_enabled",
+      "brief": "副编码器读数方向：false = 读数随转子正转增大；true = 随正转变小（副轴外啮合反向 / 磁铁反装），固件解算前先做 SEC_ENC_CPR-raw 镜像。CBL89 + MZW55 实测副轴反向，默认 true；改这个值后要重新 action.gear_capture",
+      "persist": true,
+      "default": 1
+    },
+    {
+      "name": "config.gear_zero_phase",
+      "type": "float",
+      "access": "rw",
+      "ref": "GEAR_ZERO_PHASE",
+      "min": 0.0,
+      "max": 1.0,
+      "require": "!controller.gate_drive_enabled",
+      "brief": "齿轮式双编的相位参考（action.gear_capture 写入，不要手改）：标定时刻两路编码器的韦尼尔相位，上电时据此解出转子第几圈",
+      "persist": true,
+      "default": 0.0
+    },
+    {
+      "name": "config.gear_zero_count",
+      "type": "int32",
+      "access": "rw",
+      "ref": "GEAR_ZERO_COUNT",
+      "require": "!controller.gate_drive_enabled",
+      "brief": "齿轮式双编的计数参考（action.gear_capture 写入，不要手改）：标定时刻的多圈计数 turns*CPR + count_wrapped，与 gear_zero_phase 配对使用",
+      "persist": true,
+      "default": 0
+    },
+    {
+      "name": "config.gear_ref_valid",
+      "type": "bool",
+      "access": "rw",
+      "ref": "GEAR_REF_VALID",
+      "require": "!controller.gate_drive_enabled",
+      "brief": "齿轮式双编参考是否有效：true 才在上电时用副编码器恢复输出轴位置（action.gear_capture 置 1，恢复默认值清 0）。没有第二编码器的板子保持 false 即可，行为与改动前一致",
       "persist": true,
       "default": 0
     },
@@ -1126,6 +1192,42 @@
       "access": "r",
       "get": "comm_encoder.lost_frames",
       "brief": "编码器丢帧计数"
+    },
+    {
+      "name": "telemetry.sec_enc_raw",
+      "type": "int32",
+      "access": "r",
+      "get": "sec_encoder.raw",
+      "brief": "齿轮式双编副编码器（输出轴侧）的原始读数，最近一次探测 / action.gear_capture / action.gear_read 时读到"
+    },
+    {
+      "name": "telemetry.sec_enc_present",
+      "type": "bool",
+      "access": "r",
+      "get": "sec_encoder.present",
+      "brief": "副编码器是否在线（上电、进入标定、gear_capture/gear_read 时探测；判据是连续两帧读到有效值，MISO 恒定的板子会判成 false）"
+    },
+    {
+      "name": "telemetry.sec_enc_phase",
+      "type": "float",
+      "access": "r",
+      "get": "sec_encoder.phase",
+      "brief": "齿轮式双编的韦尼尔相位 Δ ∈ [0,1)（最近一次读数）。转子每转一圈变化约 (T1-T2)/T2"
+    },
+    {
+      "name": "telemetry.sec_enc_lost_frames",
+      "type": "int32",
+      "access": "r",
+      "get": "sec_encoder.lost_frames",
+      "brief": "副编码器读取失败次数（没插、接线断，或被控制中断的 SPI 访问打断）"
+    },
+    {
+      "name": "telemetry.gear_abs_turns",
+      "type": "float",
+      "access": "r",
+      "get": "sec_encoder.abs_turns",
+      "unit": "turn",
+      "brief": "齿轮式双编解算出的转子绝对圈数（含小数，与 telemetry.position_motor 同一坐标系）。上电恢复时写入，action.gear_read 时刷新"
     },
     {
       "name": "telemetry.encoder_raw",
@@ -1571,6 +1673,13 @@
       "brief": "最近一次写 flash 的结果（save/zero/reset_config/标定共用）：0 未执行、1 成功、2 因门极使能跳过、3 写失败"
     },
     {
+      "name": "system.gear_status",
+      "type": "int8",
+      "access": "r",
+      "get": "state.gear_status",
+      "brief": "最近一次齿轮式双编动作的结果：0 未执行、1 成功、-1 齿数/方向配置非法、-2 还没有参考（先 action.gear_capture）、-3 副编码器没响应、-4 门极使能时被拒绝"
+    },
+    {
       "name": "system.can_prot_active",
       "type": "int32",
       "access": "r",
@@ -1607,9 +1716,25 @@
       "name": "action.zero",
       "type": "void",
       "access": "w",
-      "brief": "把当前位置设为零点并保存（仅菜单状态）",
+      "brief": "把当前位置设为零点并保存（仅菜单状态）。会同时平移齿轮式双编的参考，断电再上电位置仍然连续",
       "require": "state.state == MENU_MODE",
       "call": "state.zero_pending = 1;"
+    },
+    {
+      "name": "action.gear_capture",
+      "type": "void",
+      "access": "w",
+      "brief": "齿轮式双编：把当前位置定为输出轴绝对位置的参考（不旋转电机，只读一次副编码器）。之后要 action.save 才会保留；结果看 system.gear_status",
+      "require": "!controller.gate_drive_enabled",
+      "call": "state.gear_status = 0; state.gear_capture_pending = 1;"
+    },
+    {
+      "name": "action.gear_read",
+      "type": "void",
+      "access": "w",
+      "brief": "齿轮式双编：读一次副编码器并用已保存的参考解算位置，刷新 telemetry.sec_enc_* / telemetry.gear_abs_turns（诊断用，不写 flash）。结果看 system.gear_status",
+      "require": "!controller.gate_drive_enabled",
+      "call": "state.gear_status = 0; state.gear_read_pending = 1;"
     },
     {
       "name": "action.idle_mode",

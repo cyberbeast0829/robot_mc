@@ -89,6 +89,8 @@ uint8_t fet_temp_en_flag = 0;
 uint8_t mot_temp_en_flag = 0;
 uint8_t vel_limit_en_flag = 1;			// config.enable_vel_limit 默认 true：与改动前行为一致
 uint8_t torque_vel_lim_en_flag = 0;		// config.enable_torque_vel_lim 默认 false
+uint8_t gear_ref_valid_flag = 0;		// 双编参考未建立（跑一次 action.gear_capture 才置 1）
+uint8_t gear_sec_reversed_flag = 0;		// 副编码器读数方向（1 = 随正转变小，解算前镜像）
 PreferenceWriter prefs;
 
 /* Structs for control, etc */
@@ -97,6 +99,7 @@ ControllerStruct controller;
 ObserverStruct observer;
 FSMStruct state;
 EncoderStruct comm_encoder;
+SecEncoderStruct sec_encoder;
 CalStruct comm_encoder_cal;
 CANTxMessage can_tx;
 
@@ -450,6 +453,25 @@ int main(void)
   if(EN_ENC_LINEARIZATION){memcpy(&comm_encoder.offset_lut, &ENCODER_LUT, sizeof(comm_encoder.offset_lut));}	// Copy the linearization lookup table
   else{memset(&comm_encoder.offset_lut, 0, sizeof(comm_encoder.offset_lut));}
   ps_warmup(&comm_encoder, 100);			// clear the noisy data when the encoder first turns on
+
+  /* 齿轮式双编：用副编码器把转子"第几圈"解出来，恢复断电前的输出轴位置。
+   * 必须在控制中断使能（下面的 TIM_ConfigInt）之前做 —— 这条路要和 40 kHz
+   * 中断抢 SPI1/DMA2。先探一次副编码器，没做过 action.gear_capture
+   * （GEAR_REF_VALID = 0）时什么也不恢复，行为与改动前完全一致 */
+  {
+	  int gear_present = ps_sec_probe();
+	  int gear_rc = ps_dual_gear_restore(&comm_encoder);
+	  if(gear_rc == 0){
+		  myprintf("Gear encoder: restored multiturn position %.3f turns (teeth %d/%d)\r\n",
+				   (double)sec_encoder.abs_turns, (int)GEAR_TEETH_FIRST, (int)GEAR_TEETH_SEC);
+	  }
+	  else if(gear_rc < 0){
+		  myprintf("!!! Gear encoder: position restore failed (%d) - starting from 0 !!!\r\n", gear_rc);
+	  }
+	  else if(!gear_present){
+		  myprintf("Gear encoder: no second encoder - output position memory stays off\r\n");
+	  }
+  }
 
   //for(int i = 0; i<128; i++){myprintf("%d\r\n", comm_encoder.offset_lut[i]);}
 

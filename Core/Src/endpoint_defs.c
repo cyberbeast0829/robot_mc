@@ -23,21 +23,22 @@ const char endpoint_json[] =
 "18,\"type\":\"float\",\"access\":\"rw\",\"unit\":\"Ohm\",\"persist\":true},{\"name\":\"config.r_th\",\"id\":19,\"type\":\"float\",\"access\":\"rw\",\"unit\":\"C/W\",\"persist\":true},{\"name\":\"config.c_th\",\"id\":20,\"type\":\"float\",\"access\":\"rw\",\"unit\":\"J/C\",\"persist\":true},{\"name\":\"config.temp_max\",\"id\":21,\"type\":\"float\",\"access\":\"rw\",\"unit\":\"C\",\"min\":0.0,\"max\":150.0,\"persist\":true},{\"name\":\"config.phase_order\",\"id\":22,\"type\":\"int32\",\"access\":\"rw\",\"min\":0,\"max\":1,\"persist\":true},{\"name\":\"config.can_id\",\"id\":23,\"type\":\"int32\",\"access\":\"rw\",\"min\":0,\"max\":127,\"persist\":true},{\"name\":\"config.can_master\",\"id\":24,\"type\":\"int32\",\"access\":\"rw\",\"min\":0,\"max\":127,\"persist\":true},{\"name\":\"config.can_timeout\",\"id\":25,\"type\":\"int32\",\"access\":\"rw\",\"unit\":\"ms\",\"min\":0,\"max\":100000,\"persist\":true},{\"name\":\"config.can_prot\",\"id\":120,\"type\":\"i"
 "nt32\",\"access\":\"rw\",\"min\":0,\"max\":1,\"persist\":true},{\"name\":\"config.can_baud\",\"id\":121,\"type\":\"int32\",\"access\":\"rw\",\"unit\":\"bit/s\",\"min\":50000,\"max\":5000000,\"persist\":true},{\"name\":\"config.can_hb_ms\",\"id\":122,\"type\":\"int32\",\"access\":\"rw\",\"unit\":\"ms\",\"min\":0,\"max\":10000,\"persist\":true},{\"name\":\"config.can_tdc\",\"id\":162,\"type\":\"int32\",\"access\":\"rw\",\"unit\":\"tq\",\"min\":-1,\"max\":31,\"persist\":true},{\"name\":\"config.m_zero\",\"id\":26,\"type\":\"int32\",\"access\":\"rw\",\"persist\":true},{\"name\":\"config.e_zero\",\"id\":27,\"type\":\"int32\",\"access\":\"rw\",\"persist\":true},{\"name\":\"config.vbus_ov_trip\",\"id\":163,\"type\":\"float\",\"access\":\"rw\",\"unit\":\"V\",\"min\":10.0,\"max\":100.0,\"persist\":true},{\"name\":\"config.vbus_uv_trip\",\"id\":164,\"type\":\"float\",\"access\":\"rw\",\"unit\":\"V\",\"min\":0.0,\"max\":100.0,\"persist\":true},{\"name\":\"config."
 "i_dc_max\",\"id\":165,\"type\":\"float\",\"access\":\"rw\",\"unit\":\"A\",\"min\":0.0,\"max\":100.0,\"persist\":true},{\"name\":\"config.torque_lim\",\"id\":166,\"type\":\"float\",\"access\":\"rw\",\"unit\":\"N-m\",\"min\":0.0,\"max\":100.0,\"persist\":true},{\"name\":\"config.fet_temp_en\",\"id\":167,\"type\":\"bool\",\"access\":\"rw\",\"persist\":true},{\"name\":\"config.fet_temp_lo\",\"id\":168,\"type\":\"float\",\"access\":\"rw\",\"unit\":\"C\",\"min\":0.0,\"max\":200.0,\"persist\":true},{\"name\":\"config.fet_temp_hi\",\"id\":169,\"type\":\"float\",\"access\":\"rw\",\"unit\":\"C\",\"min\":0.0,\"max\":200.0,\"persist\":true},{\"name\":\"config.mot_temp_en\",\"id\":170,\"type\":\"bool\",\"access\":\"rw\",\"persist\":true},{\"name\":\"config.mot_temp_lo\",\"id\":171,\"type\":\"float\",\"access\":\"rw\",\"unit\":\"C\",\"min\":0.0,\"max\":200.0,\"persist\":true},{\"name\":\"config.mot_temp_hi\",\"id\":172,\"type\":\"float\",\"access\":\"rw\",\"unit\":"
-"\"C\",\"min\":0.0,\"max\":200.0,\"persist\":true},{\"name\":\"config.pre_calibrated\",\"id\":173,\"type\":\"bool\",\"access\":\"rw\",\"persist\":true},{\"name\":\"command.t_ff\",\"id\":128,\"type\":\"float\",\"access\":\"rw\",\"unit\":\"N-m\"},{\"name\":\"command.p_des\",\"id\":129,\"type\":\"float\",\"access\":\"rw\",\"unit\":\"rad\"},{\"name\":\"command.v_des\",\"id\":130,\"type\":\"float\",\"access\":\"rw\",\"unit\":\"rad/s\",\"min\":-200.0,\"max\":200.0},{\"name\":\"command.kp\",\"id\":131,\"type\":\"float\",\"access\":\"rw\"},{\"name\":\"command.kd\",\"id\":132,\"type\":\"float\",\"access\":\"rw\"},{\"name\":\"command.mode\",\"id\":145,\"type\":\"int32\",\"access\":\"rw\",\"min\":0,\"max\":2},{\"name\":\"telemetry.v_bus\",\"id\":28,\"type\":\"float\",\"access\":\"r\",\"unit\":\"V\"},{\"name\":\"telemetry.v_bus_raw\",\"id\":29,\"type\":\"float\",\"access\":\"r\",\"unit\":\"V\"},{\"name\":\"telemetry.i_a\",\"id\":30,\"type\":\"float\",\"access\":\"r\",\"unit\":\"A"
-"\"},{\"name\":\"telemetry.i_b\",\"id\":31,\"type\":\"float\",\"access\":\"r\",\"unit\":\"A\"},{\"name\":\"telemetry.i_c\",\"id\":32,\"type\":\"float\",\"access\":\"r\",\"unit\":\"A\"},{\"name\":\"telemetry.i_d\",\"id\":33,\"type\":\"float\",\"access\":\"r\",\"unit\":\"A\"},{\"name\":\"telemetry.i_q\",\"id\":34,\"type\":\"float\",\"access\":\"r\",\"unit\":\"A\"},{\"name\":\"telemetry.i_d_filt\",\"id\":35,\"type\":\"float\",\"access\":\"r\",\"unit\":\"A\"},{\"name\":\"telemetry.i_q_filt\",\"id\":36,\"type\":\"float\",\"access\":\"r\",\"unit\":\"A\"},{\"name\":\"telemetry.v_d\",\"id\":37,\"type\":\"float\",\"access\":\"r\",\"unit\":\"V\"},{\"name\":\"telemetry.v_q\",\"id\":38,\"type\":\"float\",\"access\":\"r\",\"unit\":\"V\"},{\"name\":\"telemetry.theta_mech\",\"id\":39,\"type\":\"float\",\"access\":\"r\",\"unit\":\"rad\"},{\"name\":\"telemetry.theta_elec\",\"id\":40,\"type\":\"float\",\"access\":\"r\",\"unit\":\"rad\"},{\"name\":\"telemetry.dtheta_mech\",\"id\":41,\"type\":\"f"
-"loat\",\"access\":\"r\",\"unit\":\"rad/s\"},{\"name\":\"telemetry.dtheta_elec\",\"id\":42,\"type\":\"float\",\"access\":\"r\",\"unit\":\"rad/s\"},{\"name\":\"telemetry.position\",\"id\":43,\"type\":\"float\",\"access\":\"r\",\"unit\":\"rad\"},{\"name\":\"telemetry.position_motor\",\"id\":44,\"type\":\"float\",\"access\":\"r\",\"unit\":\"rad\"},{\"name\":\"telemetry.velocity\",\"id\":45,\"type\":\"float\",\"access\":\"r\",\"unit\":\"rad/s\"},{\"name\":\"telemetry.velocity_motor\",\"id\":46,\"type\":\"float\",\"access\":\"r\",\"unit\":\"rad/s\"},{\"name\":\"telemetry.count\",\"id\":47,\"type\":\"int32\",\"access\":\"r\"},{\"name\":\"telemetry.torque\",\"id\":48,\"type\":\"float\",\"access\":\"r\",\"unit\":\"N-m\"},{\"name\":\"telemetry.p_des\",\"id\":49,\"type\":\"float\",\"access\":\"r\",\"unit\":\"rad\"},{\"name\":\"telemetry.v_des\",\"id\":50,\"type\":\"float\",\"access\":\"r\",\"unit\":\"rad/s\"},{\"name\":\"telemetry.kp\",\"id\":51,\"type\":\"float\",\"access\":"
-"\"r\"},{\"name\":\"telemetry.kd\",\"id\":52,\"type\":\"float\",\"access\":\"r\"},{\"name\":\"telemetry.t_ff\",\"id\":53,\"type\":\"float\",\"access\":\"r\",\"unit\":\"N-m\"},{\"name\":\"telemetry.i_q_des\",\"id\":54,\"type\":\"float\",\"access\":\"r\",\"unit\":\"A\"},{\"name\":\"telemetry.fw_int\",\"id\":55,\"type\":\"float\",\"access\":\"r\",\"unit\":\"A\"},{\"name\":\"telemetry.fault\",\"id\":56,\"type\":\"uint32\",\"access\":\"r\"},{\"name\":\"telemetry.gate_drive\",\"id\":57,\"type\":\"bool\",\"access\":\"r\"},{\"name\":\"telemetry.mode\",\"id\":58,\"type\":\"uint8\",\"access\":\"r\"},{\"name\":\"telemetry.loop_count\",\"id\":59,\"type\":\"uint32\",\"access\":\"r\"},{\"name\":\"telemetry.can_timeout_count\",\"id\":60,\"type\":\"int32\",\"access\":\"r\"},{\"name\":\"telemetry.temperature\",\"id\":61,\"type\":\"float\",\"access\":\"r\",\"unit\":\"C\"},{\"name\":\"telemetry.mos_temp\",\"id\":174,\"type\":\"float\",\"access\":\"r\",\"unit\":\"C\"},{\"name\":\"telem"
-"etry.mot_temp\",\"id\":175,\"type\":\"float\",\"access\":\"r\",\"unit\":\"C\"},{\"name\":\"telemetry.i_bus\",\"id\":176,\"type\":\"float\",\"access\":\"r\",\"unit\":\"A\"},{\"name\":\"telemetry.i_d_des\",\"id\":177,\"type\":\"float\",\"access\":\"r\",\"unit\":\"A\"},{\"name\":\"telemetry.mechanical_power\",\"id\":178,\"type\":\"float\",\"access\":\"r\",\"unit\":\"W\"},{\"name\":\"telemetry.sensor_mode\",\"id\":179,\"type\":\"uint8\",\"access\":\"r\"},{\"name\":\"telemetry.resistance\",\"id\":62,\"type\":\"float\",\"access\":\"r\",\"unit\":\"Ohm\"},{\"name\":\"telemetry.can_tec\",\"id\":63,\"type\":\"uint8\",\"access\":\"r\"},{\"name\":\"telemetry.can_rec\",\"id\":64,\"type\":\"uint8\",\"access\":\"r\"},{\"name\":\"telemetry.can_lec\",\"id\":65,\"type\":\"uint8\",\"access\":\"r\"},{\"name\":\"telemetry.encoder_ppairs\",\"id\":66,\"type\":\"float\",\"access\":\"r\"},{\"name\":\"telemetry.encoder_lost_frames\",\"id\":67,\"type\":\"int32\",\"access\":\"r\"},{\"n"
-"ame\":\"telemetry.encoder_raw\",\"id\":79,\"type\":\"int32\",\"access\":\"r\"},{\"name\":\"telemetry.encoder_turns\",\"id\":80,\"type\":\"int32\",\"access\":\"r\"},{\"name\":\"telemetry.encoder_elec_angle\",\"id\":81,\"type\":\"float\",\"access\":\"r\",\"unit\":\"rad\"},{\"name\":\"telemetry.encoder_elec_velocity\",\"id\":82,\"type\":\"float\",\"access\":\"r\",\"unit\":\"rad/s\"},{\"name\":\"telemetry.dtc_u\",\"id\":83,\"type\":\"float\",\"access\":\"r\"},{\"name\":\"telemetry.dtc_v\",\"id\":84,\"type\":\"float\",\"access\":\"r\"},{\"name\":\"telemetry.dtc_w\",\"id\":85,\"type\":\"float\",\"access\":\"r\"},{\"name\":\"telemetry.i_mag_max\",\"id\":86,\"type\":\"float\",\"access\":\"r\",\"unit\":\"A\"},{\"name\":\"telemetry.i_scale\",\"id\":87,\"type\":\"float\",\"access\":\"r\",\"unit\":\"A/count\"},{\"name\":\"telemetry.flux_linkage\",\"id\":88,\"type\":\"float\",\"access\":\"r\",\"unit\":\"Wb\"},{\"name\":\"telemetry.ld_lq_diff\",\"id\":135,\"type\":\"f"
-"loat\",\"access\":\"r\",\"unit\":\"H\"},{\"name\":\"telemetry.v_setpoint\",\"id\":146,\"type\":\"float\",\"access\":\"r\",\"unit\":\"rad/s\"},{\"name\":\"telemetry.vel_integral\",\"id\":147,\"type\":\"float\",\"access\":\"r\",\"unit\":\"A\"},{\"name\":\"telemetry.pos_err\",\"id\":148,\"type\":\"float\",\"access\":\"r\",\"unit\":\"rad\"},{\"name\":\"telemetry.vel_err\",\"id\":149,\"type\":\"float\",\"access\":\"r\",\"unit\":\"rad/s\"},{\"name\":\"telemetry.velocity_pll\",\"id\":150,\"type\":\"float\",\"access\":\"r\",\"unit\":\"rad/s\"},{\"name\":\"telemetry.pos_error_fault_suggest\",\"id\":152,\"type\":\"float\",\"access\":\"r\",\"unit\":\"rad\"},{\"name\":\"telemetry.adc_a_offset\",\"id\":89,\"type\":\"int32\",\"access\":\"r\"},{\"name\":\"telemetry.adc_b_offset\",\"id\":90,\"type\":\"int32\",\"access\":\"r\"},{\"name\":\"telemetry.adc_c_offset\",\"id\":91,\"type\":\"int32\",\"access\":\"r\"},{\"name\":\"telemetry.adc_a_raw\",\"id\":92,\"type\":\"int32\""
-",\"access\":\"r\"},{\"name\":\"telemetry.adc_b_raw\",\"id\":93,\"type\":\"int32\",\"access\":\"r\"},{\"name\":\"telemetry.adc_c_raw\",\"id\":94,\"type\":\"int32\",\"access\":\"r\"},{\"name\":\"telemetry.observer_qd_in\",\"id\":95,\"type\":\"float\",\"access\":\"r\"},{\"name\":\"telemetry.observer_qd_out\",\"id\":96,\"type\":\"float\",\"access\":\"r\"},{\"name\":\"telemetry.observer_k\",\"id\":97,\"type\":\"float\",\"access\":\"r\"},{\"name\":\"telemetry.observer_trust\",\"id\":98,\"type\":\"float\",\"access\":\"r\"},{\"name\":\"telemetry.observer_delta_t\",\"id\":99,\"type\":\"float\",\"access\":\"r\",\"unit\":\"C\"},{\"name\":\"telemetry.inertia_state\",\"id\":155,\"type\":\"uint8\",\"access\":\"r\"},{\"name\":\"telemetry.inertia_break_current\",\"id\":156,\"type\":\"float\",\"access\":\"r\",\"unit\":\"A\"},{\"name\":\"telemetry.inertia_accel_lo\",\"id\":157,\"type\":\"float\",\"access\":\"r\",\"unit\":\"rad/s^2\"},{\"name\":\"telemetry.inertia"
-"_accel_hi\",\"id\":158,\"type\":\"float\",\"access\":\"r\",\"unit\":\"rad/s^2\"},{\"name\":\"timing.isr_period\",\"id\":100,\"type\":\"uint32\",\"access\":\"r\"},{\"name\":\"timing.count\",\"id\":101,\"type\":\"uint32\",\"access\":\"r\"},{\"name\":\"timing.overrun\",\"id\":102,\"type\":\"uint32\",\"access\":\"r\"},{\"name\":\"timing.period_last\",\"id\":103,\"type\":\"uint32\",\"access\":\"r\"},{\"name\":\"timing.period_min\",\"id\":104,\"type\":\"uint32\",\"access\":\"r\"},{\"name\":\"timing.period_max\",\"id\":105,\"type\":\"uint32\",\"access\":\"r\"},{\"name\":\"timing.total_last\",\"id\":106,\"type\":\"uint32\",\"access\":\"r\"},{\"name\":\"timing.total_min\",\"id\":107,\"type\":\"uint32\",\"access\":\"r\"},{\"name\":\"timing.total_max\",\"id\":108,\"type\":\"uint32\",\"access\":\"r\"},{\"name\":\"timing.seg_adc_max\",\"id\":109,\"type\":\"uint32\",\"access\":\"r\"},{\"name\":\"timing.seg_enc_max\",\"id\":110,\"type\":\"uint32\",\"access\":\"r\"},{\"na"
-"me\":\"timing.seg_faults_max\",\"id\":111,\"type\":\"uint32\",\"access\":\"r\"},{\"name\":\"timing.seg_fsm_max\",\"id\":112,\"type\":\"uint32\",\"access\":\"r\"},{\"name\":\"timing.seg_can_max\",\"id\":113,\"type\":\"uint32\",\"access\":\"r\"},{\"name\":\"timing.ext_enc_wait_max\",\"id\":114,\"type\":\"uint32\",\"access\":\"r\"},{\"name\":\"timing.ext_adc_wait_max\",\"id\":115,\"type\":\"uint32\",\"access\":\"r\"},{\"name\":\"system.fw_version_major\",\"id\":187,\"type\":\"uint8\",\"access\":\"r\"},{\"name\":\"system.fw_version_minor\",\"id\":188,\"type\":\"uint8\",\"access\":\"r\"},{\"name\":\"system.fw_version_revision\",\"id\":189,\"type\":\"uint8\",\"access\":\"r\"},{\"name\":\"system.fw_version_unreleased\",\"id\":194,\"type\":\"uint8\",\"access\":\"r\"},{\"name\":\"system.hw_version_major\",\"id\":190,\"type\":\"uint8\",\"access\":\"r\"},{\"name\":\"system.hw_version_minor\",\"id\":191,\"type\":\"uint8\",\"access\":\"r\"},{\"name\":\"sy"
-"stem.hw_version_variant\",\"id\":192,\"type\":\"uint8\",\"access\":\"r\"},{\"name\":\"system.serial_number\",\"id\":193,\"type\":\"uint64\",\"access\":\"r\"},{\"name\":\"system.prefs_sequence\",\"id\":69,\"type\":\"uint32\",\"access\":\"r\"},{\"name\":\"system.config_schema\",\"id\":117,\"type\":\"uint16\",\"access\":\"r\"},{\"name\":\"system.prefs_loaded\",\"id\":70,\"type\":\"bool\",\"access\":\"r\"},{\"name\":\"system.inertia_status\",\"id\":153,\"type\":\"uint8\",\"access\":\"r\"},{\"name\":\"system.save_status\",\"id\":119,\"type\":\"uint8\",\"access\":\"r\"},{\"name\":\"system.can_prot_active\",\"id\":123,\"type\":\"int32\",\"access\":\"r\"},{\"name\":\"system.can_fd\",\"id\":124,\"type\":\"bool\",\"access\":\"r\"},{\"name\":\"system.can_baud_active\",\"id\":125,\"type\":\"int32\",\"access\":\"r\",\"unit\":\"bit/s\"},{\"name\":\"action.save\",\"id\":71,\"type\":\"function\",\"access\":\"w\",\"inputs\":[],\"outputs\":[]},{\"name\":\"action.zer"
-"o\",\"id\":72,\"type\":\"function\",\"access\":\"w\",\"inputs\":[],\"outputs\":[]},{\"name\":\"action.idle_mode\",\"id\":73,\"type\":\"function\",\"access\":\"w\",\"inputs\":[],\"outputs\":[]},{\"name\":\"action.clear_fault\",\"id\":74,\"type\":\"function\",\"access\":\"w\",\"inputs\":[],\"outputs\":[]},{\"name\":\"action.motor_mode\",\"id\":75,\"type\":\"function\",\"access\":\"w\",\"inputs\":[],\"outputs\":[]},{\"name\":\"action.calibrate\",\"id\":76,\"type\":\"function\",\"access\":\"w\",\"inputs\":[],\"outputs\":[]},{\"name\":\"action.reset_config\",\"id\":126,\"type\":\"function\",\"access\":\"w\",\"inputs\":[],\"outputs\":[]},{\"name\":\"action.reboot\",\"id\":127,\"type\":\"function\",\"access\":\"w\",\"inputs\":[],\"outputs\":[]},{\"name\":\"action.enter_dfu_mode\",\"id\":180,\"type\":\"function\",\"access\":\"w\",\"inputs\":[],\"outputs\":[]},{\"name\":\"action.reset_timing\",\"id\":116,\"type\":\"function\",\"access\":\"w\",\"inputs"
-"\":[],\"outputs\":[]},{\"name\":\"action.measure_inertia\",\"id\":154,\"type\":\"function\",\"access\":\"w\",\"inputs\":[],\"outputs\":[]},{\"name\":\"action.tune_gains\",\"id\":161,\"type\":\"function\",\"access\":\"w\",\"inputs\":[],\"outputs\":[]}]";
+"\"C\",\"min\":0.0,\"max\":200.0,\"persist\":true},{\"name\":\"config.pre_calibrated\",\"id\":173,\"type\":\"bool\",\"access\":\"rw\",\"persist\":true},{\"name\":\"config.gear_teeth_first\",\"id\":195,\"type\":\"int32\",\"access\":\"rw\",\"min\":1,\"max\":400,\"persist\":true},{\"name\":\"config.gear_teeth_sec\",\"id\":196,\"type\":\"int32\",\"access\":\"rw\",\"min\":1,\"max\":400,\"persist\":true},{\"name\":\"config.gear_sec_reversed\",\"id\":208,\"type\":\"bool\",\"access\":\"rw\",\"persist\":true},{\"name\":\"config.gear_zero_phase\",\"id\":198,\"type\":\"float\",\"access\":\"rw\",\"min\":0.0,\"max\":1.0,\"persist\":true},{\"name\":\"config.gear_zero_count\",\"id\":199,\"type\":\"int32\",\"access\":\"rw\",\"persist\":true},{\"name\":\"config.gear_ref_valid\",\"id\":200,\"type\":\"bool\",\"access\":\"rw\",\"persist\":true},{\"name\":\"command.t_ff\",\"id\":128,\"type\":\"float\",\"access\":\"rw\",\"unit\":\"N-m\"},{\"name\":\"command.p_de"
+"s\",\"id\":129,\"type\":\"float\",\"access\":\"rw\",\"unit\":\"rad\"},{\"name\":\"command.v_des\",\"id\":130,\"type\":\"float\",\"access\":\"rw\",\"unit\":\"rad/s\",\"min\":-200.0,\"max\":200.0},{\"name\":\"command.kp\",\"id\":131,\"type\":\"float\",\"access\":\"rw\"},{\"name\":\"command.kd\",\"id\":132,\"type\":\"float\",\"access\":\"rw\"},{\"name\":\"command.mode\",\"id\":145,\"type\":\"int32\",\"access\":\"rw\",\"min\":0,\"max\":2},{\"name\":\"telemetry.v_bus\",\"id\":28,\"type\":\"float\",\"access\":\"r\",\"unit\":\"V\"},{\"name\":\"telemetry.v_bus_raw\",\"id\":29,\"type\":\"float\",\"access\":\"r\",\"unit\":\"V\"},{\"name\":\"telemetry.i_a\",\"id\":30,\"type\":\"float\",\"access\":\"r\",\"unit\":\"A\"},{\"name\":\"telemetry.i_b\",\"id\":31,\"type\":\"float\",\"access\":\"r\",\"unit\":\"A\"},{\"name\":\"telemetry.i_c\",\"id\":32,\"type\":\"float\",\"access\":\"r\",\"unit\":\"A\"},{\"name\":\"telemetry.i_d\",\"id\":33,\"type\":\"float\",\"access\":\"r\",\"unit\":\"A\"},{\"na"
+"me\":\"telemetry.i_q\",\"id\":34,\"type\":\"float\",\"access\":\"r\",\"unit\":\"A\"},{\"name\":\"telemetry.i_d_filt\",\"id\":35,\"type\":\"float\",\"access\":\"r\",\"unit\":\"A\"},{\"name\":\"telemetry.i_q_filt\",\"id\":36,\"type\":\"float\",\"access\":\"r\",\"unit\":\"A\"},{\"name\":\"telemetry.v_d\",\"id\":37,\"type\":\"float\",\"access\":\"r\",\"unit\":\"V\"},{\"name\":\"telemetry.v_q\",\"id\":38,\"type\":\"float\",\"access\":\"r\",\"unit\":\"V\"},{\"name\":\"telemetry.theta_mech\",\"id\":39,\"type\":\"float\",\"access\":\"r\",\"unit\":\"rad\"},{\"name\":\"telemetry.theta_elec\",\"id\":40,\"type\":\"float\",\"access\":\"r\",\"unit\":\"rad\"},{\"name\":\"telemetry.dtheta_mech\",\"id\":41,\"type\":\"float\",\"access\":\"r\",\"unit\":\"rad/s\"},{\"name\":\"telemetry.dtheta_elec\",\"id\":42,\"type\":\"float\",\"access\":\"r\",\"unit\":\"rad/s\"},{\"name\":\"telemetry.position\",\"id\":43,\"type\":\"float\",\"access\":\"r\",\"unit\":\"rad\"},{\"name\":\"telemetry.positi"
+"on_motor\",\"id\":44,\"type\":\"float\",\"access\":\"r\",\"unit\":\"rad\"},{\"name\":\"telemetry.velocity\",\"id\":45,\"type\":\"float\",\"access\":\"r\",\"unit\":\"rad/s\"},{\"name\":\"telemetry.velocity_motor\",\"id\":46,\"type\":\"float\",\"access\":\"r\",\"unit\":\"rad/s\"},{\"name\":\"telemetry.count\",\"id\":47,\"type\":\"int32\",\"access\":\"r\"},{\"name\":\"telemetry.torque\",\"id\":48,\"type\":\"float\",\"access\":\"r\",\"unit\":\"N-m\"},{\"name\":\"telemetry.p_des\",\"id\":49,\"type\":\"float\",\"access\":\"r\",\"unit\":\"rad\"},{\"name\":\"telemetry.v_des\",\"id\":50,\"type\":\"float\",\"access\":\"r\",\"unit\":\"rad/s\"},{\"name\":\"telemetry.kp\",\"id\":51,\"type\":\"float\",\"access\":\"r\"},{\"name\":\"telemetry.kd\",\"id\":52,\"type\":\"float\",\"access\":\"r\"},{\"name\":\"telemetry.t_ff\",\"id\":53,\"type\":\"float\",\"access\":\"r\",\"unit\":\"N-m\"},{\"name\":\"telemetry.i_q_des\",\"id\":54,\"type\":\"float\",\"access\":\"r\",\"unit\":\"A\"},{\"name\""
+":\"telemetry.fw_int\",\"id\":55,\"type\":\"float\",\"access\":\"r\",\"unit\":\"A\"},{\"name\":\"telemetry.fault\",\"id\":56,\"type\":\"uint32\",\"access\":\"r\"},{\"name\":\"telemetry.gate_drive\",\"id\":57,\"type\":\"bool\",\"access\":\"r\"},{\"name\":\"telemetry.mode\",\"id\":58,\"type\":\"uint8\",\"access\":\"r\"},{\"name\":\"telemetry.loop_count\",\"id\":59,\"type\":\"uint32\",\"access\":\"r\"},{\"name\":\"telemetry.can_timeout_count\",\"id\":60,\"type\":\"int32\",\"access\":\"r\"},{\"name\":\"telemetry.temperature\",\"id\":61,\"type\":\"float\",\"access\":\"r\",\"unit\":\"C\"},{\"name\":\"telemetry.mos_temp\",\"id\":174,\"type\":\"float\",\"access\":\"r\",\"unit\":\"C\"},{\"name\":\"telemetry.mot_temp\",\"id\":175,\"type\":\"float\",\"access\":\"r\",\"unit\":\"C\"},{\"name\":\"telemetry.i_bus\",\"id\":176,\"type\":\"float\",\"access\":\"r\",\"unit\":\"A\"},{\"name\":\"telemetry.i_d_des\",\"id\":177,\"type\":\"float\",\"access\":\"r\",\"unit\":\"A\"},{\"name\""
+":\"telemetry.mechanical_power\",\"id\":178,\"type\":\"float\",\"access\":\"r\",\"unit\":\"W\"},{\"name\":\"telemetry.sensor_mode\",\"id\":179,\"type\":\"uint8\",\"access\":\"r\"},{\"name\":\"telemetry.resistance\",\"id\":62,\"type\":\"float\",\"access\":\"r\",\"unit\":\"Ohm\"},{\"name\":\"telemetry.can_tec\",\"id\":63,\"type\":\"uint8\",\"access\":\"r\"},{\"name\":\"telemetry.can_rec\",\"id\":64,\"type\":\"uint8\",\"access\":\"r\"},{\"name\":\"telemetry.can_lec\",\"id\":65,\"type\":\"uint8\",\"access\":\"r\"},{\"name\":\"telemetry.encoder_ppairs\",\"id\":66,\"type\":\"float\",\"access\":\"r\"},{\"name\":\"telemetry.encoder_lost_frames\",\"id\":67,\"type\":\"int32\",\"access\":\"r\"},{\"name\":\"telemetry.sec_enc_raw\",\"id\":201,\"type\":\"int32\",\"access\":\"r\"},{\"name\":\"telemetry.sec_enc_present\",\"id\":209,\"type\":\"bool\",\"access\":\"r\"},{\"name\":\"telemetry.sec_enc_phase\",\"id\":202,\"type\":\"float\",\"access\":\"r\"},{\"name\":\"te"
+"lemetry.sec_enc_lost_frames\",\"id\":203,\"type\":\"int32\",\"access\":\"r\"},{\"name\":\"telemetry.gear_abs_turns\",\"id\":204,\"type\":\"float\",\"access\":\"r\",\"unit\":\"turn\"},{\"name\":\"telemetry.encoder_raw\",\"id\":79,\"type\":\"int32\",\"access\":\"r\"},{\"name\":\"telemetry.encoder_turns\",\"id\":80,\"type\":\"int32\",\"access\":\"r\"},{\"name\":\"telemetry.encoder_elec_angle\",\"id\":81,\"type\":\"float\",\"access\":\"r\",\"unit\":\"rad\"},{\"name\":\"telemetry.encoder_elec_velocity\",\"id\":82,\"type\":\"float\",\"access\":\"r\",\"unit\":\"rad/s\"},{\"name\":\"telemetry.dtc_u\",\"id\":83,\"type\":\"float\",\"access\":\"r\"},{\"name\":\"telemetry.dtc_v\",\"id\":84,\"type\":\"float\",\"access\":\"r\"},{\"name\":\"telemetry.dtc_w\",\"id\":85,\"type\":\"float\",\"access\":\"r\"},{\"name\":\"telemetry.i_mag_max\",\"id\":86,\"type\":\"float\",\"access\":\"r\",\"unit\":\"A\"},{\"name\":\"telemetry.i_scale\",\"id\":87,\"type\":\"float\",\"acce"
+"ss\":\"r\",\"unit\":\"A/count\"},{\"name\":\"telemetry.flux_linkage\",\"id\":88,\"type\":\"float\",\"access\":\"r\",\"unit\":\"Wb\"},{\"name\":\"telemetry.ld_lq_diff\",\"id\":135,\"type\":\"float\",\"access\":\"r\",\"unit\":\"H\"},{\"name\":\"telemetry.v_setpoint\",\"id\":146,\"type\":\"float\",\"access\":\"r\",\"unit\":\"rad/s\"},{\"name\":\"telemetry.vel_integral\",\"id\":147,\"type\":\"float\",\"access\":\"r\",\"unit\":\"A\"},{\"name\":\"telemetry.pos_err\",\"id\":148,\"type\":\"float\",\"access\":\"r\",\"unit\":\"rad\"},{\"name\":\"telemetry.vel_err\",\"id\":149,\"type\":\"float\",\"access\":\"r\",\"unit\":\"rad/s\"},{\"name\":\"telemetry.velocity_pll\",\"id\":150,\"type\":\"float\",\"access\":\"r\",\"unit\":\"rad/s\"},{\"name\":\"telemetry.pos_error_fault_suggest\",\"id\":152,\"type\":\"float\",\"access\":\"r\",\"unit\":\"rad\"},{\"name\":\"telemetry.adc_a_offset\",\"id\":89,\"type\":\"int32\",\"access\":\"r\"},{\"name\":\"telemetry.adc_b_offset\",\"i"
+"d\":90,\"type\":\"int32\",\"access\":\"r\"},{\"name\":\"telemetry.adc_c_offset\",\"id\":91,\"type\":\"int32\",\"access\":\"r\"},{\"name\":\"telemetry.adc_a_raw\",\"id\":92,\"type\":\"int32\",\"access\":\"r\"},{\"name\":\"telemetry.adc_b_raw\",\"id\":93,\"type\":\"int32\",\"access\":\"r\"},{\"name\":\"telemetry.adc_c_raw\",\"id\":94,\"type\":\"int32\",\"access\":\"r\"},{\"name\":\"telemetry.observer_qd_in\",\"id\":95,\"type\":\"float\",\"access\":\"r\"},{\"name\":\"telemetry.observer_qd_out\",\"id\":96,\"type\":\"float\",\"access\":\"r\"},{\"name\":\"telemetry.observer_k\",\"id\":97,\"type\":\"float\",\"access\":\"r\"},{\"name\":\"telemetry.observer_trust\",\"id\":98,\"type\":\"float\",\"access\":\"r\"},{\"name\":\"telemetry.observer_delta_t\",\"id\":99,\"type\":\"float\",\"access\":\"r\",\"unit\":\"C\"},{\"name\":\"telemetry.inertia_state\",\"id\":155,\"type\":\"uint8\",\"access\":\"r\"},{\"name\":\"telemetry.inertia_break_current\",\"id\":156,\""
+"type\":\"float\",\"access\":\"r\",\"unit\":\"A\"},{\"name\":\"telemetry.inertia_accel_lo\",\"id\":157,\"type\":\"float\",\"access\":\"r\",\"unit\":\"rad/s^2\"},{\"name\":\"telemetry.inertia_accel_hi\",\"id\":158,\"type\":\"float\",\"access\":\"r\",\"unit\":\"rad/s^2\"},{\"name\":\"timing.isr_period\",\"id\":100,\"type\":\"uint32\",\"access\":\"r\"},{\"name\":\"timing.count\",\"id\":101,\"type\":\"uint32\",\"access\":\"r\"},{\"name\":\"timing.overrun\",\"id\":102,\"type\":\"uint32\",\"access\":\"r\"},{\"name\":\"timing.period_last\",\"id\":103,\"type\":\"uint32\",\"access\":\"r\"},{\"name\":\"timing.period_min\",\"id\":104,\"type\":\"uint32\",\"access\":\"r\"},{\"name\":\"timing.period_max\",\"id\":105,\"type\":\"uint32\",\"access\":\"r\"},{\"name\":\"timing.total_last\",\"id\":106,\"type\":\"uint32\",\"access\":\"r\"},{\"name\":\"timing.total_min\",\"id\":107,\"type\":\"uint32\",\"access\":\"r\"},{\"name\":\"timing.total_max\",\"id\":108,\"type\":\"uint3"
+"2\",\"access\":\"r\"},{\"name\":\"timing.seg_adc_max\",\"id\":109,\"type\":\"uint32\",\"access\":\"r\"},{\"name\":\"timing.seg_enc_max\",\"id\":110,\"type\":\"uint32\",\"access\":\"r\"},{\"name\":\"timing.seg_faults_max\",\"id\":111,\"type\":\"uint32\",\"access\":\"r\"},{\"name\":\"timing.seg_fsm_max\",\"id\":112,\"type\":\"uint32\",\"access\":\"r\"},{\"name\":\"timing.seg_can_max\",\"id\":113,\"type\":\"uint32\",\"access\":\"r\"},{\"name\":\"timing.ext_enc_wait_max\",\"id\":114,\"type\":\"uint32\",\"access\":\"r\"},{\"name\":\"timing.ext_adc_wait_max\",\"id\":115,\"type\":\"uint32\",\"access\":\"r\"},{\"name\":\"system.fw_version_major\",\"id\":187,\"type\":\"uint8\",\"access\":\"r\"},{\"name\":\"system.fw_version_minor\",\"id\":188,\"type\":\"uint8\",\"access\":\"r\"},{\"name\":\"system.fw_version_revision\",\"id\":189,\"type\":\"uint8\",\"access\":\"r\"},{\"name\":\"system.fw_version_unreleased\",\"id\":194,\"type\":\"uint8\",\"access\":\"r\""
+"},{\"name\":\"system.hw_version_major\",\"id\":190,\"type\":\"uint8\",\"access\":\"r\"},{\"name\":\"system.hw_version_minor\",\"id\":191,\"type\":\"uint8\",\"access\":\"r\"},{\"name\":\"system.hw_version_variant\",\"id\":192,\"type\":\"uint8\",\"access\":\"r\"},{\"name\":\"system.serial_number\",\"id\":193,\"type\":\"uint64\",\"access\":\"r\"},{\"name\":\"system.prefs_sequence\",\"id\":69,\"type\":\"uint32\",\"access\":\"r\"},{\"name\":\"system.config_schema\",\"id\":117,\"type\":\"uint16\",\"access\":\"r\"},{\"name\":\"system.prefs_loaded\",\"id\":70,\"type\":\"bool\",\"access\":\"r\"},{\"name\":\"system.inertia_status\",\"id\":153,\"type\":\"uint8\",\"access\":\"r\"},{\"name\":\"system.save_status\",\"id\":119,\"type\":\"uint8\",\"access\":\"r\"},{\"name\":\"system.gear_status\",\"id\":205,\"type\":\"int8\",\"access\":\"r\"},{\"name\":\"system.can_prot_active\",\"id\":123,\"type\":\"int32\",\"access\":\"r\"},{\"name\":\"system.can_fd\",\"id\":1"
+"24,\"type\":\"bool\",\"access\":\"r\"},{\"name\":\"system.can_baud_active\",\"id\":125,\"type\":\"int32\",\"access\":\"r\",\"unit\":\"bit/s\"},{\"name\":\"action.save\",\"id\":71,\"type\":\"function\",\"access\":\"w\",\"inputs\":[],\"outputs\":[]},{\"name\":\"action.zero\",\"id\":72,\"type\":\"function\",\"access\":\"w\",\"inputs\":[],\"outputs\":[]},{\"name\":\"action.gear_capture\",\"id\":206,\"type\":\"function\",\"access\":\"w\",\"inputs\":[],\"outputs\":[]},{\"name\":\"action.gear_read\",\"id\":207,\"type\":\"function\",\"access\":\"w\",\"inputs\":[],\"outputs\":[]},{\"name\":\"action.idle_mode\",\"id\":73,\"type\":\"function\",\"access\":\"w\",\"inputs\":[],\"outputs\":[]},{\"name\":\"action.clear_fault\",\"id\":74,\"type\":\"function\",\"access\":\"w\",\"inputs\":[],\"outputs\":[]},{\"name\":\"action.motor_mode\",\"id\":75,\"type\":\"function\",\"access\":\"w\",\"inputs\":[],\"outputs\":[]},{\"name\":\"action.calibrate\",\"id\":76,\"type\""
+":\"function\",\"access\":\"w\",\"inputs\":[],\"outputs\":[]},{\"name\":\"action.reset_config\",\"id\":126,\"type\":\"function\",\"access\":\"w\",\"inputs\":[],\"outputs\":[]},{\"name\":\"action.reboot\",\"id\":127,\"type\":\"function\",\"access\":\"w\",\"inputs\":[],\"outputs\":[]},{\"name\":\"action.enter_dfu_mode\",\"id\":180,\"type\":\"function\",\"access\":\"w\",\"inputs\":[],\"outputs\":[]},{\"name\":\"action.reset_timing\",\"id\":116,\"type\":\"function\",\"access\":\"w\",\"inputs\":[],\"outputs\":[]},{\"name\":\"action.measure_inertia\",\"id\":154,\"type\":\"function\",\"access\":\"w\",\"inputs\":[],\"outputs\":[]},{\"name\":\"action.tune_gains\",\"id\":161,\"type\":\"function\",\"access\":\"w\",\"inputs\":[],\"outputs\":[]}]";
 const uint16_t endpoint_json_len = sizeof(endpoint_json) - 1;
-const uint16_t endpoint_json_crc = 0x52D2;
+const uint16_t endpoint_json_crc = 0xF877;
 
 ep_status_t endpoint_handler(uint16_t id, ep_op_t op, ep_cbuf_t *in, ep_buf_t *out){
 	switch(id){
@@ -621,7 +622,7 @@ ep_status_t endpoint_handler(uint16_t id, ep_op_t op, ep_cbuf_t *in, ep_buf_t *o
 				if(controller.gate_drive_enabled){return EP_ERR_STATE;}
 				int32_t v;
 				if(!ep_get_i32(in, &v)){return EP_ERR_BAD_LEN;}
-				M_ZERO = v; comm_encoder.m_zero = v;
+				ps_set_m_zero((int32_t)v);
 			}
 			if(in->begin != in->end){return EP_ERR_BAD_LEN;}
 			if(!ep_put_i32(out, (int32_t)(M_ZERO))){return EP_ERR_BAD_LEN;}
@@ -766,6 +767,78 @@ ep_status_t endpoint_handler(uint16_t id, ep_op_t op, ep_cbuf_t *in, ep_buf_t *o
 			}
 			if(in->begin != in->end){return EP_ERR_BAD_LEN;}
 			if(!ep_put_u8(out, (uint8_t)(PRE_CALIBRATED))){return EP_ERR_BAD_LEN;}
+			return EP_OK;
+		}
+		case EP_CONFIG_GEAR_TEETH_FIRST: {
+			if(op == EP_OP_WRITE){
+				if(controller.gate_drive_enabled){return EP_ERR_STATE;}
+				int32_t v;
+				if(!ep_get_i32(in, &v)){return EP_ERR_BAD_LEN;}
+				v = (int32_t)ep_clampi(v, 1, 400);
+				GEAR_TEETH_FIRST = v;
+			}
+			if(in->begin != in->end){return EP_ERR_BAD_LEN;}
+			if(!ep_put_i32(out, (int32_t)(GEAR_TEETH_FIRST))){return EP_ERR_BAD_LEN;}
+			return EP_OK;
+		}
+		case EP_CONFIG_GEAR_TEETH_SEC: {
+			if(op == EP_OP_WRITE){
+				if(controller.gate_drive_enabled){return EP_ERR_STATE;}
+				int32_t v;
+				if(!ep_get_i32(in, &v)){return EP_ERR_BAD_LEN;}
+				v = (int32_t)ep_clampi(v, 1, 400);
+				GEAR_TEETH_SEC = v;
+			}
+			if(in->begin != in->end){return EP_ERR_BAD_LEN;}
+			if(!ep_put_i32(out, (int32_t)(GEAR_TEETH_SEC))){return EP_ERR_BAD_LEN;}
+			return EP_OK;
+		}
+		case EP_CONFIG_GEAR_SEC_REVERSED: {
+			if(op == EP_OP_WRITE){
+				if(controller.gate_drive_enabled){return EP_ERR_STATE;}
+				uint8_t v;
+				if(!ep_get_u8(in, &v)){return EP_ERR_BAD_LEN;}
+				if(v > 1){v = 1;}
+				GEAR_SEC_REVERSED = v;
+			}
+			if(in->begin != in->end){return EP_ERR_BAD_LEN;}
+			if(!ep_put_u8(out, (uint8_t)(GEAR_SEC_REVERSED))){return EP_ERR_BAD_LEN;}
+			return EP_OK;
+		}
+		case EP_CONFIG_GEAR_ZERO_PHASE: {
+			if(op == EP_OP_WRITE){
+				if(controller.gate_drive_enabled){return EP_ERR_STATE;}
+				float v;
+				if(!ep_get_f32(in, &v)){return EP_ERR_BAD_LEN;}
+				if(!isfinite(v)){return EP_ERR_BAD_VALUE;}
+				v = ep_clampf(v, 0.0, 1.0);
+				GEAR_ZERO_PHASE = v;
+			}
+			if(in->begin != in->end){return EP_ERR_BAD_LEN;}
+			if(!ep_put_f32(out, (float)(GEAR_ZERO_PHASE))){return EP_ERR_BAD_LEN;}
+			return EP_OK;
+		}
+		case EP_CONFIG_GEAR_ZERO_COUNT: {
+			if(op == EP_OP_WRITE){
+				if(controller.gate_drive_enabled){return EP_ERR_STATE;}
+				int32_t v;
+				if(!ep_get_i32(in, &v)){return EP_ERR_BAD_LEN;}
+				GEAR_ZERO_COUNT = v;
+			}
+			if(in->begin != in->end){return EP_ERR_BAD_LEN;}
+			if(!ep_put_i32(out, (int32_t)(GEAR_ZERO_COUNT))){return EP_ERR_BAD_LEN;}
+			return EP_OK;
+		}
+		case EP_CONFIG_GEAR_REF_VALID: {
+			if(op == EP_OP_WRITE){
+				if(controller.gate_drive_enabled){return EP_ERR_STATE;}
+				uint8_t v;
+				if(!ep_get_u8(in, &v)){return EP_ERR_BAD_LEN;}
+				if(v > 1){v = 1;}
+				GEAR_REF_VALID = v;
+			}
+			if(in->begin != in->end){return EP_ERR_BAD_LEN;}
+			if(!ep_put_u8(out, (uint8_t)(GEAR_REF_VALID))){return EP_ERR_BAD_LEN;}
 			return EP_OK;
 		}
 		case EP_COMMAND_T_FF: {
@@ -1067,6 +1140,31 @@ ep_status_t endpoint_handler(uint16_t id, ep_op_t op, ep_cbuf_t *in, ep_buf_t *o
 		case EP_TELEMETRY_ENCODER_LOST_FRAMES: {
 			if(op != EP_OP_READ){return EP_ERR_READ_ONLY;}
 			if(!ep_put_i32(out, (int32_t)(comm_encoder.lost_frames))){return EP_ERR_BAD_LEN;}
+			return EP_OK;
+		}
+		case EP_TELEMETRY_SEC_ENC_RAW: {
+			if(op != EP_OP_READ){return EP_ERR_READ_ONLY;}
+			if(!ep_put_i32(out, (int32_t)(sec_encoder.raw))){return EP_ERR_BAD_LEN;}
+			return EP_OK;
+		}
+		case EP_TELEMETRY_SEC_ENC_PRESENT: {
+			if(op != EP_OP_READ){return EP_ERR_READ_ONLY;}
+			if(!ep_put_u8(out, (uint8_t)(sec_encoder.present))){return EP_ERR_BAD_LEN;}
+			return EP_OK;
+		}
+		case EP_TELEMETRY_SEC_ENC_PHASE: {
+			if(op != EP_OP_READ){return EP_ERR_READ_ONLY;}
+			if(!ep_put_f32(out, (float)(sec_encoder.phase))){return EP_ERR_BAD_LEN;}
+			return EP_OK;
+		}
+		case EP_TELEMETRY_SEC_ENC_LOST_FRAMES: {
+			if(op != EP_OP_READ){return EP_ERR_READ_ONLY;}
+			if(!ep_put_i32(out, (int32_t)(sec_encoder.lost_frames))){return EP_ERR_BAD_LEN;}
+			return EP_OK;
+		}
+		case EP_TELEMETRY_GEAR_ABS_TURNS: {
+			if(op != EP_OP_READ){return EP_ERR_READ_ONLY;}
+			if(!ep_put_f32(out, (float)(sec_encoder.abs_turns))){return EP_ERR_BAD_LEN;}
 			return EP_OK;
 		}
 		case EP_TELEMETRY_ENCODER_RAW: {
@@ -1374,6 +1472,11 @@ ep_status_t endpoint_handler(uint16_t id, ep_op_t op, ep_cbuf_t *in, ep_buf_t *o
 			if(!ep_put_u8(out, (uint8_t)(state.save_status))){return EP_ERR_BAD_LEN;}
 			return EP_OK;
 		}
+		case EP_SYSTEM_GEAR_STATUS: {
+			if(op != EP_OP_READ){return EP_ERR_READ_ONLY;}
+			if(!ep_put_i8(out, (int8_t)(state.gear_status))){return EP_ERR_BAD_LEN;}
+			return EP_OK;
+		}
 		case EP_SYSTEM_CAN_PROT_ACTIVE: {
 			if(op != EP_OP_READ){return EP_ERR_READ_ONLY;}
 			if(!ep_put_i32(out, (int32_t)(can_active_prot()))){return EP_ERR_BAD_LEN;}
@@ -1399,6 +1502,18 @@ ep_status_t endpoint_handler(uint16_t id, ep_op_t op, ep_cbuf_t *in, ep_buf_t *o
 			if(op != EP_OP_WRITE){return EP_ERR_WRITE_ONLY;}
 			if(!(state.state == MENU_MODE)){return EP_ERR_STATE;}
 			state.zero_pending = 1;
+			return EP_OK;
+		}
+		case EP_ACTION_GEAR_CAPTURE: {
+			if(op != EP_OP_WRITE){return EP_ERR_WRITE_ONLY;}
+			if(controller.gate_drive_enabled){return EP_ERR_STATE;}
+			state.gear_status = 0; state.gear_capture_pending = 1;
+			return EP_OK;
+		}
+		case EP_ACTION_GEAR_READ: {
+			if(op != EP_OP_WRITE){return EP_ERR_WRITE_ONLY;}
+			if(controller.gate_drive_enabled){return EP_ERR_STATE;}
+			state.gear_status = 0; state.gear_read_pending = 1;
 			return EP_OK;
 		}
 		case EP_ACTION_IDLE_MODE: {

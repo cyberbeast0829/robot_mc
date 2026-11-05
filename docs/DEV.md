@@ -130,6 +130,138 @@ ADC，采样点在 PWM 峰值、低侧采样窗口内。
 - 只能在门极关闭时写（`require: "!controller.gate_drive_enabled"`），避免运行中把
   自己和自己的标定数据"注销"。
 
+## 齿轮式双编（断电记忆输出轴位置）
+
+单圈绝对编码器只知道"转到单圈内的哪个角度"，转了第几圈只能靠 flash 记。齿轮式双编
+在转子齿轮旁再啮合一个齿数不同的齿轮、装第二颗绝对编码器，**两路单圈读数合起来就能
+解出转子在第几圈** —— 于是断电再上电，输出轴位置（`telemetry.position`）直接
+接上，不需要"回零"动作。
+
+- 数学在 [`Core/Inc/dual_gear.h`](../Core/Inc/dual_gear.h)（纯函数、不含固件头文件），
+  硬件侧在 [`Core/Src/position_sensor.c`](../Core/Src/position_sensor.c) 的
+  `ps_sec_read()` / `ps_dual_gear_*()`。host 回归：`tools/test_dual_gear.c`
+  （`make hosttest`），覆盖 k = ±1、k = 3、读数反向（镜像）、±2 count 噪声、窗口边缘。
+- **原理**：设转子（相对某参考）转过的圈数为 θ，两路单圈归一化读数
+  `f = frac(θ + φf)`、`s = frac(θ·T1/T2 + φs)`，则韦尼尔相位
+  `Δ = (s − f) mod 1 = frac(k·θ/T2 + const)`，`k = T1 − T2`。Δ 每转子一圈只变化
+  `|k|/T2`，所以**两次读数的 Δ 之差**给出转过的整圈数；单圈内的小数部分仍然用
+  主编码器自己的计数（那一路是精确的，韦尼尔只负责"第几圈"，两者的误差量级差
+  三个数量级）。
+- **读数方向**：如果副编码器读数随正转变小（磁铁反装，或外啮合让副轴反转），
+  Δ 对 θ 的斜率会变成 `−(T1+T2)/T2`（每转一圈相位跑两圈多），无歧义窗口缩到
+  ±T2/(2(T1+T2))（34/33 只有 ±0.25 圈，等于没用）。此时要置
+  `config.gear_sec_reversed = true`：固件先做 `SEC_ENC_CPR − raw` 镜像
+  （ODrive `abs_spi_sec_enc_cb()` 里的同一件事），镜向后斜率回到 `+T1/T2`，
+  窗口恢复 ±T2/2 —— 这比"把方向解释成 k = T1+T2"正确得多。
+- **量程/约束**：无歧义窗口是 **±T2/(2|T1−T2|) 转子圈**（相位斜率 `k/T2` 的倒数
+  的一半），断电期间转子移动超过它就差整整一个相位周期 `T2/|T1−T2|`。所以齿数要
+  接近但不等：34/33 给 ±16.5 圈，本机（MZW55，30/27）只给 ±4.5 圈。
+  `gcd(|k|, T2)` 是否等于 1 **不影响**本模块的"最近候选"解码（那是 ODrive 查表法
+  才需要的），齿数成比例（10/9 = 20/18 = 30/27）行为完全相同 —— 现场直接填真实的
+  物理齿数即可。
+  **这个窗口就是断电记忆的量程**：本机 GR = 9，±4.5 转子圈 = **±0.5 输出圈**（±π）。
+  超过就会差整整一个相位周期（30/27 时是 9 转子圈 = 1 输出圈），和 ODrive 分支里
+  "停机点 |R − Z0| < GR/2"的机械假设是同一件事，不是 bug（台架实测：把轴挪到
+  +7.4 转子圈再重启，正好差 −9.0004 圈）。
+- **标定不需要转电机**（ODrive 59e2ad0dc 的做法）：Δ 的绝对值里含一个与安装位置
+  有关的常数，单次读数解不出绝对圈数，所以把"当前这一刻"整体定义成参考：
+  `config.gear_zero_phase` = 当时的 Δ，`config.gear_zero_count` =
+  `turns·ENC_CPR + count_wrapped`，`config.gear_ref_valid = 1`。上电时算的是
+  **相对参考的圈数差**，常数项自动消掉。
+  - **标定开始时就探测副编码器**（`run_fsm_slow()` 的 `CALIBRATION_MODE` 分支，
+    只做一次）：`ps_sec_probe()` 连读两帧，两帧都有效才算在线，然后打印
+    "GEAR: second encoder found (raw …, teeth …)" 或 "no second encoder …" ——
+    用户在校准跑起来的头一刻就知道位置记忆这次会不会生效。探测会挡住控制中断
+    （在线约 4 µs；没插时两帧各等到上限，最坏约 2×16 µs），发生在标定最开头的
+    开环慢速段，最多推迟一个控制周期，无影响（菜单 'c' 走的是 USART 中断，
+    不在这里读 SPI，探测统一放在主循环）。
+  - **标定收尾顺带 capture**（`run_fsm_slow()` 的标定收尾块，转子静止、门极已关），
+    结果和标定数据一起存盘。capture 失败时**保留旧参考**（参考是相位+计数成对的，
+    只要主编码器多圈计数没断，旧参考就一直有效），并打印原因。
+  - 想单独重取就调 `action.gear_capture` + `action.save`；更换齿轮/编码器安装位置后
+    必须重新 capture，否则参考不再对应。
+  - **台架实测（2026-11-05，CBL89 + Keil 镜像）**：本机（MZW55）副编码器实测传动比
+    `r = d(s)/d(θ) = -1.1111`（副轴反向），即 **T1/T2 = 30/27 且 `gear_sec_reversed = true`**
+    （30/27 与 10/9 同比值，现场按真实齿数填）；GR = 9，量程 ±4.5 转子圈 = ±0.5 输出圈。
+    13 个位置（转子 −4.30…+4.30 圈）上解码与固件多圈之差 ≤ 0.0002 圈（≈10 count，
+    就是编码器抖动），相对第一点的累计偏差 ≤ 0.00027 圈；5 个位置的断电重启偏差
+    ≤ 0.0006 圈。验收判据照这个来：**差值必须是"几十分之一 count 级"的抖动，任何
+    整圈级偏差都是齿数/方向配错或超出窗口**。
+  - ⚠ **GR 修正后增益要重算**：上面的 `vel_gain 2.469` / `pos_gain 15` 是在
+    GR = 7.75 的配置下整定的，而实际 GR = 9 —— 同一条 MIT 律里
+    `i_q = torque_des/(KT·GR)`，所以同样的增益现在会少 7.75/9 ≈ 14% 的电流，
+    环路变软。要么把增益乘 9/7.75 ≈ 1.16，要么按 `action.tune_gains` 重新整定。
+- **上电恢复**（`ps_dual_gear_restore()`，`main()` 里、`TIM_ConfigInt(...ENABLE)`
+  之前调用）：读副编码器 → 按参考解出整圈数 → 置 `abs_turns_valid`，由**下一帧**
+  `ps_finish_sample()` 覆盖 `turns` 并填满速度历史（直接在主循环里改 `turns` 会被
+  第一帧的 `first_sample` 逻辑清零，还会留下一个假速度尖峰）。`gear_ref_valid = 0`
+  （默认、恢复默认值、没做过 capture 的板子）时这一步什么都不做，行为与改动前一致
+  —— 出厂默认 `gear_ref_valid = false`，必须跑一次标定或 `action.gear_capture` 才启用。
+- **副编码器的 SPI**：与主编码器同一颗 KTH7823、同一个 SPI1 + DMA2，只有 NSS
+  （`SEC_ENC_SPI_NSS` = PD1）独立。它**不进 40 kHz 中断**（上电 / 标定入口 / 标定收尾 /
+  诊断各一次就够），读的时候 `NVIC_DisableIRQ(PWM_ISR)` 挡住控制中断（只关 ATIM1，
+  USB/串口照常），一帧 2.13 µs + `PS_WAIT_ITERS` 有界等待，读不到只累加
+  `telemetry.sec_enc_lost_frames`，不会卡死启动。`0x0000`/`0xFFFF` 视为"没有芯片
+  应答"，`ps_sec_probe()` 连读两帧才判在线，结果在 `telemetry.sec_enc_present`。
+- **和机械零点的耦合**：`count_wrapped = (count − M_ZERO) mod CPR` 既定义了主编码器
+  单圈零点，也是参考里 `count_wrapped` 的坐标系。所以改 `M_ZERO` 必须走
+  `ps_set_m_zero()`（`action.zero` 与 `config.m_zero` 的写入口都走它）：
+  - 它把 `turns`、`count_wrapped` 一起换成新坐标（当前位姿 = `(count − v) mod CPR`），
+    所以 `action.zero` 之后 `telemetry.position` **读到 0**。只改 `M_ZERO` 不清 `turns`
+    会让读数留在整圈上（台架旧行为：+1.43 转处清零读到 +1.00 转），用户没法分辨是
+    "清零没生效"还是"位置本来就那样"。
+  - `old_angle` 同步成新角度，否则下一帧的 rollover 检测会把这次跳变当成转子转了
+    一整圈（又差一圈）。整段关控制中断，`count_buff` + PLL 重新播种（速度不从跳变里算）。
+  - 参考按"新坐标位置 − 旧坐标位置"平移；**`v` 等于当前计数时（即 `action.zero`）
+    还会顺手 `ps_dual_gear_capture()` 一次** —— 记忆窗口以参考位姿为中心，原点挪了
+    参考不跟着挪就会偏（台架：清零时参考偏 1.7 圈，另一侧只剩 2.8 圈可用）。重取
+    失败（副编没插/齿数非法）保留平移过的旧参考，仍然一致。
+  - `config.m_zero` 写成别的值时只做坐标平移、不重取（那时零点不是当前位姿）。
+  - `action.zero` **会立即写 flash**（含 `gear_zero_*` 与当时的 `i_max`/`accel_limit`），
+    所以台架脚本必须先把临时限流恢复再调它。
+- **参数/接口**：`config.gear_teeth_first`（30）、`config.gear_teeth_sec`（27）、
+  `config.gear_sec_reversed`（副编码器读数是否反向，本机实测默认 true）、
+  `config.gear_zero_phase`、`config.gear_zero_count`、`config.gear_ref_valid`；
+  动作 `action.gear_capture`（定参考）、`action.gear_read`（只读一次并刷新遥测，
+  不写 flash）；结果看 `system.gear_status`（1 成功 / -1 齿数配置非法 / -2 还没参考 /
+  -3 副编码器没响应 / -4 门极使能时被拒绝）；遥测 `telemetry.sec_enc_raw` /
+  `sec_enc_present` / `sec_enc_phase` / `sec_enc_lost_frames` / `gear_abs_turns`。
+- **台架验收**（必须做，纯算术之外的误差都来自齿隙/偏心）：用
+  [`tools/gear_test.py`](../tools/gear_test.py)（依赖 `pyserial`，走 endpoint 协议）：
+  ```bash
+  python tools/gear_test.py --port COMx check           # 配置/副编在线/量程/当前差值（不动电机）
+  python tools/gear_test.py --port COMx verify          # 多位置一致性（默认输出轴 ±3 rad）
+  python tools/gear_test.py --port COMx powercycle      # 每个位置断电重启后比对
+  python tools/gear_test.py --port COMx ratio           # 反推实际传动比（齿数/方向不确定时）
+  python tools/gear_test.py --port COMx capture --at 0  # 重取参考（只写 RAM，要 action.save）
+  python tools/gear_test.py --port COMx zero            # action.zero 后参考是否同步平移
+  ```
+  位置列表用 `--positions=…`（负号开头的第一个值必须写成 `--positions=-1.5,0,1.5`，
+  否则 argparse 当它是选项），或者 `--start/--stop/--step`。工具会先把
+  `i_max` / `accel_limit` 临时压到 2 A / 20 rad/s²（只改 RAM），退出时恢复，所有路径
+  都回 MENU；超判据（默认 `--max-diff 0.01` 转子圈）退出码为 1。
+  `ratio` 用斜率 `dΔ/dθ = k/T2` 反推 `T1/T2 = 1 + slope`（`reversed` 打开时；关掉时
+  是 `1 − slope`），本机实测 0.1103（rms 0.0026 圈）→ 反推 first ≈ 29.98 → 30；
+  短跨度会被齿隙/偏心带偏，求平均值要用 `--start -3 --stop 3`（约 8.6 圈）。
+
+  手工核对（没装工具时）：
+  ```
+  set config.gear_teeth_first=30 ; set config.gear_teeth_sec=27 ; set config.gear_sec_reversed=1
+  call action.gear_capture ; call action.save
+  get system.gear_status            # 1
+  get telemetry.sec_enc_raw         # 非 0xFF/0x00 的跳变值
+  # 用手（或上位机）把输出轴转 X 圈，再读一次：
+  call action.gear_read
+  get telemetry.gear_abs_turns      # 与 telemetry.position_motor 的增量一致（±半个 count）
+  # 断电再上电：位置应当接上（开机横幅会打印 "Gear encoder: restored ... turns"）
+  ```
+  若上电位置系统性差**整整一圈**，先看 `config.gear_zero_phase` 是否被手改过、
+  `M_ZERO` 是否绕过 `ps_set_m_zero` 改过；差**半圈/比例错**则是齿数或
+  `config.gear_sec_reversed` 配错（副编码器方向不对）。判方向的快捷办法：正转时
+  看 `telemetry.sec_enc_raw` 与 `telemetry.encoder_raw` 是同增还是此增彼减，同时用
+  `action.gear_read` 看 `telemetry.gear_abs_turns` 的增量是否等于
+  `telemetry.position_motor` 的增量。
+
 ## 保护与限幅
 
 四类限制，全部由 `config.*` 参数控制，**默认行为与改动前一致**（温度保护默认关，
@@ -1136,7 +1268,8 @@ schema 1 → 2 迁移已实机验证（同一块配置，不动 flash）：旧�
 ## 测试
 
 自动检查：`make check`（生成物/文档最新）、
-`make hosttest`（`prefs_codec` + `test_can_cyberbeast` + `test_motion_law`）、
+`make hosttest`（`prefs_codec` + `test_can_cyberbeast` + `test_motion_law` +
+`test_dual_gear` + `test_endpoint_proto`）、
 `make`（链接）。
 Windows 用 MSYS2 bash 构建（Chocolatey 的 make 用 cmd，
 `mkdir -p` 会失败）：

@@ -120,6 +120,13 @@
 #define ENC_CPR			65536				// Encoder counts per revolution
 #define INV_CPR			1.0f/ENC_CPR
 #define ENC_READ_WORD	0x0000				// Encoder read command
+/* 齿轮式双编的第二路编码器（输出轴侧）：同一颗 KTH7823、同一个 SPI1，只是 NSS
+ * 独立（PD1）。帧格式/分辨率与主编码器相同，所以 CPR 和读命令直接复用。
+ * 只在主循环里读（上电恢复、标定、gear_read），不进 40 kHz 中断 —— 见
+ * position_sensor.c 的 ps_sec_read()。 */
+#define SEC_ENC_CS		SEC_ENC_SPI_NSS_GPIO_Port, SEC_ENC_SPI_NSS_Pin
+#define SEC_ENC_CPR		ENC_CPR
+#define SEC_ENC_READ_WORD	ENC_READ_WORD
 
 /* Misc. GPIO */
 #define LED         	LED_GPIO_Port, LED_Pin	// LED Pin

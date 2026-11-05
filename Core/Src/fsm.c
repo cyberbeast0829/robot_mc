@@ -498,6 +498,7 @@ extern uint32_t _reboot_cookie;
 	  * The fast ISR (run_fsm) hands work over here through the *_pending flags. */
 
 	 static int cal_samples_printed = 0;
+	 static uint8_t gear_probed = 0;		// 本次进入标定后是否已经探过副编码器
 	 static int encoder_print_count = 0;
 	 static uint8_t reboot_armed = 0;		// 1 = a reset is queued
 	 static uint32_t reboot_deadline = 0;	// loop_count threshold (valid when reboot_armed)
@@ -632,9 +633,43 @@ extern uint32_t _reboot_cookie;
 	 if(fsmstate->zero_pending){
 		 fsmstate->zero_pending = 0;
 		 if(fsmstate->state == MENU_MODE){	// only with the gate drive off
-			 M_ZERO = comm_encoder.count;
+			 /* 走 ps_set_m_zero：机械零点同时是双编参考的坐标系，改零点要把参考
+			  * 平移同样的量，否则断电再上电多圈位置会整体偏掉 */
+			 ps_set_m_zero(comm_encoder.count);
 			 fsmstate->save_status = save_preferences() ? 1 : 3;
 			 myprintf("\n\r  Saved new zero position:  %d\n\r\n\r", M_ZERO);
+		 }
+	 }
+
+	 /* endpoint action.gear_capture / action.gear_read：齿轮式双编的副编码器与主
+	  * 编码器共用 SPI1，只能在主循环里读，而且两路都要门极关闭、转子静止才有意义。
+	  * capture 只更新 RAM 里的参考（写 flash 仍由 action.save 负责） */
+	 if(fsmstate->gear_capture_pending || fsmstate->gear_read_pending){
+		 uint8_t do_capture = fsmstate->gear_capture_pending;
+		 fsmstate->gear_capture_pending = 0;
+		 fsmstate->gear_read_pending = 0;
+		 if(controller.gate_drive_enabled){
+			 fsmstate->gear_status = -4;
+			 myprintf("\r\n  Gear encoder: refused - gate drive is enabled\r\n");
+		 }
+		 else{
+			 int rc = do_capture ? ps_dual_gear_capture(&comm_encoder)
+			                     : ps_dual_gear_read(&comm_encoder);
+			 fsmstate->gear_status = (rc == 0) ? 1 : (int8_t)rc;
+			 if(rc == 0){
+				 myprintf("\r\n  Gear encoder: sec_raw %d  phase %.6f  abs_turns %.3f%s\r\n",
+						  sec_encoder.raw, (double)sec_encoder.phase, (double)sec_encoder.abs_turns,
+						  do_capture ? "  (reference captured - run action.save to keep it)" : "");
+			 }
+			 else if(rc == -2){
+				 myprintf("\r\n  Gear encoder: no reference yet - run action.gear_capture first\r\n");
+			 }
+			 else if(rc == -1){
+				 myprintf("\r\n  Gear encoder: gear teeth / direction config is invalid\r\n");
+			 }
+			 else{
+				 myprintf("\r\n  Gear encoder: no reply from the second encoder (%d)\r\n", rc);
+			 }
 		 }
 	 }
 
@@ -699,6 +734,28 @@ extern uint32_t _reboot_cookie;
 	 }
 
 	 if(fsmstate->state == CALIBRATION_MODE){
+		 /* 齿轮式双编：进标定时先探一次副编码器，让用户在校准跑起来之前就知道
+		  * "断电记忆输出轴位置"这次会不会生效，而不是等 30 s 后才看到失败。
+		  * 副编码器与主编码器共用 SPI1，探测会挡住控制中断（在线约 4 us，没插到
+		  * 时两帧各等到上限约 2×16 us），发生在标定最开头的开环慢速段，最多推迟
+		  * 一个控制周期，对开环电压控制没有影响。
+		  * 真在的话标定收尾会顺手 capture 一次参考（见下面 done_* 块） */
+		 if(!gear_probed){
+			 gear_probed = 1;
+			 int gear_present = ps_sec_probe();
+			 if(!gear_present){
+				 myprintf("\r\nGEAR: no second encoder - output position memory stays off\r\n");
+			 }
+			 else if(!ps_dual_gear_config_ok()){
+				 myprintf("\r\nGEAR: second encoder found, but gear config is invalid (T1=%d T2=%d) - memory off\r\n",
+						  (int)GEAR_TEETH_FIRST, (int)GEAR_TEETH_SEC);
+			 }
+			 else{
+				 myprintf("\r\nGEAR: second encoder found (raw %d, teeth %d/%d) - reference will be captured at the end\r\n",
+						  sec_encoder.raw, (int)GEAR_TEETH_FIRST, (int)GEAR_TEETH_SEC);
+			 }
+		 }
+
 		 /* Stream out new calibration samples as they're taken (forward pass only -
 		  * sample_count counts back down during the reverse pass) */
 		 while(cal_samples_printed < comm_encoder_cal.sample_count){
@@ -724,6 +781,22 @@ extern uint32_t _reboot_cookie;
 			 comm_encoder.m_zero = M_ZERO;
 			 memcpy(&comm_encoder.offset_lut, comm_encoder_cal.lut_arr, sizeof(comm_encoder.offset_lut));
 			 memcpy(&ENCODER_LUT, comm_encoder_cal.lut_arr, sizeof(comm_encoder_cal.lut_arr));
+			 /* 齿轮式双编：此刻转子刚标定完、门极已关、静止不动，正好把"当前位置
+			  * = 输出轴绝对位置参考"记下来（phase + 多圈计数），一起存盘。
+			  * 不转电机、不需要额外操作。失败时**保留旧参考**：参考是 (相位, 计数)
+			  * 成对的，只要主编码器多圈计数没断，旧参考继续有效，只是没跟着更新 */
+			 {
+				 int gear_rc = ps_dual_gear_capture(&comm_encoder);
+				 if(gear_rc == 0){
+					 myprintf("GEAR: reference captured (phase %.6f, count %d, teeth %d/%d)\r\n",
+							  (double)GEAR_ZERO_PHASE, (int)GEAR_ZERO_COUNT,
+							  (int)GEAR_TEETH_FIRST, (int)GEAR_TEETH_SEC);
+				 }
+				 else{
+					 myprintf("GEAR: capture failed (%d) - %s\r\n", gear_rc,
+							  GEAR_REF_VALID ? "keeping the previous reference" : "output position memory off");
+				 }
+			 }
 			 /* 全部三段（相序 / 编码器零点 / R-L-Ld-Lq-磁链）都跑完才会到这里，
 			  * 所以这就是“已标定”。先置标志再存盘，一条记录里一起落盘 */
 			 PRE_CALIBRATED = 1;
@@ -737,6 +810,7 @@ extern uint32_t _reboot_cookie;
 	 }
 	 else{
 		 cal_samples_printed = 0;
+		 gear_probed = 0;			// 下次进标定重新探测副编码器
 	 }
 
 	 /* Print encoder data a few times a second in encoder mode */

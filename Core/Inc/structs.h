@@ -28,6 +28,7 @@ extern ControllerStruct controller;
 extern ObserverStruct observer;
 extern FSMStruct state;
 extern EncoderStruct comm_encoder;
+extern SecEncoderStruct sec_encoder;
 extern PreferenceWriter prefs;
 extern CalStruct comm_encoder_cal;
 extern CANTxMessage can_tx;

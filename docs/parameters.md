@@ -41,7 +41,7 @@ ID 由 `tools/endpoint_ids.json` 锁定，固件升级不会改变；`access` �
 | `config.tune_margin` | 160 | float | rw | x | 0.2 .. 5.0 | 2.2 | 是 | action.tune_gains 对速度环增益的放大系数。线性公式给的是惯性主导时的值，摩擦/齿隙大的关节要放大（台架实测约 2.6）；只放大速度环，pos_gain 不受影响。1 = 纯公式 |
 | `config.vel_loop_prescaler` | 143 | int32 | rw |  | 1 .. 100 | 5 | 是 | 速度环分频：控制环 40 kHz / 该值 = 速度环频率（默认 5 → 8 kHz）；1 = 全速 40 kHz |
 | `config.pos_loop_prescaler` | 144 | int32 | rw |  | 1 .. 100 | 2 | 是 | 位置环分频：速度环 / 该值 = 位置环频率（默认 2 → 4 kHz）；位置环只在速度环执行的拍里执行 |
-| `config.gr` | 14 | float | rw |  | ≥ 0.001 | 7.75 | 是 | 减速比（门极关闭时才允许写） |
+| `config.gr` | 14 | float | rw |  | ≥ 0.001 | 9.0 | 是 | 减速比：转子圈 / 输出圈（门极关闭时才允许写）。CBL89 + MZW55 实测 9.0 |
 | `config.kt` | 15 | float | rw | N-m/A | ≥ 0.0001 | 1.0 | 是 | 转矩常数（标定得出；门极关闭时才允许写） |
 | `config.ppairs` | 16 | float | rw |  | 1.0 .. 64.0 | 14.0 | 是 | 极对数（标定得出；门极关闭时才允许写） |
 | `config.r_phase` | 17 | float | rw | Ohm | — | 0.0 | 是 | 单相电阻（标定得出） |
@@ -59,7 +59,7 @@ ID 由 `tools/endpoint_ids.json` 锁定，固件升级不会改变；`access` �
 | `config.can_baud` | 121 | int32 | rw | bit/s | 50000 .. 5000000 | 1000000 | 是 | CAN 波特率：≤1M 为 Classic CAN（该速率），>1M 为 CAN FD（仲裁域固定 1M，数据域=本值）；下次上电生效 |
 | `config.can_hb_ms` | 122 | int32 | rw | ms | 0 .. 10000 | 100 | 是 | CYBERBEAST 心跳周期（0 = 关闭） |
 | `config.can_tdc` | 162 | int32 | rw | tq | -1 .. 31 | -1 | 是 | CAN FD 发送延迟补偿偏移（数据域 tq）：-1 = 自动（= 数据域 tseg1，默认），0 = 关闭，>0 = 手动；5M 必须开，下次上电生效 |
-| `config.m_zero` | 26 | int32 | rw |  | — | 0 | 是 | 机械零位编码器计数（门极关闭时才允许写） |
+| `config.m_zero` | 26 | int32 | rw |  | — | 0 | 是 | 机械零位编码器计数（门极关闭时才允许写）。会同时平移双编参考（ps_set_m_zero），所以断电再上电的位置仍然连续 |
 | `config.e_zero` | 27 | int32 | rw |  | — | 0 | 是 | 电角度零点编码器计数（门极关闭时才允许写） |
 | `config.vbus_ov_trip` | 163 | float | rw | V | 10.0 .. 100.0 | 67.0 | 是 | 母线过压硬故障阈值；超过即锁存 FAULT_OV 并关闭门极（原编译期常量 V_BUS_FAULT） |
 | `config.vbus_uv_trip` | 164 | float | rw | V | 0.0 .. 100.0 | 0.0 | 是 | 母线欠压故障阈值（0 = 关闭）；只在门极使能时判定，并带 ~10 ms 去抖 |
@@ -72,6 +72,12 @@ ID 由 `tools/endpoint_ids.json` 锁定，固件升级不会改变；`access` �
 | `config.mot_temp_lo` | 171 | float | rw | C | 0.0 .. 200.0 | 75.0 | 是 | 电机温度降流起点 |
 | `config.mot_temp_hi` | 172 | float | rw | C | 0.0 .. 200.0 | 95.0 | 是 | 电机温度上限：达到该温度电流上限降为 0，再超过 5 °C 锁存 FAULT_MOT_OT |
 | `config.pre_calibrated` | 173 | bool | rw |  | — | 0 | 是 | 电机/编码器是否已标定：false 时拒绝进入电机模式（action.calibrate 成功后自动置 1，进入标定或恢复默认时清 0；门极使能时不可写） |
+| `config.gear_teeth_first` | 195 | int32 | rw |  | 1 .. 400 | 30 | 是 | 齿轮式双编：转子（主编码器）侧齿轮齿数 T1。量程 = ±T2/(2\|T1-T2\|) 转子圈（30/27 给 ±4.5），所以要接近但不等；成比例齿数（10/9 = 20/18 = 30/27）行为相同 |
+| `config.gear_teeth_sec` | 196 | int32 | rw |  | 1 .. 400 | 27 | 是 | 齿轮式双编：副编码器（输出轴侧）齿轮齿数 T2。断电期间转子移动超过 ±T2/(2\|T1-T2\|) 圈就会差整整一个相位周期 T2/\|T1-T2\| |
+| `config.gear_sec_reversed` | 208 | bool | rw |  | — | 1 | 是 | 副编码器读数方向：false = 读数随转子正转增大；true = 随正转变小（副轴外啮合反向 / 磁铁反装），固件解算前先做 SEC_ENC_CPR-raw 镜像。CBL89 + MZW55 实测副轴反向，默认 true；改这个值后要重新 action.gear_capture |
+| `config.gear_zero_phase` | 198 | float | rw |  | 0.0 .. 1.0 | 0.0 | 是 | 齿轮式双编的相位参考（action.gear_capture 写入，不要手改）：标定时刻两路编码器的韦尼尔相位，上电时据此解出转子第几圈 |
+| `config.gear_zero_count` | 199 | int32 | rw |  | — | 0 | 是 | 齿轮式双编的计数参考（action.gear_capture 写入，不要手改）：标定时刻的多圈计数 turns*CPR + count_wrapped，与 gear_zero_phase 配对使用 |
+| `config.gear_ref_valid` | 200 | bool | rw |  | — | 0 | 是 | 齿轮式双编参考是否有效：true 才在上电时用副编码器恢复输出轴位置（action.gear_capture 置 1，恢复默认值清 0）。没有第二编码器的板子保持 false 即可，行为与改动前一致 |
 
 ## command：运行命令（电机模式下有效）
 
@@ -134,6 +140,11 @@ ID 由 `tools/endpoint_ids.json` 锁定，固件升级不会改变；`access` �
 | `telemetry.can_lec` | 65 | uint8 | r |  | — | — | 否 | CAN 最后错误码 |
 | `telemetry.encoder_ppairs` | 66 | float | r |  | — | — | 否 | 编码器当前使用的极对数 |
 | `telemetry.encoder_lost_frames` | 67 | int32 | r |  | — | — | 否 | 编码器丢帧计数 |
+| `telemetry.sec_enc_raw` | 201 | int32 | r |  | — | — | 否 | 齿轮式双编副编码器（输出轴侧）的原始读数，最近一次探测 / action.gear_capture / action.gear_read 时读到 |
+| `telemetry.sec_enc_present` | 209 | bool | r |  | — | — | 否 | 副编码器是否在线（上电、进入标定、gear_capture/gear_read 时探测；判据是连续两帧读到有效值，MISO 恒定的板子会判成 false） |
+| `telemetry.sec_enc_phase` | 202 | float | r |  | — | — | 否 | 齿轮式双编的韦尼尔相位 Δ ∈ [0,1)（最近一次读数）。转子每转一圈变化约 (T1-T2)/T2 |
+| `telemetry.sec_enc_lost_frames` | 203 | int32 | r |  | — | — | 否 | 副编码器读取失败次数（没插、接线断，或被控制中断的 SPI 访问打断） |
+| `telemetry.gear_abs_turns` | 204 | float | r | turn | — | — | 否 | 齿轮式双编解算出的转子绝对圈数（含小数，与 telemetry.position_motor 同一坐标系）。上电恢复时写入，action.gear_read 时刷新 |
 | `telemetry.encoder_raw` | 79 | int32 | r |  | — | — | 否 | 编码器原始读数 |
 | `telemetry.encoder_turns` | 80 | int32 | r |  | — | — | 否 | 编码器多圈数 |
 | `telemetry.encoder_elec_angle` | 81 | float | r | rad | — | — | 否 | 编码器电角度 |
@@ -205,6 +216,7 @@ ID 由 `tools/endpoint_ids.json` 锁定，固件升级不会改变；`access` �
 | `system.prefs_loaded` | 70 | bool | r |  | — | — | 否 | 是否从 flash 成功加载过配置 |
 | `system.inertia_status` | 153 | uint8 | r |  | — | — | 否 | 惯量标定状态：0 未跑 / 1 运行中（约 1.5 s，含进出电机模式）/ 2 成功（结果在 config.inertia）/ 3 关节本来就在动 / 4 突破电流超时（卡住或摩擦过大）/ 5 台阶太短（样本不足）或超时 / 6 激励不足（斜率不可信）/ 7 进不了电机模式 |
 | `system.save_status` | 119 | uint8 | r |  | — | — | 否 | 最近一次写 flash 的结果（save/zero/reset_config/标定共用）：0 未执行、1 成功、2 因门极使能跳过、3 写失败 |
+| `system.gear_status` | 205 | int8 | r |  | — | — | 否 | 最近一次齿轮式双编动作的结果：0 未执行、1 成功、-1 齿数/方向配置非法、-2 还没有参考（先 action.gear_capture）、-3 副编码器没响应、-4 门极使能时被拒绝 |
 | `system.can_prot_active` | 123 | int32 | r |  | — | — | 否 | 当前生效的 CAN 协议（0=旧 11-bit，1=CYBERBEAST） |
 | `system.can_fd` | 124 | bool | r |  | — | — | 否 | 当前是否以 CAN FD 运行 |
 | `system.can_baud_active` | 125 | int32 | r | bit/s | — | — | 否 | 当前生效的 CAN 速率（Classic 为位速率；FD 为数据域速率） |
@@ -214,7 +226,9 @@ ID 由 `tools/endpoint_ids.json` 锁定，固件升级不会改变；`access` �
 | 名称 | ID | 类型 | 访问 | 单位 | 范围 | 默认 | 持久化 | 说明 |
 |---|---|---|---|---|---|---|---|---|
 | `action.save` | 71 | function | w |  | — | — | 否 | 把当前配置写入 flash（要求门极关闭） |
-| `action.zero` | 72 | function | w |  | — | — | 否 | 把当前位置设为零点并保存（仅菜单状态） |
+| `action.zero` | 72 | function | w |  | — | — | 否 | 把当前位置设为零点并保存（仅菜单状态）。会同时平移齿轮式双编的参考，断电再上电位置仍然连续 |
+| `action.gear_capture` | 206 | function | w |  | — | — | 否 | 齿轮式双编：把当前位置定为输出轴绝对位置的参考（不旋转电机，只读一次副编码器）。之后要 action.save 才会保留；结果看 system.gear_status |
+| `action.gear_read` | 207 | function | w |  | — | — | 否 | 齿轮式双编：读一次副编码器并用已保存的参考解算位置，刷新 telemetry.sec_enc_* / telemetry.gear_abs_turns（诊断用，不写 flash）。结果看 system.gear_status |
 | `action.idle_mode` | 73 | function | w |  | — | — | 否 | 空闲/停机：关门极、清锁存故障、回到菜单（退出电机模式、急停用） |
 | `action.clear_fault` | 74 | function | w |  | — | — | 否 | 清除锁存故障（等价于 action.idle_mode） |
 | `action.motor_mode` | 75 | function | w |  | — | — | 否 | 进入电机模式（仅菜单状态，且 config.pre_calibrated 必须为 true） |

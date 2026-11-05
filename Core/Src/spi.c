@@ -75,7 +75,7 @@ void MX_SPI1_Init(void)
   GPIO_InitPeripheral(ENC_SPI_NSS_GPIO_Port, &GPIO_InitStructure);
   GPIO_WriteBits(ENC_SPI_NSS_GPIO_Port, ENC_SPI_NSS_Pin, Bit_SET);
 
-  // PC10 --> SEC_ENC_NSS
+  // PD1 --> SEC_ENC_NSS（齿轮式双编的第二路编码器，见 position_sensor.c 的 ps_sec_read）
   GPIO_InitStructure.Pin        = SEC_ENC_SPI_NSS_Pin;
   GPIO_InitPeripheral(SEC_ENC_SPI_NSS_GPIO_Port, &GPIO_InitStructure);
   GPIO_WriteBits(SEC_ENC_SPI_NSS_GPIO_Port, SEC_ENC_SPI_NSS_Pin, Bit_SET);

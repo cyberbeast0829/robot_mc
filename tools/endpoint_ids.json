@@ -1,5 +1,5 @@
 {
-  "next_id": 195,
+  "next_id": 210,
   "map": {
     "config.i_bw": 1,
     "config.i_max": 2,
@@ -194,6 +194,20 @@
     "system.hw_version_minor": 191,
     "system.hw_version_variant": 192,
     "system.serial_number": 193,
-    "system.fw_version_unreleased": 194
+    "system.fw_version_unreleased": 194,
+    "config.gear_teeth_first": 195,
+    "config.gear_teeth_sec": 196,
+    "config.gear_zero_phase": 198,
+    "config.gear_zero_count": 199,
+    "config.gear_ref_valid": 200,
+    "telemetry.sec_enc_raw": 201,
+    "telemetry.sec_enc_phase": 202,
+    "telemetry.sec_enc_lost_frames": 203,
+    "telemetry.gear_abs_turns": 204,
+    "system.gear_status": 205,
+    "action.gear_capture": 206,
+    "action.gear_read": 207,
+    "config.gear_sec_reversed": 208,
+    "telemetry.sec_enc_present": 209
   }
 }

@@ -52,8 +52,11 @@ typedef struct{
 	volatile uint8_t reboot_pending;		// reboot after the reply went out (endpoint action.reboot)
 	volatile uint8_t dfu_pending;			// reset into the ROM DFU bootloader after the reply (endpoint action.enter_dfu_mode)
 	volatile uint8_t inertia_pending;		// run the inertia calibration (endpoint action.measure_inertia)
+	volatile uint8_t gear_capture_pending;	// 建立双编参考（endpoint action.gear_capture，主循环里读副编码器）
+	volatile uint8_t gear_read_pending;		// 只读一次副编码器并刷新遥测（endpoint action.gear_read）
 	volatile uint8_t motor_refused;		// a MOTOR_MODE request was rejected because the motor is not calibrated
 	volatile uint8_t save_status;			// result of the last save: 1 ok, 2 skipped, 3 failed
+	volatile int8_t gear_status;			// 双编动作的结果：0 未执行、1 成功、<0 失败码（见 ps_dual_gear_*）
 }FSMStruct;
 
 void run_fsm(FSMStruct* fsmstate);

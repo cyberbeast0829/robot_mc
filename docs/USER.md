@@ -104,7 +104,7 @@ dev = Device("COM7", 115200, 1.0)      # CDC
 # dev = Device(use_usb=True)            # vendor interface（需要 pyusb/WinUSB）
 dev.fetch_descriptor()
 print(dev.read("config.gr"))
-dev.write("config.gr", 7.75)
+dev.write("config.gr", 9.0)
 dev.call("action.save")
 print(dev.read("system.save_status"))
 dev.close()
@@ -297,12 +297,16 @@ python tools/mc_ep.py --port COM6 set config.can_timeout 100
 （台架实测 0.3 rad 阶跃最终 `pos_err ≈ 3e-5 rad`）。
 
 - **增益要按关节整定**：出厂值（`vel_gain 2.469`、`vel_integrator_gain 44.44`、
-  `pos_gain 15`、`accel_limit 50`）是本台架（GR 7.75、`KT 0.031`、`J 0.0006`）整定的
-  结果，**换电机/换关节必须重做**；裸关节在 `vel_gain ≥ 4` 会失稳。方法见
+  `pos_gain 15`、`accel_limit 50`）是本台架（`KT 0.031`、`J 0.0006`）整定的结果，
+  **换电机/换关节必须重做**；裸关节在 `vel_gain ≥ 4` 会失稳。方法见
   [DEV.md](DEV.md) 的“台架整定步骤”，工具是 `tools/csv_csp_test.py`。
+  ⚠ 这批数据是在 **GR 配成 7.75** 时测的，而实际减速比是 **9**（见 §5.1）。MIT/CSV/CSP
+  的电流都是 `torque_des/(KT·GR)`，所以同一组增益现在会少 7.75/9 ≈ 14% 的电流、环路变软 ——
+  要么把 `vel_gain`/`pos_gain` 乘 9/7.75 ≈ 1.16，要么重新整定。
 - **两条路可选**：① 一条命令 `action.tune_gains`（先做 `action.measure_inertia`），
   配方 = 惯量 + `config.omega_c`(450) + `config.tune_margin`；② 手工扫
-  `csv_csp_test.py sweep`。台架（GR 7.75、`KT 0.031`、`J 0.0006`）实测工作点：
+  `csv_csp_test.py sweep`。台架（`KT 0.031`、`J 0.0006`，当时的 `config.gr` 被误配成 7.75，
+  实际是 9）实测工作点：
 
   | 模式 | 参数 | 值 | 效果 |
   |---|---|---|---|
@@ -469,6 +473,72 @@ python tools/mc_ep.py --port COM7 get telemetry.ld_lq_diff    # Ld-Lq
 所以"换了板子 / 整片擦除 / 恢复默认值后电机使能不了"是**正常行为**：重新
 `call action.calibrate` 即可。也可以手工 `set config.pre_calibrated 1` 跳过检查
 （仅在标定数据确实有效时这么做；门极使能时该参数不可写）。
+
+## 5.1 齿轮式双编（断电记忆输出轴位置）
+
+硬件在转子齿轮旁啮合了一个齿数不同的小齿轮、轴上装第二颗绝对编码器。两路单圈
+绝对值合起来能算出转子转到了**第几圈**，所以断电再上电，输出轴位置直接接上，
+不需要重新回零（原理与约束见 [DEV.md](DEV.md) 的"齿轮式双编"一节）。
+
+前提：两颗磁编都装好（同一 SPI，NSS 分开）、齿轮齿数已知且**接近但不等**
+（量程 = ±T2/(2|T1−T2|) 转子圈；34/33 给 ±16.5 圈，本机的 30/27 只给 ±4.5 圈
+= ±0.5 输出圈（GR = 9））。齿数成比例（10/9 = 20/18 = 30/27）行为相同，填真实
+物理齿数即可。
+
+**固件自己会检测**：上电时、以及每次进入标定（`action.calibrate` / 串口 `c`）的开始，
+都会探一次副编码器并打印
+
+```
+GEAR: second encoder found (raw 12345, teeth 30/27) - reference will be captured at the end
+GEAR: no second encoder - output position memory stays off
+GEAR: second encoder found, but gear config is invalid (T1=30 T2=27) - memory off
+```
+
+`telemetry.sec_enc_present` 是同一个结论（只读）。**标定成功收尾时会自动把当前位置
+记成双编参考**并一起存盘，所以只要硬件在、齿数填对，走一遍正常标定就够了，不用
+额外操作。下面的手动步骤只在"单独想重取参考"或"没做标定时"才需要：
+
+```bash
+# 1) 填齿数与减速比（出厂默认 30/27、GR=9、副轴反向；换电机/换减速机时才要改）
+python tools/mc_ep.py --port COM7 set config.gear_teeth_first 30
+python tools/mc_ep.py --port COM7 set config.gear_teeth_sec 27
+python tools/mc_ep.py --port COM7 set config.gear_sec_reversed true
+python tools/mc_ep.py --port COM7 set config.gr 9.0
+
+# 2) 把"现在这个位置"定为输出轴的绝对参考（不转电机，门极关闭时）
+python tools/mc_ep.py --port COM7 call action.gear_capture
+python tools/mc_ep.py --port COM7 get system.gear_status     # 1 = 成功
+python tools/mc_ep.py --port COM7 get telemetry.sec_enc_raw  # 第二颗编码器的原始读数
+
+# 3) 存盘（capture 只改 RAM）
+python tools/mc_ep.py --port COM7 call action.save
+```
+
+之后每次上电，开机横幅会打印 `Gear encoder: restored multiturn position ... turns`，
+`telemetry.position` 从断电前的位置继续；没装第二颗编码器的板子打印
+`Gear encoder: no second encoder - output position memory stays off`。
+
+- **`action.zero`**（把当前位置设成零点）现在**清零后 `telemetry.position` 就是 0**
+  （旧固件只重设单圈零点，整圈计数留在原处，读数会停在整圈上），并且会同时平移
+  双编参考、顺手重取一次参考，让断电记忆窗口重新以零点为中心（窗口是 ±4.5 转子圈
+  = ±0.5 输出圈，偏了会白丢一半行程）。`config.m_zero` 的写入口走同一个
+  `ps_set_m_zero()`，直接改它不会破坏双编参考（零点不是当前位姿时不重取参考）。
+- **`action.gear_read`** 只读一次并刷新 `telemetry.sec_enc_raw` /
+  `telemetry.sec_enc_phase` / `telemetry.gear_abs_turns`，不写 flash —— 校准/验收
+  时用它和 `telemetry.position_motor` 对比。
+- **`system.gear_status`**：1 成功、-1 齿数/方向配置非法、-2 还没有参考
+  （先 `action.gear_capture`）、-3 副编码器没响应（没插/接线断）、-4 门极使能时被拒绝。
+- 没做 capture（`config.gear_ref_valid = 0`）时整套功能不参与，行为与旧固件一致。
+- 换了齿轮、动过副编码器的安装位置后要**重新 capture + save**，否则参考不再对应。
+- 断电后如果用手强力把轴推过窗口，上电解出来的位置会差整整一个相位周期
+  （T2/|T1−T2| 转子圈；34/33 = 33 圈、本机 30/27 = 9 圈 = 1 输出圈），不是故障 ——
+  想回到正确位置就把轴挪回窗口内（±T2/(2|T1−T2|) 转子圈 = 本机 ±4.5 圈 = ±0.5 输出圈）
+  再上电。
+- **验收/排查**（可选）：`python tools/gear_test.py --port COM7 check|verify|powercycle`
+  （需 `pyserial`）。`check` 不动电机，只打印配置、副编在线状态、量程和"解码 vs
+  固件多圈"的当前差值；`verify` 自动在若干位置之间移动并逐点比对；`powercycle`
+  在每个位置断电重启后比对。判据是差值为几十分之一 count 的抖动，出现整圈级偏差就是
+  齿数/方向配错或超出窗口。
 
 ## 6. 备份与恢复
 

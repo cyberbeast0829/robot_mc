@@ -60,7 +60,8 @@ Two equivalent builds produce the same firmware:
   Everything else is verified by a clean build + bench testing by the maintainer
   (`tools/cb_bench.py` drives the CYBERBEAST platform over slcan: `--stage-a/-b/-c/-c-static/-d`,
   `--reset-test`, `--timeout-test`; `tools/csv_csp_test.py` drives the velocity/position
-  loops over USB: `plain|csv|csp|timeout|sweep`).
+  loops over USB: `plain|csv|csp|timeout|sweep`; `tools/gear_test.py` verifies the dual-gear
+  absolute position over USB CDC: `check|verify|powercycle|capture|zero|ratio`).
 - ⚠ **Flashing this board is unreliable at high SWD clocks** (bench, 2026-10-30): reads and
   programming silently corrupt at 5 MHz (Keil default) and even 1 MHz, J-Link's own
   `Verify` fails at random addresses, and the device then keeps running the **old image** —
@@ -262,6 +263,36 @@ Ld/Lq、开环升速测磁链并令 `KT = 1.5·PPAIRS·λ`。测试电流 = `min
   乘上它；**改 `svm()`/`DTC_MAX`/`DTC_MIN` 时必须同步改 `CAL_V_PER_CMD`**。
 - 任一段失败就置 `comm_encoder_cal.failed` → 回菜单且不写 flash；`run_fsm_slow()`
   只在 `done_ordering && done_cal && done_rl` 后保存。细节见 `docs/DEV.md`。
+
+## 齿轮式双编（断电记忆输出轴位置）
+
+第二颗 KTH7823 经小齿轮啮合在转子齿轮旁（同一 SPI1，`SEC_ENC_SPI_NSS` = PD1），
+两路单圈绝对值合起来解出转子"第几圈"，上电即恢复输出轴绝对位置。ODrive 分支
+f5b1f8ba6 / 59e2ad0dc / 6bcbd9017 的移植（但零点用"参考快照"而不是找重合点，
+理由见 `dual_gear.h` 头注释）。
+
+- 纯数学在 `Core/Inc/dual_gear.h`（不含固件头文件），host 回归
+  `tools/test_dual_gear.c`（已进 `make hosttest`）。硬件侧在 `position_sensor.c`：
+  `ps_sec_read()` / `ps_sec_probe()` / `ps_dual_gear_restore|capture|read()` /
+  `ps_set_m_zero()`。`ps_sec_probe()` 连读两帧判在线（`telemetry.sec_enc_present`），
+  上电、进入标定、gear_capture/gear_read 都会更新它。
+- **副编码器不进 40 kHz 中断**：它和主编码器抢 SPI1 + DMA2，所以只在主循环读
+  （上电 / 标定入口探测 / 标定收尾 capture / 诊断），读时 `NVIC_DisableIRQ(PWM_ISR)`，
+  有界等待（`PS_WAIT_ITERS`），读不到只累加 `sec_encoder.lost_frames`。
+- **标定流程自带双编检测**：`run_fsm_slow()` 的 `CALIBRATION_MODE` 分支先探一次
+  （打印 "GEAR: ..."），收尾块再 capture 参考并随标定一起存盘；失败时保留旧参考。
+- `ps_dual_gear_restore()` 必须在 `main()` 里、`TIM_ConfigInt(ATIM1,…,ENABLE)` 之前
+  调用；恢复值经 `EncoderStruct.abs_turns_valid` 由**下一帧** `ps_finish_sample()`
+  生效（直接改 `turns` 会被 first_sample 逻辑清零并留下速度尖峰）。
+- **改 `M_ZERO` 只能走 `ps_set_m_zero()`**：它同时平移 `GEAR_ZERO_COUNT`，否则
+  断电再上电多圈位置会整体偏掉。`action.zero` 与 `config.m_zero` 的写入口都走它。
+- 约束 `k = T1 - T2 ≠ 0`；量程 = ±T2/(2|T1-T2|) 转子圈。本机（MZW55，**30/27 反向**，
+  GR = 9）量程 ±4.5 转子圈 = ±0.5 输出圈，相位周期 9 转子圈（超窗后差整整一圈）。
+  `gcd(|k|,T2)` 不必为 1（最近候选解码不需要）；齿数成比例（10/9 = 30/27）等价。
+  `config.gear_ref_valid = 0` 时整套功能不参与；出厂默认齿数/方向就是 30/27 + reversed。
+- 参数/动作/遥测：`config.gear_teeth_first|sec|sec_reversed|zero_phase|zero_count|ref_valid`、
+  `action.gear_capture|gear_read`、`system.gear_status`、`telemetry.sec_enc_*` /
+  `gear_abs_turns`；台架验收步骤见 `docs/DEV.md`。
 
 ## Custom printf
 

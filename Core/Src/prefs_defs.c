@@ -77,6 +77,12 @@ const prefs_entry_t prefs_entries[] = {
 	{184, PREFS_T_F32, 4, (void *)&(TORQUE_RAMP_RATE)},
 	{185, PREFS_T_BOOL, 1, (void *)&(VEL_LIMIT_EN)},
 	{186, PREFS_T_BOOL, 1, (void *)&(TORQUE_VEL_LIM_EN)},
+	{195, PREFS_T_I32, 4, (void *)&(GEAR_TEETH_FIRST)},
+	{196, PREFS_T_I32, 4, (void *)&(GEAR_TEETH_SEC)},
+	{198, PREFS_T_F32, 4, (void *)&(GEAR_ZERO_PHASE)},
+	{199, PREFS_T_I32, 4, (void *)&(GEAR_ZERO_COUNT)},
+	{200, PREFS_T_BOOL, 1, (void *)&(GEAR_REF_VALID)},
+	{208, PREFS_T_BOOL, 1, (void *)&(GEAR_SEC_REVERSED)},
 };
 const unsigned prefs_entry_count = sizeof(prefs_entries) / sizeof(prefs_entries[0]);
 
@@ -98,7 +104,7 @@ void config_apply_defaults(void){
 	V_MIN = -65.0f;
 	KP_MAX = 500.0f;
 	KD_MAX = 5.0f;
-	GR = 7.75f;
+	GR = 9.0f;
 	KT = 1.0f;
 	PPAIRS = 14.0f;
 	R_PHASE = 0.0f;
@@ -148,6 +154,12 @@ void config_apply_defaults(void){
 	TORQUE_RAMP_RATE = 1.0f;
 	VEL_LIMIT_EN = 1;
 	TORQUE_VEL_LIM_EN = 0;
+	GEAR_TEETH_FIRST = 30;
+	GEAR_TEETH_SEC = 27;
+	GEAR_ZERO_PHASE = 0.0f;
+	GEAR_ZERO_COUNT = 0;
+	GEAR_REF_VALID = 0;
+	GEAR_SEC_REVERSED = 1;
 }
 
 void config_apply_limits(void){
@@ -180,7 +192,7 @@ void config_apply_limits(void){
 	if(KP_MAX < 0.0f){KP_MAX = 0.0f;}
 	if(!isfinite(KD_MAX)){KD_MAX = 5.0f;}
 	if(KD_MAX < 0.0f){KD_MAX = 0.0f;}
-	if(!isfinite(GR)){GR = 7.75f;}
+	if(!isfinite(GR)){GR = 9.0f;}
 	if(GR < 0.001f){GR = 0.001f;}
 	if(!isfinite(KT)){KT = 1.0f;}
 	if(KT < 0.0001f){KT = 0.0001f;}
@@ -290,4 +302,13 @@ void config_apply_limits(void){
 	if(TORQUE_RAMP_RATE > 10000.0f){TORQUE_RAMP_RATE = 10000.0f;}
 	if(VEL_LIMIT_EN > 1){VEL_LIMIT_EN = 1;}
 	if(TORQUE_VEL_LIM_EN > 1){TORQUE_VEL_LIM_EN = 1;}
+	if(GEAR_TEETH_FIRST < 1){GEAR_TEETH_FIRST = 1;}
+	if(GEAR_TEETH_FIRST > 400){GEAR_TEETH_FIRST = 400;}
+	if(GEAR_TEETH_SEC < 1){GEAR_TEETH_SEC = 1;}
+	if(GEAR_TEETH_SEC > 400){GEAR_TEETH_SEC = 400;}
+	if(!isfinite(GEAR_ZERO_PHASE)){GEAR_ZERO_PHASE = 0.0f;}
+	if(GEAR_ZERO_PHASE < 0.0f){GEAR_ZERO_PHASE = 0.0f;}
+	if(GEAR_ZERO_PHASE > 1.0f){GEAR_ZERO_PHASE = 1.0f;}
+	if(GEAR_REF_VALID > 1){GEAR_REF_VALID = 1;}
+	if(GEAR_SEC_REVERSED > 1){GEAR_SEC_REVERSED = 1;}
 }

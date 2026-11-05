@@ -1394,7 +1394,7 @@ def main():
     ap.add_argument("--fd", action="store_true", help="CAN FD 模式（1M 仲裁 + 数据域）")
     ap.add_argument("--fd-rate", type=int, default=5, choices=(2, 5),
                     help="FD 数据域速率：2 或 5（Mbit/s）。适配器只支持这两档（Y2/Y5）")
-    ap.add_argument("--gr", type=float, default=7.75, help="gear ratio for the static checks")
+    ap.add_argument("--gr", type=float, default=9.0, help="gear ratio for the static checks (CBL89: 9)")
     args = ap.parse_args()
 
     bus = Slcan(args.port)

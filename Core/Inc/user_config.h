@@ -92,6 +92,22 @@ extern "C" {
  * 只在 FD 模式下生效，且**下次上电**才应用（DBTP/TDCR 只能在 init 模式写）。 */
 #define CAN_TDC                 __int_reg[139]
 #define INPUT_MODE              __int_reg[140]									// 输入整形模式（INPUT_MODE_x，见 foc.h）
+/* ---- 齿轮式双编（断电记忆输出轴位置）----
+ * 主编码器在转子轴上，副编码器在一个与转子齿轮啮合、齿数不同的齿轮上（SPI 共
+ * 用 SPI1，NSS 独立）。两路单圈绝对读数合起来解出"转子第几圈"，上电即恢复输出轴
+ * 的绝对位置；原理与量程见 dual_gear.h。全部在门极关闭时改。
+ *
+ * 量程 = ±T2/(2·|T1 - T2|) 转子圈（34/33 给 ±16.5，10/9 只给 ±4.5），所以齿数要
+ * 接近但不等；成比例放大（10/9 = 20/18 = 30/27）行为完全相同（只看 k/T2）。
+ * 副编码器读数如果随转子正转变小（磁铁反装 / 外啮合让副轴反转），置
+ * `GEAR_SEC_REVERSED`：固件先镜像读数再解算，量程不变 —— 不要试图用"求和"去解释
+ * 方向，那样每转一圈相位跑两圈多，圈数就没法解了（原因见 dual_gear.h）。 */
+#define GEAR_TEETH_FIRST        __int_reg[141]                                  // T1：转子侧齿轮齿数
+#define GEAR_TEETH_SEC          __int_reg[142]                                  // T2：副编码器侧齿轮齿数
+#define GEAR_ZERO_COUNT         __int_reg[144]                                  // 标定时刻的多圈计数 turns*CPR + count_wrapped
+#define GEAR_ZERO_PHASE         __float_reg[46]                                 // 标定时刻的韦尼尔相位 Δ ∈ [0,1)
+#define GEAR_SEC_REVERSED       gear_sec_reversed_flag	// 副编码器读数随正转变小（磁铁反装/外啮合）→ 解算前镜像
+#define GEAR_REF_VALID          gear_ref_valid_flag		// 双编参考是否已建立（=1 才在上电时恢复位置）
 /* 布尔/标志类配置单独用 uint8_t 存：TLV 里 bool 记录只有 1 字节，塞进 __int_reg
  * （int）会只写低字节，虽然在小端上能用，但不如独立字节干净。 */
 #define PRE_CALIBRATED          pre_calibrated_flag		// 标定完成标志（0 = 未标定，禁止进电机模式）
@@ -101,6 +117,8 @@ extern "C" {
 #define TORQUE_VEL_LIM_EN       torque_vel_lim_en_flag		// 阻抗/力矩模式下的速度限制开关
 extern uint8_t pre_calibrated_flag, fet_temp_en_flag, mot_temp_en_flag;
 extern uint8_t vel_limit_en_flag, torque_vel_lim_en_flag;
+extern uint8_t gear_ref_valid_flag;
+extern uint8_t gear_sec_reversed_flag;
 
 
 
