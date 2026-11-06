@@ -32,11 +32,16 @@
 #define INERTIA_TEST_CYC		INERTIA_T(0.060f)	// 单个台阶最长时长
 #define INERTIA_SKIP_CYC		INERTIA_T(0.008f)	// 丢掉电流环建立时间
 #define INERTIA_MIN_SAMPLES		20u					// 少于这个数认为拟合不可信
-/* 下面的阈值必须明显高于静止时的 PLL 噪声（实测 ±0.05 rad/s 输出端），
- * 否则一上电就"检测到在动"，或者试探阶段一拍就误判成已突破摩擦 */
-#define INERTIA_V_IDLE			0.15f				// 认为关节静止：窗内最大速度低于它
-#define INERTIA_V_BREAK			0.15f				// 判定"动了"的输出轴速度
-#define INERTIA_V_STOP			0.05f				// 刹车到低于它就算停了
+/* 下面的阈值必须明显高于静止时的 PLL 速度噪声，否则一上电就"检测到在动"，
+ * 或者试探阶段一拍就误判成已突破摩擦。**实测**（2026-11-06，编码器原始计数
+ * σ≈6 count，`pll_bandwidth 2000`）：静止时 |pll_velocity| 峰值 ±0.18 rad/s
+ * （输出轴）、σ≈0.044 —— 所以阈值取 0.35 才有 2x 余量（带宽开 3000 时峰值
+ * ±0.23 仍然够）。取 0.15 会让突破电流被噪声误判成最小档 0.05 A，随后两个
+ * 测试台阶（1.5x/2.5x）只有 0.075/0.125 A，拟合出的加速度全是噪声
+ * （status 6）。细节见 docs/DEV.md 的"编码器速度 PLL" */
+#define INERTIA_V_IDLE			0.35f				// 认为关节静止：窗内最大速度低于它
+#define INERTIA_V_BREAK			0.35f				// 判定"动了"的输出轴速度
+#define INERTIA_V_STOP			0.25f				// 刹车到低于它就算停了（同样要高于噪声）
 #define INERTIA_V_CAP			2.0f				// 测试期间的速度硬上限（安全闸）
 #define INERTIA_TRAVEL_CAP		0.10f				// 单个台阶的位移上限（rad，输出轴）
 #define INERTIA_I_STEP			0.05f				// 试探电流步长（A）
