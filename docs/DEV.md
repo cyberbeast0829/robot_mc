@@ -411,7 +411,7 @@ vel_integ = clamp(vel_integ, ±i_cmd_max);
 | **2** | **VEL_RAMP** | **速度设定值按 `accel_limit`/`decel_limit` 限斜率（默认 = 旧行为）** | CSV / CSP |
 | 3 | POS_FILTER | 二阶位置跟踪滤波（`config.input_bw`），速度作前馈 | CSP |
 | 4 | MIX_CHANNELS | 不支持 → 按 PASSTHROUGH | — |
-| 5 | TRAP_TRAJ | 梯形位置规划（`accel_limit`/`decel_limit`/`v_max`），速度作前馈 | CSP |
+| 5 | TRAP_TRAJ | 梯形位置规划（`trap_vel_limit`/`trap_accel_limit`/`trap_decel_limit`，未配置时退回 `v_max`/`accel_limit`/`decel_limit`），速度作前馈 | CSP |
 | 6 | TORQUE_RAMP | `t_ff` 按 `config.torque_ramp_rate`（N·m/s）限斜率 | 阻抗/MIT |
 | 7/8 | MIRROR / TUNING | 不支持 → 按 PASSTHROUGH | — |
 | 9 | MIT | 等同 PASSTHROUGH（阻抗律本来就是 MIT 语义） | 阻抗/MIT |
@@ -432,6 +432,34 @@ vel_integ = clamp(vel_integ, ±i_cmd_max);
 决定巡航方向 `s`，行程够就走梯形（加速/匀速/减速），不够就退化成三角形；
 起始速度高于巡航速度时先减速（"double deceleration move"）。规划结束时间冻结在
 `tf`，避免 float32 长时间累加丢精度。
+
+### 斜坡 / 轨迹的限值从哪来（ODrive 对齐）
+
+ODrive 把"设定值限幅"拆成了几组独立参数，我们按同样结构补齐。**新参数默认全 0 =
+沿用通用值，行为与改动前完全一致**（`ml_limit_or()` / `ml_trap_vel()` 负责回退）：
+
+| 场景 | ODrive | 本工程 | 默认 | 回退链 |
+|---|---|---|---|---|
+| 速度斜坡（VEL_RAMP）的速率 | `controller.config.vel_ramp_rate` | `config.vel_ramp_rate` | 0 | `>0` 时**加速与减速都用它**（对称，等同 ODrive）；`0` 时用 `accel_limit` / `decel_limit` |
+| 速度设定值上限（CSV/CSP） | `controller.config.vel_limit` | `config.v_max` | 65 | — |
+| 加速斜率（VEL_RAMP） | `controller.config.vel_ramp_rate` | `config.accel_limit` | 50 | `vel_ramp_rate = 0` 时才用它 |
+| 减速斜率（VEL_RAMP） | 同上（对称） | `config.decel_limit` | 50 | `vel_ramp_rate = 0` 时才用它 |
+| 梯形规划的巡航速度 | `trap_traj.config.vel_limit` | `config.trap_vel_limit` | 0 | `0` → 运行期限速（`controller.v_limit`，即帧内 vel_limit 或 `config.v_max`）；`>0` → **与运行期限速取 min**（与 ODrive 的"先轨迹限速、再被 controller.vel_limit 夹"等价） |
+| 梯形规划的加速度 | `trap_traj.config.accel_limit` | `config.trap_accel_limit` | 0 | `0` → `config.accel_limit` |
+| 梯形规划的减速度 | `trap_traj.config.decel_limit` | `config.trap_decel_limit` | 0 | `0` → `config.decel_limit`（再为 0 → `accel_limit`） |
+
+要点：
+
+- **想"轨迹慢慢爬、手动高速点动"**：把 `trap_*` 三个配上即可，`v_max` /
+  `accel_limit` / `decel_limit` 保持高速值不动。反过来也想让 CSV 的斜坡和轨迹不同，
+  配 `vel_ramp_rate` 即可。
+- **`trap_vel_limit` 只能收紧、不能放宽**：运行期限速（帧内 `vel_limit` 或
+  `config.v_max`）始终是上限，这是为了避免"轨迹要求 5 rad/s、位置环只被允许 1 rad/s"
+  那种必然触发 `FAULT_POS` 的矛盾。
+- 位置环的 `v_cmd` 夹取仍然用运行期的 `v_lim`（`config.enable_vel_limit` 关闭时
+  不夹），与轨迹限速是两回事：前者限制**位置环输出的速度指令**，后者限制
+  **轨迹规划的巡航速度**。
+- 参数改完立刻生效（每拍读取），不需要重启。
 
 ### 速度限制的两个开关
 
@@ -1109,7 +1137,8 @@ bootloader 契约（本仓库不含 bootloader，app 链接在 `0x08000000`）�
 | `motor.config.torque_lim` | `config.torque_lim` | ✅ 输出端 N·m |
 | `controller.config.input_mode` / `input_filter_bandwidth` / `torque_ramp_rate` | `config.input_mode` / `input_bw` / `torque_ramp_rate` | ✅ 见"输入整形" |
 | `controller.config.enable_vel_limit` / `enable_torque_mode_vel_limit` | `config.enable_vel_limit` / `enable_torque_vel_lim` | ✅ |
-| `trap_traj.config.decel_limit` | `config.decel_limit` | ✅（TRAP_TRAJ 为完整移植） |
+| `trap_traj.config.vel_limit` / `accel_limit` / `decel_limit` | `config.trap_vel_limit` / `trap_accel_limit` / `trap_decel_limit` | ✅ 独立三元组，默认 0 = 退回 `v_max`/`accel_limit`/`decel_limit`；巡航速度与运行期限速取 min |
+| `controller.config.vel_ramp_rate` | `config.vel_ramp_rate` | ✅ 默认 0 = 用 `accel_limit`/`decel_limit`；>0 时对称斜坡 |
 | `config.sensor_mode`（遥测） | `telemetry.sensor_mode` | ✅ 恒 0（无无感估计器） |
 | `controller.mechanical_power`（遥测） | `telemetry.mechanical_power` | ✅ |
 | `current_control.Id_setpoint` / `Iq_setpoint`（遥测） | `telemetry.i_d_des` / `telemetry.i_q_des` | ✅ |
@@ -1359,6 +1388,8 @@ python tools/flash_jlink.py --bin build/motorcontrol.bin   # GNU 构建产物也
 | 37 | `set config.input_mode 6` + `config.torque_ramp_rate 2`，MIT 下给 `t_ff` 阶跃 | `telemetry.t_ff` 按 ~2 N·m/s 爬升，不是瞬间到位 |
 | 38 | `set config.enable_torque_vel_lim 1` + MIT 推到超速 | `i_q_des` 被压向刹车侧，实际速度被限在 `config.v_max` 附近 |
 | 39 | `set config.enable_vel_limit 0` + `set command.v_des 100` | 写入成功（不再是 65），CSV 按 100 rad/s 转（注意机械安全）；设回 1 后回 `v_max` |
+| 40 | `set config.vel_ramp_rate 15` + CSV 阶跃 1 rad/s | 加速与减速都按 15 rad/s²（`telemetry.v_setpoint` 斜率一致）；设回 0 后回到 `accel_limit`/`decel_limit` |
+| 41 | `set config.input_mode 5` + `config.trap_vel_limit 1.0`（`v_max` 保持 65）+ CSP 走 2 rad | 巡航段速度被限在 1 rad/s（`telemetry.v_setpoint ≈ 1`），到点无过冲；`config.trap_accel_limit 5` 后加减速变缓 |
 
 ## 发布检查表
 

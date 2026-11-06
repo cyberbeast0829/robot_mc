@@ -469,6 +469,35 @@ static void test_posf(void)
     CHECK_NEAR(p, 0.25f, 1e-6f);
 }
 
+/* ---- 专用限值与轨迹上限的选择规则 ---- */
+static void test_limits(void)
+{
+    /* ml_limit_or：>0 用覆盖值，0/负数/NaN 都退回 fallback */
+    CHECK_NEAR(ml_limit_or(15.0f, 50.0f), 15.0f, 0.0f);
+    CHECK_NEAR(ml_limit_or(0.0f, 50.0f), 50.0f, 0.0f);
+    CHECK_NEAR(ml_limit_or(-3.0f, 50.0f), 50.0f, 0.0f);
+    CHECK_NEAR(ml_limit_or(NAN, 50.0f), 50.0f, 0.0f);
+
+    /* ml_trap_vel：未配置用运行期限速；配置更严格时取配置；更宽松时仍取运行期 */
+    CHECK_NEAR(ml_trap_vel(0.0f, 65.0f), 65.0f, 0.0f);
+    CHECK_NEAR(ml_trap_vel(5.0f, 65.0f), 5.0f, 0.0f);
+    CHECK_NEAR(ml_trap_vel(100.0f, 65.0f), 65.0f, 0.0f);
+    CHECK_NEAR(ml_trap_vel(-1.0f, 65.0f), 65.0f, 0.0f);
+
+    /* VEL_RAMP 的两种配置：只配 accel/decel（默认）与配了 vel_ramp_rate（对称） */
+    const float dt = 1.0f / 8000.0f;
+    float v = 0.0f;
+    v = ml_slew2(v, 10.0f, ml_limit_or(0.0f, 50.0f), ml_limit_or(0.0f, 50.0f), dt);
+    CHECK_NEAR(v, 50.0f * dt, 1e-6f);                 /* 50 rad/s² */
+    v = 0.0f;
+    v = ml_slew2(v, 10.0f, ml_limit_or(15.0f, 50.0f), ml_limit_or(15.0f, 50.0f), dt);
+    CHECK_NEAR(v, 15.0f * dt, 1e-6f);                 /* 15 rad/s²，加速与减速对称 */
+
+    /* 减速同样走 vel_ramp_rate */
+    v = ml_slew2(1.0f, 0.0f, ml_limit_or(15.0f, 50.0f), ml_limit_or(15.0f, 50.0f), dt);
+    CHECK_NEAR(v, 1.0f - 15.0f * dt, 1e-6f);
+}
+
 int main(void)
 {
     test_clamp();
@@ -481,6 +510,7 @@ int main(void)
     test_fit_and_inertia();
     test_tune_gains();
     test_slew2();
+    test_limits();
     test_trap_plan_eval();
     test_trap_step();
     test_posf();

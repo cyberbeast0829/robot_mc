@@ -61,6 +61,13 @@ extern "C" {
 #define INPUT_BW				__float_reg[43]									// POS_FILTER 的跟踪带宽 rad/s
 #define TORQUE_RAMP_RATE		__float_reg[44]									// TORQUE_RAMP 的转矩斜率 N·m/s
 #define DECEL_LIMIT				__float_reg[45]									// 速度设定值减速度 rad/s²（与 ACCEL_LIMIT 配对）
+/* ---- 斜坡/轨迹的专用限值（0 = 沿用上面那组通用值，保持老配置行为不变）----
+ * 为什么要分开：轨迹模式想慢慢爬、同时保留手动高速点动时，共用一个 v_max /
+ * accel_limit 就做不到。默认全 0，等价于"没有这两组参数"。 */
+#define VEL_RAMP_RATE			__float_reg[47]									// VEL_RAMP 的对称斜率 rad/s²（>0 时加速与减速都用它）
+#define TRAP_VEL_LIMIT			__float_reg[48]									// TRAP_TRAJ 的巡航上限 rad/s（与运行期限速取较小值）
+#define TRAP_ACCEL_LIMIT		__float_reg[49]									// TRAP_TRAJ 的加速度 rad/s²
+#define TRAP_DECEL_LIMIT		__float_reg[50]									// TRAP_TRAJ 的减速度 rad/s²
 
 
 #define PHASE_ORDER             __int_reg[0]                                    // Phase swapping during calibration

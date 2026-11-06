@@ -384,8 +384,14 @@ void motion_control(ControllerStruct *controller, EncoderStruct *encoder)
 			float p_track = p_des;
 			float v_ff = controller->pos_ff;
 			if (in_mode == INPUT_MODE_TRAP_TRAJ) {
+				/* 轨迹用自己的一组限值：只配了 trap_* 就完全不碰通用的 v_max /
+				 * accel_limit，可以"轨迹慢速爬 + 手动高速点动"共存。
+				 * 三项都默认 0 ⇒ 退回通用值，行为与改动前一致。 */
 				(void)ml_trap_step(&controller->pos_trap, dt_p, p_des,
-				                   v_lim, ACCEL_LIMIT, DECEL_LIMIT, &p_track, &v_ff);
+				                   ml_trap_vel(TRAP_VEL_LIMIT, v_lim),
+				                   ml_limit_or(TRAP_ACCEL_LIMIT, ACCEL_LIMIT),
+				                   ml_limit_or(TRAP_DECEL_LIMIT, DECEL_LIMIT),
+				                   &p_track, &v_ff);
 			} else if (in_mode == INPUT_MODE_POS_FILTER) {
 				if (!controller->pos_filter.seeded) {
 					ml_posf_reset(&controller->pos_filter, p_meas, 0.0f);
@@ -418,9 +424,12 @@ void motion_control(ControllerStruct *controller, EncoderStruct *encoder)
 		/* 速度设定值整形：只有 VEL_RAMP 走斜率限制。PASSTHROUGH / MIT 直通，
 		 * POS_FILTER / TRAP_TRAJ 的平滑已经由轨迹给出（位置环输出就是速度指令） */
 		if (in_mode != INPUT_MODE_INACTIVE) {
+			/* config.vel_ramp_rate > 0 时加速与减速都用它（ODrive 的 vel_ramp_rate
+			 * 就是对称速率）；= 0（默认）时用 accel_limit / decel_limit */
 			controller->v_setpoint = (in_mode == INPUT_MODE_VEL_RAMP)
 			                         ? ml_slew2(controller->v_setpoint, controller->v_target,
-			                                    ACCEL_LIMIT, DECEL_LIMIT, dt_v)
+			                                    ml_limit_or(VEL_RAMP_RATE, ACCEL_LIMIT),
+			                                    ml_limit_or(VEL_RAMP_RATE, DECEL_LIMIT), dt_v)
 			                         : controller->v_target;
 		}
 		controller->vel_err = controller->v_setpoint - v_meas;

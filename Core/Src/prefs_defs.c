@@ -83,6 +83,10 @@ const prefs_entry_t prefs_entries[] = {
 	{199, PREFS_T_I32, 4, (void *)&(GEAR_ZERO_COUNT)},
 	{200, PREFS_T_BOOL, 1, (void *)&(GEAR_REF_VALID)},
 	{208, PREFS_T_BOOL, 1, (void *)&(GEAR_SEC_REVERSED)},
+	{210, PREFS_T_F32, 4, (void *)&(VEL_RAMP_RATE)},
+	{211, PREFS_T_F32, 4, (void *)&(TRAP_VEL_LIMIT)},
+	{212, PREFS_T_F32, 4, (void *)&(TRAP_ACCEL_LIMIT)},
+	{213, PREFS_T_F32, 4, (void *)&(TRAP_DECEL_LIMIT)},
 };
 const unsigned prefs_entry_count = sizeof(prefs_entries) / sizeof(prefs_entries[0]);
 
@@ -160,6 +164,10 @@ void config_apply_defaults(void){
 	GEAR_ZERO_COUNT = 0;
 	GEAR_REF_VALID = 0;
 	GEAR_SEC_REVERSED = 1;
+	VEL_RAMP_RATE = 0.0f;
+	TRAP_VEL_LIMIT = 0.0f;
+	TRAP_ACCEL_LIMIT = 0.0f;
+	TRAP_DECEL_LIMIT = 0.0f;
 }
 
 void config_apply_limits(void){
@@ -311,4 +319,16 @@ void config_apply_limits(void){
 	if(GEAR_ZERO_PHASE > 1.0f){GEAR_ZERO_PHASE = 1.0f;}
 	if(GEAR_REF_VALID > 1){GEAR_REF_VALID = 1;}
 	if(GEAR_SEC_REVERSED > 1){GEAR_SEC_REVERSED = 1;}
+	if(!isfinite(VEL_RAMP_RATE)){VEL_RAMP_RATE = 0.0f;}
+	if(VEL_RAMP_RATE < 0.0f){VEL_RAMP_RATE = 0.0f;}
+	if(VEL_RAMP_RATE > 100000.0f){VEL_RAMP_RATE = 100000.0f;}
+	if(!isfinite(TRAP_VEL_LIMIT)){TRAP_VEL_LIMIT = 0.0f;}
+	if(TRAP_VEL_LIMIT < 0.0f){TRAP_VEL_LIMIT = 0.0f;}
+	if(TRAP_VEL_LIMIT > 200.0f){TRAP_VEL_LIMIT = 200.0f;}
+	if(!isfinite(TRAP_ACCEL_LIMIT)){TRAP_ACCEL_LIMIT = 0.0f;}
+	if(TRAP_ACCEL_LIMIT < 0.0f){TRAP_ACCEL_LIMIT = 0.0f;}
+	if(TRAP_ACCEL_LIMIT > 100000.0f){TRAP_ACCEL_LIMIT = 100000.0f;}
+	if(!isfinite(TRAP_DECEL_LIMIT)){TRAP_DECEL_LIMIT = 0.0f;}
+	if(TRAP_DECEL_LIMIT < 0.0f){TRAP_DECEL_LIMIT = 0.0f;}
+	if(TRAP_DECEL_LIMIT > 100000.0f){TRAP_DECEL_LIMIT = 100000.0f;}
 }

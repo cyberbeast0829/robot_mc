@@ -205,7 +205,7 @@
       "min": 0.0,
       "max": 100000.0,
       "unit": "rad/s^2",
-      "brief": "速度设定值的**加速**斜率限制（输出轴），也用于 TRAP_TRAJ 的加速段；0 = 关闭。非零默认值能在指令阶跃时压住电流冲击，对稳态无影响",
+      "brief": "速度设定值的**加速**斜率限制（输出轴），input_mode=2 时生效；TRAP_TRAJ（5）优先用自己的 config.trap_accel_limit。0 = 关闭。非零默认值能在指令阶跃时压住电流冲击，对稳态无影响",
       "persist": true,
       "default": 50.0
     },
@@ -217,9 +217,57 @@
       "min": 0.0,
       "max": 100000.0,
       "unit": "rad/s^2",
-      "brief": "速度设定值的**减速**斜率限制（输出轴），也用于 TRAP_TRAJ 的减速段；0 = 与 accel_limit 相同（不单独限制）",
+      "brief": "速度设定值的**减速**斜率限制（输出轴）；0 = 与 accel_limit 相同（不单独限制）。input_mode=2 时生效",
       "persist": true,
       "default": 50.0
+    },
+    {
+      "name": "config.vel_ramp_rate",
+      "type": "float",
+      "access": "rw",
+      "ref": "VEL_RAMP_RATE",
+      "min": 0.0,
+      "max": 100000.0,
+      "unit": "rad/s^2",
+      "brief": "input_mode=2（速度斜坡）的对称斜率（对应 ODrive 的 controller.config.vel_ramp_rate）：>0 时加速与减速都用它；0 = 沿用 accel_limit / decel_limit",
+      "persist": true,
+      "default": 0.0
+    },
+    {
+      "name": "config.trap_vel_limit",
+      "type": "float",
+      "access": "rw",
+      "ref": "TRAP_VEL_LIMIT",
+      "min": 0.0,
+      "max": 200.0,
+      "unit": "rad/s",
+      "brief": "input_mode=5（梯形规划）的巡航速度上限（输出轴），与运行期限速取较小值；0 = 用 config.v_max / 帧内 vel_limit",
+      "persist": true,
+      "default": 0.0
+    },
+    {
+      "name": "config.trap_accel_limit",
+      "type": "float",
+      "access": "rw",
+      "ref": "TRAP_ACCEL_LIMIT",
+      "min": 0.0,
+      "max": 100000.0,
+      "unit": "rad/s^2",
+      "brief": "input_mode=5 的加速度；0 = 用 config.accel_limit",
+      "persist": true,
+      "default": 0.0
+    },
+    {
+      "name": "config.trap_decel_limit",
+      "type": "float",
+      "access": "rw",
+      "ref": "TRAP_DECEL_LIMIT",
+      "min": 0.0,
+      "max": 100000.0,
+      "unit": "rad/s^2",
+      "brief": "input_mode=5 的减速度；0 = 用 config.decel_limit（再为 0 时用 accel_limit）",
+      "persist": true,
+      "default": 0.0
     },
     {
       "name": "config.input_mode",

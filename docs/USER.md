@@ -220,8 +220,12 @@ python tools/mc_ep.py --port COM7 call action.idle_mode
 | `config.vel_gain` | A/(rad/s) | 2.469 | 速度误差 × 它 = 电流指令 |
 | `config.vel_integrator_gain` | A/(rad/s)/s | 44.44 | 消掉重力/摩擦下的稳态误差 |
 | `config.pos_ff_gain` | — | 1.0 | CSP 帧间速度前馈；1 = 全前馈，0 = 关 |
-| `config.accel_limit` | rad/s² | 50 | 速度设定值的**加速**斜率（输出轴），TRAP_TRAJ 的加速段也用它；0 = 关。**CSP 想快就先放开它**（30~100），比加 `pos_gain` 安全 |
-| `config.decel_limit` | rad/s² | 50 | 速度设定值的**减速**斜率，TRAP_TRAJ 的减速段也用它；0 = 与 `accel_limit` 相同 |
+| `config.accel_limit` | rad/s² | 50 | 速度设定值的**加速**斜率（`input_mode=2` 时生效）；0 = 关。**CSP 想快就先放开它**（30~100），比加 `pos_gain` 安全 |
+| `config.decel_limit` | rad/s² | 50 | 速度设定值的**减速**斜率（`input_mode=2` 时生效）；0 = 与 `accel_limit` 相同 |
+| `config.vel_ramp_rate` | rad/s² | 0 | `input_mode=2` 的对称斜率（ODrive 的 `vel_ramp_rate`）：>0 时加速与减速都用它；0 = 用上面两个 |
+| `config.trap_vel_limit` | rad/s | 0 | `input_mode=5` 的巡航速度上限（与帧内/`v_max` 限速取较小值）；0 = 用运行期限速 |
+| `config.trap_accel_limit` | rad/s² | 0 | `input_mode=5` 的加速度；0 = 用 `accel_limit` |
+| `config.trap_decel_limit` | rad/s² | 0 | `input_mode=5` 的减速度；0 = 用 `decel_limit` |
 | `config.input_mode` | — | 2 | 输入整形：0 忽略、1 直通、**2 速度斜率（默认）**、3 位置跟踪滤波、5 梯形位置规划、6 转矩斜坡、9 MIT；4/7/8 不支持（按直通） |
 | `config.input_bw` | 1/s | 10 | 只对 `input_mode=3` 有效；4 kHz 位置环上实际可用上限约 45，超了固件会自动压低增益 |
 | `config.torque_ramp_rate` | N·m/s | 1.0 | 只对 `input_mode=6` 有效：前馈转矩的斜率；0 = 不限 |
@@ -334,14 +338,19 @@ python tools/mc_ep.py --port COM6 set config.can_timeout 100
 （先加速、匀速、再减速），用梯形规划：
 
 ```bash
-python tools/mc_ep.py --port COM6 set config.input_mode 5      # 5 = TRAP_TRAJ
-python tools/mc_ep.py --port COM6 set config.v_max 2.0         # 巡航速度（输出轴 rad/s）
-python tools/mc_ep.py --port COM6 set config.accel_limit 10    # rad/s²
-python tools/mc_ep.py --port COM6 set config.decel_limit 5     # 减速更缓
-python tools/mc_ep.py --port COM6 set command.mode 2           # CSP
+python tools/mc_ep.py --port COM6 set config.input_mode 5       # 5 = TRAP_TRAJ
+python tools/mc_ep.py --port COM6 set config.trap_vel_limit 2.0  # 轨迹巡航速度（输出轴 rad/s）
+python tools/mc_ep.py --port COM6 set config.trap_accel_limit 10 # rad/s²
+python tools/mc_ep.py --port COM6 set config.trap_decel_limit 5  # 减速更缓
+python tools/mc_ep.py --port COM6 set command.mode 2             # CSP
 python tools/mc_ep.py --port COM6 set command.p_des 1.0
 ```
 
+- **轨迹有自己的一组限值**（对应 ODrive 的 `trap_traj.config.*`）：
+  `config.trap_vel_limit` / `trap_accel_limit` / `trap_decel_limit`。
+  **默认全 0 = 沿用 `config.v_max` / `accel_limit` / `decel_limit`**，所以不配也能用；
+  配上就能"轨迹慢慢爬、手动高速点动"共存。
+  `trap_vel_limit` 只能**收紧**（与帧内 `vel_limit` / `config.v_max` 取较小值）。
 - TRAP_TRAJ 会在**位置环**里生成位置+速度设定，速度直接做位置环前馈；中途改
   `command.p_des` 会从当前位置/速度重新规划，不会跳变。
 - `config.input_mode = 3` 是二阶跟踪滤波（不是规划，只是把设定值"跟"过去），

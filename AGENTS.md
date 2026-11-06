@@ -183,6 +183,13 @@ Same shape as upstream, with these N32 names:
     前馈 `pos_ff`（叠加会过冲）；它们自己就平滑，**不再叠加** `accel_limit` 的斜率。
   - `ml_trap_*` 是 ODrive `trapTraj.cpp` 的逐行移植；`ml_posf_*` 是 ODrive
     `INPUT_MODE_POS_FILTER` 的二阶跟踪（ki=2·bw、kp=ki²/4，kp·dt≤0.5 自动压增益）。
+  - **斜坡/轨迹有专用限值**（对齐 ODrive 的 `vel_ramp_rate` 与 `trap_traj.config.*`）：
+    `config.vel_ramp_rate`（>0 时 VEL_RAMP 的加速与减速都用它）、
+    `config.trap_vel_limit` / `trap_accel_limit` / `trap_decel_limit`。
+    默认全 0 = 沿用 `accel_limit`/`decel_limit`/`v_max`（`ml_limit_or()` /
+    `ml_trap_vel()` 负责回退，行为与没有这组参数时逐位一致）。
+    ⚠ `trap_vel_limit` 只能收紧（与运行期限速取 min），不能放宽 —— 否则轨迹要求的
+    速度位置环给不出，必然触发 `FAULT_POS`。
   - `motion_seed()` / 模式变化时清 `pos_trap.planned` 与 `pos_filter.seeded`，
     下一拍从**实测位置**起步；`zero_commands()` 置 `input_mode_prev = 0xFF` 强制重播种。
   - `config.enable_vel_limit`（默认 true）关掉后 CSV/CSP 与 CYBERBEAST 帧解析都不再

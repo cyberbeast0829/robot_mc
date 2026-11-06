@@ -79,6 +79,23 @@ static inline float ml_slew2(float current, float target, float accel, float dec
 	return current + delta;
 }
 
+/* 专用限值的选择规则（config.vel_ramp_rate / trap_accel_limit / trap_decel_limit）：
+ * override > 0 用它，否则退回通用的 accel/decel_limit。0 / 负数 / NaN 都算"未设置"
+ * —— 默认就是 0，所以没有配这两组新参数时行为与改动前完全一致。 */
+static inline float ml_limit_or(float override, float fallback)
+{
+	return (override > 0.0f) ? override : fallback;
+}
+
+/* 梯形规划的巡航上限：显式值只在**更严格**时才生效（取 min）。这与 ODrive 一致
+ * —— 它的 trap_traj.vel_limit 之后还会被 controller.vel_limit 再夹一次。
+ * cfg <= 0 时直接用运行期限速（loop_lim），不会出现"轨迹要求的速度环路给不出"。 */
+static inline float ml_trap_vel(float cfg, float loop_lim)
+{
+	if (!(cfg > 0.0f)) { return loop_lim; }
+	return (cfg < loop_lim) ? cfg : loop_lim;
+}
+
 /* 速度 PI：i_q = clamp(vel_gain*err + integ)。
  * 抗饱和用 ODrive 的做法：输出被限幅的那一拍积分器按 ML_INT_DECAY 衰减而不是
  * 继续累积，未限幅才正常积分。任何 NaN 输入都退化为 0 —— 绝不让 NaN 走进电流环。 */

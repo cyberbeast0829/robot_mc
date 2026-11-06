@@ -27,8 +27,12 @@ ID 由 `tools/endpoint_ids.json` 锁定，固件升级不会改变；`access` �
 | `config.vel_gain` | 137 | float | rw | A/(rad/s) | 0.0 .. 2000.0 | 2.469 | 是 | CSV/CSP 速度环 P 增益（电机端安培 / 输出轴角速度）；0 时速度环只剩积分器（要完全关闭请把 vel_integrator_gain 也设 0） |
 | `config.vel_integrator_gain` | 138 | float | rw | A/(rad/s)/s | 0.0 .. 200000.0 | 44.44 | 是 | 速度环 I 增益；消掉重力/摩擦下的稳态速度误差（抗饱和：输出限幅时积分按 0.99 衰减） |
 | `config.pos_ff_gain` | 139 | float | rw |  | 0.0 .. 2.0 | 1.0 | 是 | CSP 帧间速度前馈系数（指令差分的比例）；1.0 = 全前馈，0 = 关闭 |
-| `config.accel_limit` | 140 | float | rw | rad/s^2 | 0.0 .. 100000.0 | 50.0 | 是 | 速度设定值的**加速**斜率限制（输出轴），也用于 TRAP_TRAJ 的加速段；0 = 关闭。非零默认值能在指令阶跃时压住电流冲击，对稳态无影响 |
-| `config.decel_limit` | 181 | float | rw | rad/s^2 | 0.0 .. 100000.0 | 50.0 | 是 | 速度设定值的**减速**斜率限制（输出轴），也用于 TRAP_TRAJ 的减速段；0 = 与 accel_limit 相同（不单独限制） |
+| `config.accel_limit` | 140 | float | rw | rad/s^2 | 0.0 .. 100000.0 | 50.0 | 是 | 速度设定值的**加速**斜率限制（输出轴），input_mode=2 时生效；TRAP_TRAJ（5）优先用自己的 config.trap_accel_limit。0 = 关闭。非零默认值能在指令阶跃时压住电流冲击，对稳态无影响 |
+| `config.decel_limit` | 181 | float | rw | rad/s^2 | 0.0 .. 100000.0 | 50.0 | 是 | 速度设定值的**减速**斜率限制（输出轴）；0 = 与 accel_limit 相同（不单独限制）。input_mode=2 时生效 |
+| `config.vel_ramp_rate` | 210 | float | rw | rad/s^2 | 0.0 .. 100000.0 | 0.0 | 是 | input_mode=2（速度斜坡）的对称斜率（对应 ODrive 的 controller.config.vel_ramp_rate）：>0 时加速与减速都用它；0 = 沿用 accel_limit / decel_limit |
+| `config.trap_vel_limit` | 211 | float | rw | rad/s | 0.0 .. 200.0 | 0.0 | 是 | input_mode=5（梯形规划）的巡航速度上限（输出轴），与运行期限速取较小值；0 = 用 config.v_max / 帧内 vel_limit |
+| `config.trap_accel_limit` | 212 | float | rw | rad/s^2 | 0.0 .. 100000.0 | 0.0 | 是 | input_mode=5 的加速度；0 = 用 config.accel_limit |
+| `config.trap_decel_limit` | 213 | float | rw | rad/s^2 | 0.0 .. 100000.0 | 0.0 | 是 | input_mode=5 的减速度；0 = 用 config.decel_limit（再为 0 时用 accel_limit） |
 | `config.input_mode` | 182 | int32 | rw |  | 0 .. 9 | 2 | 是 | 输入整形模式（与 ODrive InputMode 编号一致）：0=忽略输入保持、1=直通、2=速度斜率（默认）、3=位置跟踪滤波、5=梯形位置规划、6=转矩斜坡、9=MIT(同直通)；4/7/8 不支持，按直通处理。它只整形设定值，控制环仍由 command.mode 选择 |
 | `config.input_bw` | 183 | float | rw | 1/s | 1.0 .. 200.0 | 10.0 | 是 | input_mode=3（位置跟踪滤波）的跟踪带宽；离散稳定限制在 4 kHz 位置环上约 45 1/s，超了固件会自动压低增益 |
 | `config.torque_ramp_rate` | 184 | float | rw | N-m/s | 0.0 .. 10000.0 | 1.0 | 是 | input_mode=6（转矩斜坡）下前馈转矩的变化率；0 = 不限（直通）。只在阻抗/MIT 模式下生效 |

@@ -1,5 +1,5 @@
 {
-  "next_id": 210,
+  "next_id": 214,
   "map": {
     "config.i_bw": 1,
     "config.i_max": 2,
@@ -208,6 +208,10 @@
     "action.gear_capture": 206,
     "action.gear_read": 207,
     "config.gear_sec_reversed": 208,
-    "telemetry.sec_enc_present": 209
+    "telemetry.sec_enc_present": 209,
+    "config.vel_ramp_rate": 210,
+    "config.trap_vel_limit": 211,
+    "config.trap_accel_limit": 212,
+    "config.trap_decel_limit": 213
   }
 }
