@@ -22,6 +22,10 @@
  *     and the hardware disagree (AR/REPCNT/RCR change the update rate) or the
  *     DWT counter is not running at HCLK - check period_min, which is the
  *     *measured* value, against isr_period before trusting anything else.
+ *   - period_ref is the raw DWT stamp of the previous entry.  It is a free
+ *     running counter value (0..2^32-1, one wrap per 17.9 s), *not* a duration:
+ *     it only exists to be subtracted from the next entry's timestamp, so do
+ *     not read it as a period (the endpoint layer exports the durations only).
  *   - period_max > isr_period means the handler did not finish inside its 25 us
  *     slot; a value of about twice isr_period is a completely missed PWM cycle.
  *     overrun counts how often the slot was missed and n how many cycles were
@@ -108,7 +112,8 @@ typedef struct{
 	uint32_t reset_req;						// write 1 to restart the statistics
 	uint32_t n;								// cycles measured since the last reset (wraps after ~107 s)
 	uint32_t overrun;						// cycles where the handler missed its slot
-	uint32_t period_last, period_min, period_max;
+	uint32_t period_ref;					// DWT stamp of the previous entry - the subtraction reference, NOT a duration
+	uint32_t period_last, period_min, period_max;	// measured ISR-to-ISR period, in cycles
 	uint32_t total_last, total_min, total_max;
 	uint64_t total_sum;
 	uint32_t seg_last[ISR_SEG_COUNT];
@@ -138,16 +143,19 @@ static inline uint32_t isr_timing_now(void){
 	return DWT_CYCCNT;
 }
 
-/* Start of the handler: keeps the ISR-to-ISR period, which is what catches a
- * missed cycle, and handles a statistics reset request */
+/* Start of the handler: keeps the ISR-to-ISR period (period_last is the
+ * measured duration, period_ref the timestamp it was measured against),
+ * which is what catches a missed cycle, and handles a statistics reset
+ * request */
 static inline void isr_timing_begin(uint32_t t){
-	uint32_t period = t - isr_timing.period_last;		// unsigned: correct across the counter wrap
-	isr_timing.period_last = t;
+	uint32_t period = t - isr_timing.period_ref;		// unsigned: correct across the counter wrap
+	isr_timing.period_ref = t;
 
 	if(isr_timing.reset_req){
 		isr_timing.reset_req = 0;
 		isr_timing.n = 0;
 		isr_timing.overrun = 0;
+		isr_timing.period_last = 0;
 		isr_timing.period_min = ISR_TIMING_MIN_UNSET;
 		isr_timing.period_max = 0;
 		isr_timing.total_last = 0;
@@ -173,6 +181,7 @@ static inline void isr_timing_begin(uint32_t t){
 		/* The measured entry jitter is only about +/-20 cycles (5982..6018
 		 * observed), so anything past the slack means the handler did not finish
 		 * inside its own slot - see ISR_TIMING_OVERRUN_SLACK */
+		isr_timing.period_last = period;
 		if(period > (isr_timing.isr_period + ISR_TIMING_OVERRUN_SLACK)){isr_timing.overrun++;}
 		if(period < isr_timing.period_min){isr_timing.period_min = period;}
 		if(period > isr_timing.period_max){isr_timing.period_max = period;}

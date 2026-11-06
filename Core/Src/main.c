@@ -376,7 +376,7 @@ void isr_timing_init(void){
 	 * AR*(REPCNT+1) = 6000 cycles.  ATIM1 is clocked from SYSCLK and the DWT from
 	 * HCLK, both 240 MHz here, so the two cycle counts compare directly */
 	isr_timing.isr_period = ATIM1->AR*(ATIM1->REPCNT + 1u);
-	isr_timing.period_last = DWT_CYCCNT;
+	isr_timing.period_ref = DWT_CYCCNT;
 	isr_timing.reset_req = 1;		// start the statistics on the first cycle
 }
 

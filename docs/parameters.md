@@ -189,9 +189,9 @@ ID 由 `tools/endpoint_ids.json` 锁定，固件升级不会改变；`access` �
 | `timing.isr_period` | 100 | uint32 | r |  | — | — | 否 | 控制中断周期（CPU cycles） |
 | `timing.count` | 101 | uint32 | r |  | — | — | 否 | 已统计的中断周期数 |
 | `timing.overrun` | 102 | uint32 | r |  | — | — | 否 | 错过的控制周期数 |
-| `timing.period_last` | 103 | uint32 | r |  | — | — | 否 | 上一次中断周期 |
-| `timing.period_min` | 104 | uint32 | r |  | — | — | 否 | 最小中断周期 |
-| `timing.period_max` | 105 | uint32 | r |  | — | — | 否 | 最大中断周期 |
+| `timing.period_last` | 103 | uint32 | r |  | — | — | 否 | 上一次中断周期（CPU cycles，正常应约等于 timing.isr_period） |
+| `timing.period_min` | 104 | uint32 | r |  | — | — | 否 | 最小中断周期（CPU cycles）；0xFFFFFFFF = 尚未采样 |
+| `timing.period_max` | 105 | uint32 | r |  | — | — | 否 | 最大中断周期（CPU cycles）；约为 isr_period 的整数倍表示漏拍 |
 | `timing.total_last` | 106 | uint32 | r |  | — | — | 否 | 上次中断总耗时 |
 | `timing.total_min` | 107 | uint32 | r |  | — | — | 否 | 最小中断总耗时 |
 | `timing.total_max` | 108 | uint32 | r |  | — | — | 否 | 最大中断总耗时 |

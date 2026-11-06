@@ -1543,21 +1543,21 @@
       "type": "uint32",
       "access": "r",
       "get": "isr_timing.period_last",
-      "brief": "上一次中断周期"
+      "brief": "上一次中断周期（CPU cycles，正常应约等于 timing.isr_period）"
     },
     {
       "name": "timing.period_min",
       "type": "uint32",
       "access": "r",
       "get": "isr_timing.period_min",
-      "brief": "最小中断周期"
+      "brief": "最小中断周期（CPU cycles）；0xFFFFFFFF = 尚未采样"
     },
     {
       "name": "timing.period_max",
       "type": "uint32",
       "access": "r",
       "get": "isr_timing.period_max",
-      "brief": "最大中断周期"
+      "brief": "最大中断周期（CPU cycles）；约为 isr_period 的整数倍表示漏拍"
     },
     {
       "name": "timing.total_last",
