@@ -132,7 +132,8 @@ typedef struct{
      * 测出来的是**输出端**惯量 J（kg·m^2），写 config.inertia，但**不写 flash**。 */
     uint8_t inertia_state;                                  // INERTIA_x
     uint8_t inertia_next;                                   // BRAKE 结束后去的状态
-    uint8_t inertia_status;                                 // 0 未跑 / 1 运行中 / 2 成功 / 3..6 失败原因
+    uint8_t inertia_status;                                 // 对外：0 未跑 / 1 运行中 / 2 成功 / 3..7 失败原因（只由 run_fsm_slow 写）
+    int8_t inertia_run_code;                                // 单轮结果码（ISR 写）；多轮取中位时中间轮不对外公布
     volatile uint8_t inertia_req;                           // action 置位，ISR 采纳后清零
     uint16_t inertia_cycles;                                // 当前阶段计时（控制周期）
     float inertia_i;                                        // 当前施加的电流（A，电机端）

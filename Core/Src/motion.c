@@ -42,9 +42,15 @@
 #define INERTIA_V_IDLE			0.35f				// 认为关节静止：窗内最大速度低于它
 #define INERTIA_V_BREAK			0.35f				// 判定"动了"的输出轴速度
 #define INERTIA_V_STOP			0.25f				// 刹车到低于它就算停了（同样要高于噪声）
-#define INERTIA_V_CAP			2.0f				// 测试期间的速度硬上限（安全闸）
+/* 速度硬上限（安全闸）。原来是 2.0，但本机 a≈150 rad/s² 时 13 ms 就撞上它，
+ * 而前面还要跳过 8 ms 建立时间 ⇒ 每个台阶只剩 ~5 ms(200 点) 在拟合，齿隙/摩擦
+ * 的瞬态全进来了（台架实测单次 J 离散 ±50%）。放到 5.0 后由位移上限 0.10 rad
+ * 先触发，拟合窗口变成 ~26 ms，重复性明显变好（见 docs/DEV.md） */
+#define INERTIA_V_CAP			5.0f				// 测试期间的速度硬上限（安全闸）
 #define INERTIA_TRAVEL_CAP		0.10f				// 单个台阶的位移上限（rad，输出轴）
-#define INERTIA_I_STEP			0.05f				// 试探电流步长（A）
+/* 试探步长。原来是 0.05 A，但本机突破电流只有 0.15~0.25 A ⇒ 只有 3~5 档可选，
+ * 两台阶的 Δi 在 0.15~0.25 之间跳（±25% 直接进 J 的分母）。0.02 A 让 Δi 一致得多 */
+#define INERTIA_I_STEP			0.02f				// 试探电流步长（A）
 #define INERTIA_I_MAX_FRAC		0.5f				// 测试电流 ≤ 0.5·I_MAX
 #define INERTIA_FIT_T			0.100f				// pos_error_fault 推荐值里用的恢复时间（s）
 
@@ -150,7 +156,7 @@ static void inertia_step(ControllerStruct *controller, const EncoderStruct *enco
 			break;
 		}
 		if (controller->inertia_v_peak > INERTIA_V_IDLE) {
-			controller->inertia_status = 3;			// 关节本来就在动
+			controller->inertia_run_code = 3;			// 关节本来就在动
 			controller->inertia_state = INERTIA_FAIL;
 			break;
 		}
@@ -177,7 +183,7 @@ static void inertia_step(ControllerStruct *controller, const EncoderStruct *enco
 		}
 		if ((controller->inertia_cycles > INERTIA_BREAKAWAY_MAX)
 		    || (controller->inertia_i > i_cap)) {
-			controller->inertia_status = 4;			// 加到上限还不动：卡住或摩擦过大
+			controller->inertia_run_code = 4;			// 加到上限还不动：卡住或摩擦过大
 			controller->inertia_state = INERTIA_FAIL;
 		}
 		break;
@@ -255,7 +261,7 @@ static void inertia_step(ControllerStruct *controller, const EncoderStruct *enco
 	case INERTIA_DONE:
 		if ((controller->inertia_n_lo < INERTIA_MIN_SAMPLES)
 		    || (controller->inertia_n_hi < INERTIA_MIN_SAMPLES)) {
-			controller->inertia_status = 5;			// 台阶太短，采不到足够的点
+			controller->inertia_run_code = 5;			// 台阶太短，采不到足够的点
 			controller->inertia_state = INERTIA_FAIL;
 			break;
 		}
@@ -269,9 +275,9 @@ static void inertia_step(ControllerStruct *controller, const EncoderStruct *enco
 		                           &controller->inertia_meas)) {
 			INERTIA = controller->inertia_meas;	// RAM only；不写 flash
 			update_pos_fault_suggest(controller);
-			controller->inertia_status = 2;
+			controller->inertia_run_code = 2;
 		} else {
-			controller->inertia_status = 6;			// 激励不足 / 斜率不可信
+			controller->inertia_run_code = 6;			// 激励不足 / 斜率不可信
 		}
 		controller->inertia_state = INERTIA_IDLE;
 		controller->i_q_ref = 0.0f;
@@ -310,7 +316,7 @@ void motion_control(ControllerStruct *controller, EncoderStruct *encoder)
 	if (controller->inertia_req && (controller->inertia_state == INERTIA_IDLE)) {
 		controller->inertia_req = 0;
 		controller->inertia_state = INERTIA_SETTLE;
-		controller->inertia_status = 1;
+		controller->inertia_run_code = 1;
 		controller->inertia_cycles = 0;
 		controller->inertia_i = 0.0f;
 		controller->inertia_v_peak = 0.0f;

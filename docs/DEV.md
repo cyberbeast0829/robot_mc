@@ -669,8 +669,10 @@ pos_gain            = ω_c/30                             [(rad/s)/rad]
 自动回菜单是必须的：测完若停在 MOTOR_MODE，门极还开着而转矩是 0，有重力负载的
 关节会直接垮下来；回菜单后紧接着就能 `action.save`（save 要求门极关闭）。
 
-状态机本身（`Core/Src/motion.c` 的 `inertia_step()`）在 MOTOR_MODE 里跑，约 1.3 s，
-全程在控制 ISR 内、不 printf、不写 flash：
+状态机本身（`Core/Src/motion.c` 的 `inertia_step()`）在 MOTOR_MODE 里跑，单轮约
+0.5 s；**每个 `action.measure_inertia` 连跑 3 轮取中位数**（单轮读数受齿隙/摩擦与
+突破电流档位影响，台架实测离散 ±50%，只有中位数稳定），全过程约 3 s、全部在控制
+ISR 内，不 printf、不写 flash：
 
 | 阶段 | 时长 | 做什么 |
 |---|---|---|
@@ -682,8 +684,11 @@ pos_gain            = ω_c/30                             [(rad/s)/rad]
 | `INERTIA_TEST_HI` | ≤60 ms | 电流台阶 `2.5·i_break`（都钳在 `0.5·I_MAX` 以内） |
 | `INERTIA_BRAKE` → `INERTIA_DONE` | 20–150 ms | `J = KT·GR·(ī_hi − ī_lo)/(a_hi − a_lo)`，写 `config.inertia` |
 
-单个台阶还会在**位移超过 0.10 rad** 或速度超过 2 rad/s 时提前结束（轻关节几毫秒就到），
-实测整轮约 1.3 s、关节净行程 ~0.10 rad。
+单个台阶会在**位移超过 0.10 rad** 或速度超过 5 rad/s 时提前结束。⚠ 速度上限从
+2 rad/s 提到 5 rad/s 是为了让拟合窗口够长：原来 1.9 ms 就到 2 rad/s、13 ms 撞上限，
+而前面还要跳过 8 ms 建立时间 ⇒ 每个台阶只剩 ~5 ms(200 点) 数据，齿隙/摩擦的瞬态
+全进来（台架单次 J 离散 ±50%）。现在窗口 ~26 ms。代价是**每轮净行程从 ~0.03 rad
+涨到 ~0.17 rad，一个 action（3 轮）约 0.5 rad** —— 行程受限的关节先把它挪到中间。
 
 ⚠ 那三个速度阈值（`INERTIA_V_IDLE` / `INERTIA_V_BREAK` / `INERTIA_V_STOP` =
 0.35 / 0.35 / 0.25 rad/s）是按**实测的 PLL 噪声峰值 ±0.18 rad/s** 定的（见
@@ -693,7 +698,15 @@ pos_gain            = ω_c/30                             [(rad/s)/rad]
 核这三个值（余量至少 1.5x 噪声峰值）。
 
 `system.inertia_status` 的失败码是分段的，方便定位：3 = 关节本来就在动，4 = 加电流到
-上限还不动（卡住/摩擦过大），5 = 台阶太短采不到足够的点，6 = 激励不足/斜率不可信。
+上限还不动（卡住/摩擦过大），5 = 台阶太短（样本不足）/超时/状态机卡住，6 = 激励不足
+/斜率不可信，7 = 进不了电机模式。
+
+⚠ **多轮取中位的语义**：整个 action 期间 `system.inertia_status` **一直是 1**；中间
+某一轮失败**不会**把它写成失败码（编排会自动再跑一轮，最多 3 轮），只有整个动作结束
+才发布最终结果 —— 2 = 成功（此时 `config.inertia` 是各成功轮的中位数），否则是最近
+一次的失败码（`>2`），此时 `config.inertia` 保持原值（`action.measure_inertia` 打印
+`keeping J = ...`）。单轮的结果码放在 `controller.inertia_run_code`（ISR 写，不对外
+暴露），所以上位机只要"轮询到 `status != 1`"就是真的结束了。
 
 诊断遥测（只读）：`telemetry.inertia_state`（状态机停在哪）、
 `telemetry.inertia_break_current`（本轮认定的突破电流）、
@@ -717,7 +730,7 @@ pos_gain            = ω_c/30                             [(rad/s)/rad]
   **跳过 `inertia_req` 待处理的周期**（否则 `zero_commands()` 会在
   `motion_control()` 采纳请求之前把它清掉 —— 这是实现时踩过的坑）。
 - 前提：`KT > 0`、`GR > 0`（endpoint 的 `require` 就挡在这里）、关节能自由转
-  一小段（净行程约 0.10 rad）、齿隙已经消除。卡住/欠激励会返回失败码，不会写垃圾值。
+  一小段（净行程约 0.5 rad，3 轮合计）、齿隙已经消除。卡住/欠激励会返回失败码，不会写垃圾值。
 
 **`ω_c` 的上限由延迟决定，不由惯量决定**：电流环 ≈40 µs + PLL（2000 rad/s）+
 速度环零阶保持（125 µs）+ 采样 ≈ 0.3–1 ms ⇒ `ω_c` 超过约 1000 rad/s（160 Hz）
@@ -728,7 +741,7 @@ pos_gain            = ω_c/30                             [(rad/s)/rad]
 | 项目 | 实测 |
 |---|---|
 | 标定出的 `config.inertia` | **0.00206 / 0.00237 / 0.00289**（连续 3 次，均值 0.0024，离散 ±17%；重标电机后 0.00227，`break 0.10 A`、`a_lo 15.6`、`a_hi 37.3`） |
-| 标定耗时 / 关节行程 | ~1.3 s / ~0.10 rad（没加刹车时是 0.35 rad） |
+| 标定耗时 / 关节行程 | 3 轮约 3 s / 净行程 ~0.5 rad（旧版 2 rad/s 上限时单轮 ~1.3 s / 0.10 rad，但离散 ±50%） |
 | `vel_gain = 3` | 稳定（`ω_c = 3·KT·GR/J ≈ 1100 rad/s`），超调 26% |
 | `vel_gain = 4` | 失稳（`ω_c ≈ 1500 rad/s`） |
 

@@ -23,7 +23,23 @@ extern uint32_t _reboot_cookie;
 /* 重启前给上位机留的窗口（等 USB/CAN 应答发出去）。控制环 40 kHz ⇒ 20000 拍 = 0.5 s */
 #define REBOOT_DELAY_CYCLES     20000u
 
+/* 惯量标定每个 action 连跑几轮取中位。单次读数受齿隙/摩擦与突破电流档位影响，
+ * 台架实测离散 ±50%，中位数才稳（见 docs/DEV.md"惯量标定"一节） */
+#define INERTIA_RUNS            3u
+
  static int save_preferences(void);
+
+ /* n 个样本的中位数（n = 1/2/3；2 个时取平均） */
+ static float inertia_median(const float *a, uint8_t n){
+	 if(n == 1u){return a[0];}
+	 if(n == 2u){return 0.5f*(a[0] + a[1]);}
+	 float x = a[0], y = a[1], z = a[2];
+	 if(x > y){float t = x; x = y; y = t;}
+	 if(y > z){float t = y; y = z; z = t;}
+	 if(x > y){float t = x; x = y; y = t;}
+	 return y;
+ }
+
 
  void run_fsm(FSMStruct * fsmstate){
 	 /* run_fsm is run every commutation interrupt cycle */
@@ -503,8 +519,12 @@ extern uint32_t _reboot_cookie;
 	 static uint8_t reboot_armed = 0;		// 1 = a reset is queued
 	 static uint32_t reboot_deadline = 0;	// loop_count threshold (valid when reboot_armed)
 	 static uint8_t reboot_dfu = 0;		// 1 = reset into the ROM DFU bootloader (cookie), 0 = plain reset
-	 static uint8_t inertia_phase = 0;		// 0 idle / 1 等门极 / 2 等结果 / 3 等回菜单
+	 static uint8_t inertia_phase = 0;		// 0 idle / 1 等门极 / 2 等结果 / 3 等回菜单 / 4 两轮之间停稳
 	 static uint8_t inertia_started = 0;	// ISR 是否已经把请求转成状态机
+	 static uint8_t inertia_tries = 0;		// 已完成的轮数
+	 static uint8_t inertia_ok = 0;			// 成功的轮数
+	 static int8_t inertia_fail = 0;		// 最近一次的失败码
+	 static float inertia_samples[INERTIA_RUNS];
 	 static uint32_t inertia_deadline = 0;
 
 	 /* Print any calibration milestone messages queued by the ISR (calibration
@@ -526,12 +546,21 @@ extern uint32_t _reboot_cookie;
 	  * 进电机模式 → 触发 ISR 里的状态机 → 等它跑完 → 回菜单。
 	  * 为什么必须回菜单：测完如果停在 MOTOR_MODE，门极还是开的、转矩是 0，
 	  * 有重力负载的关节会直接垮下来。回菜单还能让紧接着的 action.save 生效
-	  * （save 要求门极关闭）。 */
+	  * （save 要求门极关闭）。
+	  *
+	  * 连跑 INERTIA_RUNS 轮取中位数：单次读数受齿隙/摩擦和突破电流档位影响，
+	  * 台架实测离散 ±50%（0.00053~0.00167），只有中位数稳定。轮与轮之间停
+	  * 0.375 s —— ISR 的 SETTLE 只有 150 ms，刚刹完车还在轻微漂移时会被判成
+	  * "本来就在动"（status 3）。净行程因此约为单轮的 3 倍（~0.5 rad） */
 	 if(fsmstate->inertia_pending){
 		 fsmstate->inertia_pending = 0;
 		 controller.inertia_status = 1;
 		 inertia_phase = 1;
 		 inertia_started = 0;
+		 inertia_tries = 0;
+		 inertia_ok = 0;
+		 inertia_fail = 0;
+		 controller.inertia_run_code = 0;
 		 inertia_deadline = controller.loop_count + REBOOT_DELAY_CYCLES / 4;	/* 0.125 s 等到门极 */
 		 request_fsm_state(fsmstate, MOTOR_MODE);
 	 }
@@ -547,25 +576,79 @@ extern uint32_t _reboot_cookie;
 				 inertia_phase = 0;
 			 }
 			 break;
-		 case 2:
+		 case 2: {
 			 /* 必须先看到 ISR 把请求转成 INERTIA_SETTLE，才能把"回到 IDLE"当成结束。
 			  * 否则本循环比 ISR 快一拍，会在请求还没被采纳时就宣布测完并回菜单，
-			  * 请求随后被 zero_commands() 清掉 —— 状态永远停在"运行中"。 */
+			  * 请求随后被 zero_commands() 清掉 —— 状态永远停在"运行中" */
+			 uint8_t done = 0;
 			 if(controller.inertia_state != INERTIA_IDLE){
 				 if(!inertia_started){
 					 inertia_started = 1;
 					 inertia_deadline = controller.loop_count + 4u * REBOOT_DELAY_CYCLES;
 				 }
+				 else if((controller.loop_count > inertia_deadline)
+				         || (fsmstate->state != MOTOR_MODE)){
+					 controller.inertia_run_code = 5;	/* 状态机没跑完（卡住 / 中途退出电机模式） */
+					 done = 1;
+				 }
 			 }
 			 else if(inertia_started){
-				 request_fsm_state(fsmstate, MENU_MODE);
-				 inertia_phase = 3;
-				 inertia_deadline = controller.loop_count + REBOOT_DELAY_CYCLES / 4;
+				 done = 1;
 			 }
 			 else if(controller.loop_count > inertia_deadline){
-				 controller.inertia_status = 5;		/* 请求没被采纳（没进状态机） */
-				 request_fsm_state(fsmstate, MENU_MODE);
-				 inertia_phase = 3;
+				 controller.inertia_run_code = 5;		/* 请求没被采纳（没进状态机） */
+				 done = 1;
+			 }
+			 if(!done){break;}
+
+			 /* 一轮结束：收结果。失败的一轮不写样本，只记失败码。
+			  * 注意看的是 inertia_run_code —— inertia_status 只由这里发布，
+			  * 中间轮不能让它变成 2，否则上位机轮询会以为整个动作测完了 */
+			 inertia_started = 0;
+			 if(controller.inertia_run_code == 2){
+				 if(inertia_ok < INERTIA_RUNS){
+					 inertia_samples[inertia_ok] = controller.inertia_meas;
+				 }
+				 inertia_ok++;
+			 }
+			 else{
+				 inertia_fail = controller.inertia_run_code;
+			 }
+			 inertia_tries++;
+
+			 if((inertia_tries < INERTIA_RUNS) && (fsmstate->state == MOTOR_MODE)){
+				 /* 下一轮：先停稳，再由 case 4 重新发请求 */
+				 inertia_phase = 4;
+				 inertia_deadline = controller.loop_count + (REBOOT_DELAY_CYCLES * 3u) / 4u;	/* 0.375 s */
+				 break;
+			 }
+
+			 /* 收尾：至少 2 轮成功才认为可信（单轮离散太大） */
+			 if(inertia_ok >= 2u){
+				 INERTIA = inertia_median(inertia_samples, inertia_ok);	/* RAM only，存盘仍由 action.save 决定 */
+				 controller.inertia_status = 2;
+				 myprintf("\r\n  Inertia: J = %.6f kg.m^2 (median of %u/%u runs)\r\n",
+						  (double)INERTIA, inertia_ok, INERTIA_RUNS);
+			 }
+			 else{
+				 controller.inertia_status = (inertia_fail != 0) ? inertia_fail : 5;
+				 myprintf("\r\n  Inertia: failed (status %d, %u/%u runs ok) - keeping J = %.6f\r\n",
+						  (int)controller.inertia_status, inertia_ok, INERTIA_RUNS, (double)INERTIA);
+			 }
+			 request_fsm_state(fsmstate, MENU_MODE);
+			 inertia_phase = 3;
+			 inertia_deadline = controller.loop_count + REBOOT_DELAY_CYCLES / 4;
+			 break;
+		 }
+		 case 4:
+			 /* 两轮之间：等关节停稳再发下一次请求 */
+			 if(controller.loop_count > inertia_deadline){
+				 controller.inertia_state = INERTIA_IDLE;	/* 上一轮若卡在非 IDLE，这里兜底复位 */
+				 controller.inertia_status = 1;				/* 对外仍然报"运行中" */
+				 controller.inertia_req = 1;
+				 inertia_started = 0;
+				 inertia_phase = 2;
+				 inertia_deadline = controller.loop_count + REBOOT_DELAY_CYCLES / 2;
 			 }
 			 break;
 		 case 3:

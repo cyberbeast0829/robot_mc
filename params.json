@@ -355,7 +355,7 @@
       "min": 0.0,
       "max": 100.0,
       "unit": "kg·m^2",
-      "brief": "输出端惯量（关节折算值）。可由 action.measure_inertia 测得（只写 RAM，不自动保存）；用于推荐增益与 pos_error_fault。0 = 未知。当前值=4 次实测均值（0.000826/0.000906/0.001005/0.001100，2026-11-06 台架，GR 9、KT 0.0334）",
+      "brief": "输出端惯量（关节折算值）。可由 action.measure_inertia 测得（只写 RAM，不自动保存）；用于推荐增益与 pos_error_fault。0 = 未知。默认 0.00096 来自 2026-11-06 台架（GR 9、KT 0.0334）：5 次 action 各自的中位数落在 0.000865~0.000967（极差 11%、σ 3.7%），取 0.00096",
       "persist": true,
       "default": 0.00096
     },
@@ -1742,7 +1742,7 @@
       "type": "uint8",
       "access": "r",
       "get": "controller.inertia_status",
-      "brief": "惯量标定状态：0 未跑 / 1 运行中（约 1.5 s，含进出电机模式）/ 2 成功（结果在 config.inertia）/ 3 关节本来就在动 / 4 突破电流超时（卡住或摩擦过大）/ 5 台阶太短（样本不足）或超时 / 6 激励不足（斜率不可信）/ 7 进不了电机模式"
+      "brief": "惯量标定状态：0 未跑 / 1 运行中（约 3 s：连测 3 次取中位 + 进出电机模式）/ 2 成功（结果在 config.inertia）/ 3 关节本来就在动 / 4 突破电流超时（卡住或摩擦过大）/ 5 台阶太短（样本不足）或超时 / 6 激励不足（斜率不可信）/ 7 进不了电机模式"
     },
     {
       "name": "system.save_status",
@@ -1879,7 +1879,7 @@
       "name": "action.measure_inertia",
       "type": "void",
       "access": "w",
-      "brief": "一条指令完成惯量标定：自动进电机模式 → 打两个电流台阶测输出端惯量 → 回菜单。约 1.5 s、关节行程 ~0.1 rad。结果写 config.inertia（**只写 RAM，不自动保存**），进度/结果读 system.inertia_status；测完自动回菜单，可直接 action.save",
+      "brief": "一条指令完成惯量标定：自动进电机模式 → 打两个电流台阶测输出端惯量 → 回菜单。约 3 s（内部连测 3 次取中位数，单次离散太大）、关节净行程 ~0.5 rad。结果写 config.inertia（**只写 RAM，不自动保存**），进度/结果读 system.inertia_status；测完自动回菜单，可直接 action.save",
       "require": "state.state == MENU_MODE && KT > 0.0f && GR > 0.0f && PRE_CALIBRATED",
       "call": "state.inertia_pending = 1;"
     },

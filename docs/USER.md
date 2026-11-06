@@ -373,7 +373,7 @@ python tools/mc_ep.py --port COM6 set command.p_des 1.0
   >1000 开始被采样延迟吃掉相位裕度（2000 是上限）。⚠ 电流环变快后外环会显得
   更"冲"，改完 `i_bw` 记得重跑一次 `action.tune_gains` + `csv` 验证。
 - **惯量标定**：`action.measure_inertia` **一条指令完成**——自动进电机模式、打两个
-  电流台阶测出输出端惯量、再自动回菜单（约 1.5 s，关节净行程 ~0.1 rad）。结果写入
+  电流台阶测出输出端惯量、再自动回菜单（约 3 s；内部连测 **3 次取中位数**，关节净行程 ~0.5 rad）。结果写入
   `config.inertia`，**不自动保存**；进度和结果看 `system.inertia_status`（2 = 成功）。
   有了它就能用公式算推荐增益，`telemetry.pos_error_fault_suggest` 也会给出跟随误差
   故障的推荐阈值。
@@ -401,8 +401,8 @@ python tools/mc_ep.py --port COM6 set command.p_des 1.0
   两个分母（25 / 20）是按台架实测定的：积分开太快会 stick-slip，`pos_gain` 大了
   齿隙会让位置过冲。要求菜单态、`config.inertia > 0`（先做惯量标定）；门极打开时
   会返回状态 6。
-- **`action.measure_inertia` 的“没反应”不一定是失败**：整个过程只有 ~0.5–1.5 s、
-  电流 0.15–0.25 A、输出轴净行程 ~0.1 rad（5.7°），末了自动回菜单。用
+- **`action.measure_inertia` 的“没反应”不一定是失败**：整个过程只有 ~2–4 s、
+  电流 0.15–0.25 A、输出轴净行程 ~0.5 rad（~28°，它内部连测 3 次取中位），末了自动回菜单。用
   `get system.inertia_status` 判断（1 运行中 / 2 成功 / 3 关节本来在动 /
   4 加电流也不动 / 5 台阶太短 / 6 激励不足）；`call` 只表示"请求已受理"。
 

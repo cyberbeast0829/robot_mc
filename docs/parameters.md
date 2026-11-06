@@ -40,7 +40,7 @@ ID 由 `tools/endpoint_ids.json` 锁定，固件升级不会改变；`access` �
 | `config.enable_torque_vel_lim` | 186 | bool | rw |  | — | 0 | 是 | 阻抗/力矩/电流模式下的速度限制开关：打开后按 i_q <= (v_max - v)·vel_gain 限制推力，防止超过 v_max（默认关，与改动前行为一致） |
 | `config.pos_error_fault` | 141 | float | rw | rad | 0.0 .. 1000.0 | 0.0 | 是 | 位置跟随误差故障阈值（输出轴）；0 = 关闭。只在位置环未被速度限幅饱和时判定，需持续 100 ms；必须小于 v_max/pos_gain 才会触发 |
 | `config.pll_bandwidth` | 142 | float | rw | rad/s | 20.0 .. 5000.0 | 2000.0 | 是 | 编码器速度 PLL 带宽（速度环/位置环的反馈来源）；越大相位滞后越小、噪声越大。默认 2000（约 318 Hz），200 Hz 穿越点只吃 -13° 相位 |
-| `config.inertia` | 151 | float | rw | kg·m^2 | 0.0 .. 100.0 | 0.00096 | 是 | 输出端惯量（关节折算值）。可由 action.measure_inertia 测得（只写 RAM，不自动保存）；用于推荐增益与 pos_error_fault。0 = 未知。当前值=4 次实测均值（0.000826/0.000906/0.001005/0.001100，2026-11-06 台架，GR 9、KT 0.0334） |
+| `config.inertia` | 151 | float | rw | kg·m^2 | 0.0 .. 100.0 | 0.00096 | 是 | 输出端惯量（关节折算值）。可由 action.measure_inertia 测得（只写 RAM，不自动保存）；用于推荐增益与 pos_error_fault。0 = 未知。默认 0.00096 来自 2026-11-06 台架（GR 9、KT 0.0334）：5 次 action 各自的中位数落在 0.000865~0.000967（极差 11%、σ 3.7%），取 0.00096 |
 | `config.omega_c` | 159 | float | rw | rad/s | 50.0 .. 1200.0 | 450.0 | 是 | action.tune_gains 的目标穿越频率：决定算出来的 vel_gain / pos_gain 有多激进。受延迟限制，超过约 1000 rad/s 实际是在跟延迟赛跑，建议 300~600 起步 |
 | `config.tune_margin` | 160 | float | rw | x | 0.2 .. 5.0 | 1.5 | 是 | action.tune_gains 对速度环增益的放大系数。线性公式给的是惯性主导时的值，摩擦/齿隙大的关节要放大（旧电机/旧电流环约 2.6）；只放大速度环，pos_gain 不受影响。1 = 纯公式。2026-11-06 台架（GR 9、电流环按标定 R/L 推导后）：1.5 给出 vel_gain 2.16，0.2 rad 位置阶跃与 1 rad/s 速度阶跃均干净（速度超调 3~7%、位置残差 <0.5 mrad），1.7 起速度超调 >25%，2.2 失稳 |
 | `config.vel_loop_prescaler` | 143 | int32 | rw |  | 1 .. 100 | 5 | 是 | 速度环分频：控制环 40 kHz / 该值 = 速度环频率（默认 5 → 8 kHz）；1 = 全速 40 kHz |
@@ -222,7 +222,7 @@ ID 由 `tools/endpoint_ids.json` 锁定，固件升级不会改变；`access` �
 | `system.prefs_sequence` | 69 | uint32 | r |  | — | — | 否 | 当前配置块的序号 |
 | `system.config_schema` | 117 | uint16 | r |  | — | — | 否 | 配置记录的格式版本（PREFS_SCHEMA），用于升级迁移 |
 | `system.prefs_loaded` | 70 | bool | r |  | — | — | 否 | 是否从 flash 成功加载过配置 |
-| `system.inertia_status` | 153 | uint8 | r |  | — | — | 否 | 惯量标定状态：0 未跑 / 1 运行中（约 1.5 s，含进出电机模式）/ 2 成功（结果在 config.inertia）/ 3 关节本来就在动 / 4 突破电流超时（卡住或摩擦过大）/ 5 台阶太短（样本不足）或超时 / 6 激励不足（斜率不可信）/ 7 进不了电机模式 |
+| `system.inertia_status` | 153 | uint8 | r |  | — | — | 否 | 惯量标定状态：0 未跑 / 1 运行中（约 3 s：连测 3 次取中位 + 进出电机模式）/ 2 成功（结果在 config.inertia）/ 3 关节本来就在动 / 4 突破电流超时（卡住或摩擦过大）/ 5 台阶太短（样本不足）或超时 / 6 激励不足（斜率不可信）/ 7 进不了电机模式 |
 | `system.save_status` | 119 | uint8 | r |  | — | — | 否 | 最近一次写 flash 的结果（save/zero/reset_config/标定共用）：0 未执行、1 成功、2 因门极使能跳过、3 写失败 |
 | `system.gear_status` | 205 | int8 | r |  | — | — | 否 | 最近一次齿轮式双编动作的结果：0 未执行、1 成功、-1 齿数/方向配置非法、-2 还没有参考（先 action.gear_capture）、-3 副编码器没响应、-4 门极使能时被拒绝 |
 | `system.can_prot_active` | 123 | int32 | r |  | — | — | 否 | 当前生效的 CAN 协议（0=旧 11-bit，1=CYBERBEAST） |
@@ -245,5 +245,5 @@ ID 由 `tools/endpoint_ids.json` 锁定，固件升级不会改变；`access` �
 | `action.reboot` | 127 | function | w |  | — | — | 否 | 重启控制器（应答发出后约 0.5 s 复位，配置按已保存的值重新加载） |
 | `action.enter_dfu_mode` | 180 | function | w |  | — | — | 否 | 先应答、约 0.5 s 后复位并跳进 ROM DFU 引导程序（之后约 2 s 跳转，USB 会重新枚举）。与串口菜单的 'd' 同义，用于救砖/整片烧写；配置与标定是否保留取决于下载的地址范围（只写 app 区就保留） |
 | `action.reset_timing` | 116 | function | w |  | — | — | 否 | 清零 ISR 耗时统计 |
-| `action.measure_inertia` | 154 | function | w |  | — | — | 否 | 一条指令完成惯量标定：自动进电机模式 → 打两个电流台阶测输出端惯量 → 回菜单。约 1.5 s、关节行程 ~0.1 rad。结果写 config.inertia（**只写 RAM，不自动保存**），进度/结果读 system.inertia_status；测完自动回菜单，可直接 action.save |
+| `action.measure_inertia` | 154 | function | w |  | — | — | 否 | 一条指令完成惯量标定：自动进电机模式 → 打两个电流台阶测输出端惯量 → 回菜单。约 3 s（内部连测 3 次取中位数，单次离散太大）、关节净行程 ~0.5 rad。结果写 config.inertia（**只写 RAM，不自动保存**），进度/结果读 system.inertia_status；测完自动回菜单，可直接 action.save |
 | `action.tune_gains` | 161 | function | w |  | — | — | 否 | 用 config.inertia 算外环增益并写进 RAM（不自动保存）：vel_gain = tune_margin·J·omega_c/(KT·GR)；vel_integrator_gain = vel_gain·clamp(omega_c/25, 5, 30)；pos_gain = omega_c/20。写完用 csv/csp 子命令验证，满意再 action.save |
