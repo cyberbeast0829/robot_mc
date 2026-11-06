@@ -288,12 +288,17 @@ CYBERBEAST 侧 `FAULT_UV` 与 `FAULT_OV` 都映射 `CB_ERR_VOLTAGE`；过温没�
 - 归一化 `x = adc_measurements_[ch]/4096`，四阶 Horner 多项式换算 °C。
   MOS = `adc_measurements_[0]`（ADC2_CH2/PA7），系数 `{296.7, -385.7, 257.1, -26.81}`；
   电机 = `adc_measurements_[2]`（ADC3_CH6/PE8），系数 `{-296.7, 504.3, -375.8, 141.3}`。
+  ⚠ **系数顺序是 ODrive 的 `horner_poly_eval` 约定：`c[0]` 是最高次幂**（与
+  `numpy.polyfit` 一致），`thermistor_celsius()` 必须从 `c[0]` 开始乘。反过来乘
+  （把 `c[0]` 当常数项）编译器和自检都不会报错，但室温下 MOS 会读到 200 °C 以上、
+  电机读到 -100 °C 以下——早期版本就是这样错的。
 - 两级一阶低通，每级 `tau = 0.1 s`。**在主循环里更新**（`run_fsm_slow()` 第一件事），
   `dt` 由 `controller.loop_count` 的差算出：主循环没有固定周期（打印、擦 flash 都会
   拉长一拍），用固定 dt 会让滤波时间常数随固件行为漂移。
 - ⚠ 系数和分压网络都是从 ODrive 板子搬来的。CBL89 若不同，读数会系统性偏移——
   **上台架必须先用室温核对一次**，偏差大就改这两组系数（换算结构不变）。
-- 换算是 `isfinite` 保护的：通道/系数异常时写 0，不会把 NaN 灌进比较。
+- 换算是 `isfinite` 保护的：通道/系数异常时写 0 并清掉滤波状态（否则 NaN 会留在
+  状态里，读数永远停在 0），不会把 NaN 灌进比较。
 - 温度**只上报 +（默认关闭的）保护**，不参与电流环；`telemetry.temperature` 现在
   等于 MOS 温度（原来是恒 0 的温度观测器输出，`update_observer()` 整个函数体是被
   注释掉的）。

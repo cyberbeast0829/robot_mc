@@ -288,9 +288,12 @@ static const float mot_thermistor_poly[] = {-296.7f, 504.3f, -375.8f, 141.3f };
 
 #define THERM_LPF_TAU	0.1f
 
+/* 系数按 ODrive 的顺序给出：c[0] 是最高次幂（与 horner_poly_eval / numpy.polyfit
+ * 一致），所以必须从 c[0] 开始乘。把顺序反过来（拿 c[0] 当常数项）不会报错，
+ * 但读数会整体错乱：室温下 MOS 会读到 200 °C 以上、电机读到 -100 °C 以下 */
 static float thermistor_celsius(const float *c, unsigned n, float x){
-	float v = c[n - 1u];
-	for(int i = (int)n - 2; i >= 0; i--){v = v*x + c[i];}
+	float v = 0.0f;
+	for(unsigned i = 0; i < n; i++){v = v*x + c[i];}
 	return v;
 }
 
@@ -301,7 +304,8 @@ static float thermistor_step(float raw, float *stage1, float *stage2, float k){
 }
 
 void update_thermistors(ControllerStruct *controller){
-	/* 两级 LPF 的状态跨调用保留；上电时先从 0 开始（会被第一级很快拉上来） */
+	/* 两级 LPF 的状态跨调用保留；第一次调用时用当时的原始值播种，避免读数从上电
+	 * 的 0 °C 慢慢爬上来（否则头几百毫秒会报一个假的低温） */
 	static float fet_s1, fet_s2, mot_s1, mot_s2;
 	static uint32_t last_count;
 	static uint8_t seeded;
@@ -333,9 +337,11 @@ void update_thermistors(ControllerStruct *controller){
 
 	float fet = thermistor_step(fet_raw, &fet_s1, &fet_s2, k);
 	float mot = thermistor_step(mot_raw, &mot_s1, &mot_s2, k);
-	/* 换算出来的 NaN（系数/通道异常）不能进比较，也不能进遥测 */
-	if(!isfinite(fet)){fet = 0.0f;}
-	if(!isfinite(mot)){mot = 0.0f;}
+	/* 换算出来的 NaN（系数/通道异常）不能进比较，也不能进遥测。滤波状态也要
+	 * 一起清掉：NaN 一旦进了状态就再也出不来，读数会永远停在 0（ODrive 的
+	 * ThermistorCurrentLimiter::update() 也是这么处理的） */
+	if(!isfinite(fet)){fet = 0.0f; fet_s1 = fet_s2 = 0.0f;}
+	if(!isfinite(mot)){mot = 0.0f; mot_s1 = mot_s2 = 0.0f;}
 
 	controller->mos_temp = fet;
 	controller->mot_temp = mot;
