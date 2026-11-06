@@ -167,6 +167,7 @@ void zero_current(ControllerStruct *controller);
 void reset_foc(ControllerStruct *controller);
 void reset_observer(ObserverStruct *observer);
 void init_controller_params(ControllerStruct *controller);
+void current_loop_retune(ControllerStruct *controller);
 void commutate(ControllerStruct *controller, EncoderStruct *encoder);
 void commutate_open_loop(ControllerStruct *controller, EncoderStruct *encoder);
 void torque_control(ControllerStruct *controller);

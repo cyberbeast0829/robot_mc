@@ -270,6 +270,15 @@ Ld/Lq、开环升速测磁链并令 `KT = 1.5·PPAIRS·λ`。测试电流 = `min
   乘上它；**改 `svm()`/`DTC_MAX`/`DTC_MIN` 时必须同步改 `CAL_V_PER_CMD`**。
 - 任一段失败就置 `comm_encoder_cal.failed` → 回菜单且不写 flash；`run_fsm_slow()`
   只在 `done_ordering && done_cal && done_rl` 后保存。细节见 `docs/DEV.md`。
+- **电流环 PI 增益由标定的 R/L 推导**（`foc.c` 的 `current_loop_retune()`，极点对消）：
+  `k = 2π·i_bw·L/V_PER_CMD`、`ki = 1-exp(-R_PHASE·DT/L)`，`k_d/ki_d` 用 `L_D`、
+  `k_q/ki_q` 用 `L_Q`。所以 `config.i_bw` 就是**实际穿越频率**、与电机无关。
+  **不要退回 `K_SCALE`/`KI_D`/`KI_Q` 那套固定常数**——它们只是"L≈24 µH、R/L≈1800 rad/s"
+  那一台电机的值，作为未标定（`r_phase<=0`）时的兜底保留。重算的四个时机：
+  `init_controller_params()`（上电）、`reset_foc()`（每次进电机模式）、标定收尾
+  （`run_fsm_slow()`，并打印推导结果）、endpoint 写 `config.i_bw`。`i_bw` 的上限是
+  **2 拍采样延迟**：1000 Hz 实测穿越 762 Hz、相位裕度 78°；2000 Hz 只剩 59°，
+  300~800 是甜点。
 
 ## 齿轮式双编（断电记忆输出轴位置）
 
@@ -358,7 +367,7 @@ Zadig 装 WinUSB（CDC 不受影响）。
   却忘了重新生成，描述符和固件就会静默错配，提交前必须跑。
 - **endpoint ID 由 `tools/endpoint_ids.json` 锁定，只增不改**。改名等于新增
   （旧 ID 保留但不响应）；不要手工重排 ID。
-- 设备把一份紧凑 JSON 描述符烧进 flash（当前约 10.5 KB），通过 **endpoint 0**
+- 设备把一份紧凑 JSON 描述符烧进 flash（当前约 17.9 KB），通过 **endpoint 0**
   分块下载；描述符的 CRC16 同时是“接口版本”（每次增删参数都会变），除
   endpoint 0 外的每个请求都必须在 payload 末尾带这个 CRC，否则返回
   `EP_ERR_VERSION`，避免新旧固件静默错配。

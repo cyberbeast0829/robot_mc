@@ -187,10 +187,11 @@ ADC，采样点在 PWM 峰值、低侧采样窗口内。
     就是编码器抖动），相对第一点的累计偏差 ≤ 0.00027 圈；5 个位置的断电重启偏差
     ≤ 0.0006 圈。验收判据照这个来：**差值必须是"几十分之一 count 级"的抖动，任何
     整圈级偏差都是齿数/方向配错或超出窗口**。
-  - ⚠ **GR 修正后增益要重算**：上面的 `vel_gain 2.469` / `pos_gain 15` 是在
-    GR = 7.75 的配置下整定的，而实际 GR = 9 —— 同一条 MIT 律里
-    `i_q = torque_des/(KT·GR)`，所以同样的增益现在会少 7.75/9 ≈ 14% 的电流，
-    环路变软。要么把增益乘 9/7.75 ≈ 1.16，要么按 `action.tune_gains` 重新整定。
+  - ✅ **GR 修正后增益已重算（2026-11-06）**：上面提到的 `vel_gain 2.469` / `pos_gain 15`
+    是在 GR = 7.75 的配置下整定的，而实际 GR = 9 —— 同一条 MIT 律里
+    `i_q = torque_des/(KT·GR)`，所以同样的增益会少 7.75/9 ≈ 14% 的电流、环路变软。
+    现在已按 GR = 9 重测惯量、重算增益（见"出厂值"与"`tune_margin`"两节），
+    以后再改 GR 仍要走同一条路：`action.measure_inertia` → `action.tune_gains`。
 - **上电恢复**（`ps_dual_gear_restore()`，`main()` 里、`TIM_ConfigInt(...ENABLE)`
   之前调用）：读副编码器 → 按参考解出整圈数 → 置 `abs_turns_valid`，由**下一帧**
   `ps_finish_sample()` 覆盖 `turns` 并填满速度历史（直接在主循环里改 `turns` 会被
@@ -313,6 +314,69 @@ mech_power = i_q_filt · KT · GR · dtheta_mech       [W]
 CYBERBEAST 的 `0x44 QUERY_BUS`（第二字段）与 `0x47 QUERY_POWER`（电/机械功率）
 也已填上。
 
+## 电流环增益（k / ki 由标定的 R/L 推导）
+
+`current_loop_retune()`（`foc.c`）按**标定出来**的 `config.r_phase` / `config.l_d` /
+`config.l_q` 做极点对消，把 `config.i_bw` 变成真正的穿越频率：
+
+```
+k_d  = 2π·i_bw·L_D / V_PER_CMD          [指令 V/A]  →  |k·V_PER_CMD/(jωL)| = 1 @ ω = 2π·i_bw
+k_q  = 2π·i_bw·L_Q / V_PER_CMD
+ki_d = 1 - exp(-R_PHASE·DT/L_D)          →  PI 零点 = R/L（每拍），与 i_bw 无关
+ki_q = 1 - exp(-R_PHASE·DT/L_Q)          （1-e^-x 用 Padé 12x/(12+6x+x²)，不引 libm）
+ki_fw = 0.1·ki_d
+```
+
+**为什么不能写死常数**：`k` 正比于 `L`、`ki` 只取决于 `R/L`，两者都是电机参数。
+以前的 `K_SCALE`（= 假设 L≈24 µH）+ `KI_D`（= 假设 R/L≈1800 rad/s）只对那一台
+电机成立，同样的常数换台电机差异极大（同一 `i_bw=1000`，按各机标定 R/L 代入）：
+
+| 电机 | R | L | 实际穿越（旧常数） | 相位裕度 |
+|---|---|---|---|---|
+| 本机 CBL89（q / d） | 0.414 Ω | 45.3 / 22.8 µH | 110 Hz | >100°（R 主导，P 路径到不了 0 dB） |
+| 大疆 M3508 类 | 0.10 Ω | 60 µH | 404 Hz | 81° |
+| 小云台电机 | 5 Ω | 300 µH | **9 Hz** | 91° |
+| 小穿越机 | 0.03 Ω | 10 µH | **2332 Hz** | 53° |
+
+改成推导后，各机的穿越频率就约等于 `i_bw`（离散闭环，含 ADC→占空比 2 拍 = 50 µs 延迟；
+CBL89 的 q/d 轴，300~2000 Hz 范围内 d 轴略好）：
+
+| `config.i_bw` | 300 | 500 | 1000 | 1500 | 2000 |
+|---|---|---|---|---|---|
+| 实际穿越 | 218 Hz | 367 Hz | 762 Hz | 1193 Hz | 1645 Hz |
+| 相位裕度 | 87° | 85° | 78° | 69° | 59° |
+
+⇒ **默认 1000（实际 762 Hz、PM 78°），300~800 是甜点，2000 是硬上限**（1650 Hz、
+PM 59°，再高就是在跟 2 拍延迟赛跑）。离散闭环的阶跃响应在 1500 Hz 以内都无超调，
+2000 Hz 时 q 轴约 9%。
+
+调用时机（全部是纯浮点、几十条指令，状态切换时执行一次）：
+
+1. 上电：`init_controller_params()`（`main.c`，在 prefs 载入之后）；
+2. 每次进 `MOTOR_MODE`：`reset_foc()` —— 所以改了 `config.i_bw` 或重新标定，
+   下一次进电机模式一定用的是新值；
+3. 标定收尾：`run_fsm_slow()` 里，`measure_lr()` 刚写出 R/L 就重算，并打印一行
+   `Current loop: i_bw …, R …, Ld …, Lq … -> k_d …, k_q …, ki_d …, ki_q …`
+   （台架上可直接核对）；
+4. 写 `config.i_bw` 时：endpoint 的 `set` 里直接调 `current_loop_retune()`
+   （**不需要重启**）。
+
+保底与钳位：`r_phase<=0` 或 `L<=0`（出厂默认 R=0）时退回 `hw_config.h` 的
+`K_SCALE` / `KI_D` / `KI_Q`，行为与引入推导前一致；推导出的 `k` 钳在
+`I_LOOP_K_MAX`（10 指令 V/A），防止 `l_d`/`l_q` 被写成量级错误的值时增益大 100 倍
+直接失稳。`i_bw` 本身由 `config_apply_limits()` 钳在 [100, 2000] Hz。
+
+台架验收（锁转子或带载，`csv` 子命令）：
+
+1. `get config.r_phase` / `l_d` / `l_q` 必须非 0（否则走的是常量兜底），并对照
+   只读的 `telemetry.current_k_d/k_q/ki_d/ki_q` —— 它们就是 `commutate()` 正在用的
+   系数（`k ≈ 2π·i_bw·L/V_PER_CMD`，`ki ≈ R·DT/L`），可以逐个手算核对；
+2. 扫 `i_bw` 300 / 500 / 800 / 1000，看 `telemetry.i_q` 跟随、听噪声、确认
+   `fault` 不锁存（`i_max` 3 A 时 OC 门限 4.5 A）；
+3. 电流环变快以后外环会显得"更冲"，`action.tune_gains` 需要重跑一次；
+4. 纹波：48 V / 45 µH / 25 µs 的 PWM 纹波约 3 A pk-pk，采样固定在 PWM 峰值，
+   带宽越高混叠越明显 —— 出现电流啸叫就回退一档。
+
 ## 速度环与位置环（CSV / CSP）
 
 三条环都跑在控制中断里、相位锁在 PWM 更新（update/TRGO）上：
@@ -341,8 +405,9 @@ CYBERBEAST 的 `0x44 QUERY_BUS`（第二字段）与 `0x47 QUERY_POWER`（电/�
   预装载顺序、`v_max` 计算、`d/q` 积分器一个字节都没改。
 - 外环在更新拍插在 `commutate()` 之前，多花约 0.3–0.8 µs（25 µs 的 1–3%），
   对电流环相位裕度的影响 < 1°；分频后绝大多数拍完全不执行外环。
-- 外环的可用带宽由**速度估计**决定，不由控制频率决定：PLL 带宽默认 500 rad/s
-  （约 80 Hz）+ 8 kHz 采样的 62.5 µs 零阶保持，比电流环低一个数量级。
+- 外环的可用带宽由**速度估计**决定，不由控制频率决定：PLL 带宽默认 2000 rad/s
+  （约 318 Hz，200 Hz 处只吃 -13° 相位）+ 8 kHz 采样的 62.5 µs 零阶保持，
+  比电流环（推导增益后 ~1 kHz）低一个数量级。
   所以“降外环频率”换不到电流环的任何好处，反过来也一样。
 - ⚠ **`i_q_des` 必须每拍从 `controller.i_q_ref` 重新赋值**：`field_weaken()` 是
   *就地累加* `i_q_des`（`i_q_des += fw_int`）。分频等待期间若直接沿用 `i_q_des`，
@@ -361,14 +426,19 @@ CYBERBEAST 的 `0x44 QUERY_BUS`（第二字段）与 `0x47 QUERY_POWER`（电/�
 | `config.pos_error_fault` | rad | 跟随误差故障阈值，0 = 关闭 |
 | `config.pll_bandwidth` | rad/s | 编码器速度 PLL 带宽 |
 
-出厂值：`pos_gain 15` / `vel_gain 2.469` / `vel_integrator_gain 44.44` /
-`accel_limit 50` / `inertia 0.0006` / `tune_margin 2.2` / `pos_error_fault 0` /
-`pll_bandwidth 2000`。这些都是 2026-11-02 台架整定的结果（见"惯量标定与增益推荐值"
-里的实测表）：`tune_gains(ω_c 450)` 用 `tune_margin 2.2` 正好给出这一组
-`vel_gain` / `vel_integrator_gain` / `pos_gain`；`accel_limit 50` 是 CSP 不过冲的前提
-（10 时 1 rad 阶跃过冲 49%）。⚠ 它们仍是**起点**：换电机/换关节必须重新
+出厂值（2026-11-06 台架按 GR 9、`i_bw 1000` 的推导电流环重测重算）：`pos_gain 15` /
+`vel_gain 2.158` / `vel_integrator_gain 38.85` / `accel_limit 50` / `inertia 0.00096` /
+`tune_margin 1.5` / `omega_c 450` / `pos_error_fault 0` / `pll_bandwidth 2000`。
+这一组正是 `tune_gains(ω_c 450, margin 1.5)` 的输出 —— 默认值自洽，重新标定后照公式
+就能复现。实测（同一台架、`csv_csp_test.py`）：1 rad/s 速度阶跃超调 3~7%、峰值
+0.4~0.5 A；0.2 rad 位置阶跃最终 `|pos_err| ≤ 0.4 mrad`。`accel_limit 50` 是 CSP
+不过冲的前提（10 时 1 rad 阶跃过冲 49%）。⚠ 它们仍是**起点**：换电机/换关节必须重新
 `action.measure_inertia` + `tune_gains`，尤其是 `config.inertia` 的默认值只是本台架的
 实测值，**不代表任何其他机构**。
+
+历史（2026-11-02，旧电流环、GR 被误配成 7.75）：`vel_gain 2.469` / `vel_integrator_gain 44.44` /
+`inertia 0.0006` / `tune_margin 2.2`。那组数字仍保留在下面的实测表里作为**记录**，
+不要再当作默认值。
 
 为什么在安培域而不在 N·m 域：CSP/CSV 帧的限幅本来就是电流（A），
 `limit_norm()`、`field_weaken()`、过流阈值也都在安培域。省掉每拍 2 次乘法 +
@@ -547,9 +617,22 @@ pos_gain            = ω_c/30                             [(rad/s)/rad]
 不要靠加 `pos_gain`。**
 
 **`tune_margin` 补的是线性公式的低估**：公式假设纯惯性负载，实测库仑摩擦把有效
-对象增益压低，同一台关节要把速度环放大到 2.2~2.6 倍才跟得上指令（`vel_gain` 1.12 → 2.47）；
-它只放大速度环，位置环不跟着放大。默认 1.0 = 纯公式（保守），摩擦主导的关节从
-2~3 起试。最终值仍以 `csv --sweep` 为准（见"台架整定步骤"）。
+对象增益压低，同一台关节要把速度环放大才跟得上指令；它只放大速度环，位置环不跟着放大。
+1 = 纯公式（保守）。⚠ 这个系数**跟着 `config.inertia` 的测量值走**：2026-11-02 用
+`J 0.0006` 时台架最优是 2.2（`vel_gain` 1.12 → 2.47）；2026-11-06 按 GR 9 重测
+`J 0.00096` 后，同一个工作点只需 `margin 1.5`（`vel_gain 2.158`）。也就是说
+**换一次惯量标定就要重扫一次 margin**，不要跨关节照搬。台架实测（`i_bw 1000`、
+`J 0.00096`、`ω_c 450`）：
+
+| `tune_margin` | `vel_gain` | 1 rad/s 速度阶跃超调 | 备注 |
+|---|---|---|---|
+| 1.4 | 2.014 | 6~11% | 偏软 |
+| **1.5** | **2.158** | **3~7%** | **出厂值** |
+| 1.6 | 2.302 | 5~12% | |
+| 1.7 | 2.803 | 26~33% | |
+| 2.2 | 3.627 | 失稳（两次都 abort） | |
+
+最终值仍以 `csv --sweep` 为准（见"台架整定步骤"）。
 
 **`action.measure_inertia`** —— 一条指令完成，不需要先手动进电机模式。
 `run_fsm_slow()` 负责编排（`fsm.c` 的 `inertia_phase`）：请求 → `MOTOR_MODE`
@@ -898,7 +981,7 @@ python tools/mc_ep.py --usb get telemetry.i_q
 - 类型名用 `bool/uint8/int8/uint16/int16/uint32/int32/uint64/int64/float/double/
   object/endpoint_ref/json/function`；
 - 动作端点写 `"type":"function"` + 空 `inputs`/`outputs`，**不能写 `void`**；
-- 总长 ≤ 65535（当前约 10.5 KB）。
+- 总长 ≤ 65535（当前约 17.9 KB）。
 
 例子（读 `config.i_max`，ID 2）：
 
@@ -1237,7 +1320,7 @@ CubeMX 的 SysInit 段移到了配置加载之后
 7 个 ODrive 路径。**本工程刻意不加这些别名**（客户将改 JointSDK 适配），
 所以现阶段用 `jsdk_context_desc_fetch()` + `jsdk_joint_param_get/set()` 访问参数，
 控制用 `0x00/0x03/0x04`。描述符仍是纯 ASCII、动作端点为 `function` 类型，
-可直接被 SDK 的 `cb_jsondesc_parse` 解析（当前 132 个可见端点、约 10.5 KB；
+可直接被 SDK 的 `cb_jsondesc_parse` 解析（当前 212 个可见端点、约 17.9 KB；
 改 `params.json` 后需在 SDK 环境重跑一次确认）。
 
 ### 台架注意

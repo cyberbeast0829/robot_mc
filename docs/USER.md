@@ -217,8 +217,8 @@ python tools/mc_ep.py --port COM7 call action.idle_mode
 | 参数 | 单位 | 出厂值 | 说明 |
 |---|---|---|---|
 | `config.pos_gain` | (rad/s)/rad | 15 | 位置误差 × 它 = 速度指令 |
-| `config.vel_gain` | A/(rad/s) | 2.469 | 速度误差 × 它 = 电流指令 |
-| `config.vel_integrator_gain` | A/(rad/s)/s | 44.44 | 消掉重力/摩擦下的稳态误差 |
+| `config.vel_gain` | A/(rad/s) | 2.158 | 速度误差 × 它 = 电流指令 |
+| `config.vel_integrator_gain` | A/(rad/s)/s | 38.85 | 消掉重力/摩擦下的稳态误差 |
 | `config.pos_ff_gain` | — | 1.0 | CSP 帧间速度前馈；1 = 全前馈，0 = 关 |
 | `config.accel_limit` | rad/s² | 50 | 速度设定值的**加速**斜率（`input_mode=2` 时生效）；0 = 关。**CSP 想快就先放开它**（30~100），比加 `pos_gain` 安全 |
 | `config.decel_limit` | rad/s² | 50 | 速度设定值的**减速**斜率（`input_mode=2` 时生效）；0 = 与 `accel_limit` 相同 |
@@ -233,9 +233,9 @@ python tools/mc_ep.py --port COM7 call action.idle_mode
 | `config.enable_torque_vel_lim` | — | false | 打开后在 MIT/力矩/电流模式也按 `v_max` 限速（`i_q ≤ (v_max−v)·vel_gain`） |
 | `config.pos_error_fault` | rad | 0 | 跟随误差故障阈值，0 = 关 |
 | `config.pll_bandwidth` | rad/s | 2000 | 编码器速度估计带宽（约 318 Hz）；低速抖就降到 1000，想要更高带宽就升到 3000 |
-| `config.inertia` | kg·m² | 0.0006 | 输出端惯量，由 `action.measure_inertia` 测得（只写 RAM）。**默认值只是本台架的实测值**，换电机/换关节必须重测 |
+| `config.inertia` | kg·m² | 0.00096 | 输出端惯量，由 `action.measure_inertia` 测得（只写 RAM）。**默认值只是本台架的实测值**，换电机/换关节必须重测 |
 | `config.omega_c` | rad/s | 450 | `action.tune_gains` 的目标穿越频率（越大越激进，300–600 起试） |
-| `config.tune_margin` | × | 2.2 | `action.tune_gains` 对速度环的放大系数：摩擦/齿隙大的关节用 2~3；1 = 纯公式（只适合纯惯性负载） |
+| `config.tune_margin` | × | 1.5 | `action.tune_gains` 对速度环的放大系数：摩擦/齿隙大的关节要调大；1 = 纯公式（只适合纯惯性负载）。本台架 GR 9 + 电流环按标定 R/L 推导后实测 1.5（1.7 起超调 >25%，2.2 失稳） |
 
 ```bash
 python tools/mc_ep.py --port COM7 set config.pos_gain 20
@@ -300,13 +300,12 @@ python tools/mc_ep.py --port COM6 set config.can_timeout 100
 判读：`pos_err` 收敛到 0.0x mrad，`position` 最后精确等于 `p_des`
 （台架实测 0.3 rad 阶跃最终 `pos_err ≈ 3e-5 rad`）。
 
-- **增益要按关节整定**：出厂值（`vel_gain 2.469`、`vel_integrator_gain 44.44`、
-  `pos_gain 15`、`accel_limit 50`）是本台架（`KT 0.031`、`J 0.0006`）整定的结果，
-  **换电机/换关节必须重做**；裸关节在 `vel_gain ≥ 4` 会失稳。方法见
-  [DEV.md](DEV.md) 的“台架整定步骤”，工具是 `tools/csv_csp_test.py`。
-  ⚠ 这批数据是在 **GR 配成 7.75** 时测的，而实际减速比是 **9**（见 §5.1）。MIT/CSV/CSP
-  的电流都是 `torque_des/(KT·GR)`，所以同一组增益现在会少 7.75/9 ≈ 14% 的电流、环路变软 ——
-  要么把 `vel_gain`/`pos_gain` 乘 9/7.75 ≈ 1.16，要么重新整定。
+- **增益要按关节整定**：出厂值（`vel_gain 2.158`、`vel_integrator_gain 38.85`、
+  `pos_gain 15`、`accel_limit 50`）是本台架（`KT 0.0334`、`J 0.00096`、`GR 9`、
+  电流环 `i_bw 1000` 按标定 R/L 推导）整定的结果，**换电机/换关节必须重做**。
+  方法见 [DEV.md](DEV.md) 的“台架整定步骤”，工具是 `tools/csv_csp_test.py`。
+  ⚠ 更早那批“`vel_gain 2.469` / J 0.0006”的数据是在 **GR 被误配成 7.75** 时测的，
+  2026-11-06 已按实测 GR=9 重测惯量并重算增益（见下一节的配方）。
 - **两条路可选**：① 一条命令 `action.tune_gains`（先做 `action.measure_inertia`），
   配方 = 惯量 + `config.omega_c`(450) + `config.tune_margin`；② 手工扫
   `csv_csp_test.py sweep`。台架（`KT 0.031`、`J 0.0006`，当时的 `config.gr` 被误配成 7.75，
@@ -315,8 +314,8 @@ python tools/mc_ep.py --port COM6 set config.can_timeout 100
   | 模式 | 参数 | 值 | 效果 |
   |---|---|---|---|
   | MIT | `command.kp` / `kd` | **10 / 0.155**（`kd = 2√(kp·J)`） | 0.2 rad 阶跃 43 ms 上升、0.1 mrad 稳态、0.96 A 峰值 |
-  | CSV | `vel_gain` / `vel_integrator_gain` | **2.469 / 44.44**（= `tune_margin 2.2` 的配方值；手工最优 2.5/30 实测等效） | 1~65 rad/s 误差 ≤1%（40 rad/s 峰值 2.6 A） |
-  | CSP | `pos_gain` / `accel_limit` | **15 / 50** | 0.2 rad：0.2%、0.26 s；1 rad：4.2%、0.34 s |
+  | CSV | `vel_gain` / `vel_integrator_gain` | **2.158 / 38.85**（= 当前出厂值，`tune_margin 1.5` 的配方值） | 1 rad/s 阶跃超调 3~7%、稳态误差 <3%、峰值 0.4~0.5 A（2026-11-06 实测，i_bw 1000） |
+  | CSP | `pos_gain` / `accel_limit` | **15 / 50** | 0.2 rad 阶跃最终 `pos_err` ≤ 0.4 mrad（2026-11-06 实测） |
 
   `accel_limit` 从 10 提到 50 是 CSP 变快的关键：位置环是纯 P，它给出的速度设定值
   被斜率限制拖慢时会出现"追上了速度还没降下来"的过冲（1 rad 阶跃：`accel_limit 10`
@@ -368,6 +367,11 @@ python tools/mc_ep.py --port COM6 set command.p_des 1.0
 - 环率：速度环 = 40 kHz / `config.vel_loop_prescaler`（默认 5 → 8 kHz），
   位置环 = 速度环 / `config.pos_loop_prescaler`（默认 2 → 4 kHz）。设成 1/1 就是
   两个环都跑 40 kHz（电流环永远是 40 kHz，不受影响）。
+- **电流环带宽** `config.i_bw`（默认 1000 Hz）：P/I 增益按标定出来的
+  `config.r_phase` / `l_d` / `l_q` 自动推导（极点对消），所以**这个数就是实际带宽**，
+  换电机不用重调；写入后**立即生效，不需要重启**。实测 300~800 最稳，
+  >1000 开始被采样延迟吃掉相位裕度（2000 是上限）。⚠ 电流环变快后外环会显得
+  更"冲"，改完 `i_bw` 记得重跑一次 `action.tune_gains` + `csv` 验证。
 - **惯量标定**：`action.measure_inertia` **一条指令完成**——自动进电机模式、打两个
   电流台阶测出输出端惯量、再自动回菜单（约 1.5 s，关节净行程 ~0.1 rad）。结果写入
   `config.inertia`，**不自动保存**；进度和结果看 `system.inertia_status`（2 = 成功）。

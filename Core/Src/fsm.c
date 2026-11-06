@@ -781,6 +781,13 @@ extern uint32_t _reboot_cookie;
 			 comm_encoder.m_zero = M_ZERO;
 			 memcpy(&comm_encoder.offset_lut, comm_encoder_cal.lut_arr, sizeof(comm_encoder.offset_lut));
 			 memcpy(&ENCODER_LUT, comm_encoder_cal.lut_arr, sizeof(comm_encoder_cal.lut_arr));
+			 /* 刚标定完 R/L：立刻按新值重算电流环增益（否则要等下一次进电机模式
+			  * 才用得上）。顺手打印一行，台架上可以直接核对推导结果 */
+			 current_loop_retune(&controller);
+			 myprintf("Current loop: i_bw %.0f Hz, R %.4f ohm, Ld %.1f uH, Lq %.1f uH -> k_d %.4f, k_q %.4f, ki_d %.4f, ki_q %.4f\r\n",
+					  (double)I_BW, (double)R_PHASE, (double)(L_D*1.0e6f), (double)(L_Q*1.0e6f),
+					  (double)controller.k_d, (double)controller.k_q,
+					  (double)controller.ki_d, (double)controller.ki_q);
 			 /* 齿轮式双编：此刻转子刚标定完、门极已关、静止不动，正好把"当前位置
 			  * = 输出轴绝对位置参考"记下来（phase + 多圈计数），一起存盘。
 			  * 不转电机、不需要额外操作。失败时**保留旧参考**：参考是 (相位, 计数)

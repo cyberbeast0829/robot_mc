@@ -206,12 +206,18 @@
 #define I_MAX_LIMIT			10.0f			// Hard upper bound for I_MAX (A)
 #define I_OC_FAULT_FACTOR	1.5f			// Overcurrent latch threshold = factor * I_MAX
 
-/* Current controller */
-#define K_D     .1f                    // Loop gain,  Volts/Amp
-#define K_Q     .1f                    // Loop gain,  Volts/Amp
-#define K_SCALE 0.00012f             // K_loop/Loop BW (Hz) 0.0042
-#define KI_D 0.045f                // PI zero, in radians per sample
-#define KI_Q 0.045f                // PI zero, in radians per sample
+/* Current controller
+ *
+ * k_d/k_q/ki_d/ki_q 不再用这里的常量，而是由标定出来的 R_PHASE / L_D / L_Q 与
+ * config.i_bw 推导（foc.c 的 current_loop_retune()，极点对消），这样 i_bw 就是
+ * 真正的穿越频率、且与电机无关。下面三个只是**未标定时的兜底**（出厂 R_PHASE=0），
+ * 等价于"假设 L≈24 µH、R/L≈1800 rad/s"，保留是为了第一次上电/没跑标定时行为不变。 */
+#define K_SCALE 0.00012f             // 兜底：k = K_SCALE*I_BW（假设 L≈24 µH）
+#define KI_D 0.045f                // 兜底：PI 零点，rad/sample（假设 R/L≈1800 rad/s）
+#define KI_Q 0.045f                // 同上（q 轴）
+/* 推导出的 P 增益上限（指令 V/A）。防止 l_d/l_q 被写成量级错误的值时增益大 100
+ * 倍直接失稳：本机（45 µH @ 1 kHz）只需 0.23，10 mH 级电机才用得到 10 */
+#define I_LOOP_K_MAX		10.0f
 #define OVERMODULATION 1.0f        // 1.0 = no overmodulation
 #define CURRENT_FILT_ALPHA	.1f	// 1st order d/q current filter (not used in control)
 #define VBUS_FILT_ALPHA		.1f		// 1st order bus voltage filter

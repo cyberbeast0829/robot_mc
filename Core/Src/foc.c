@@ -165,13 +165,69 @@ void zero_current(ControllerStruct *controller){
 
     }
 
+/* 1 - exp(-x) 的 Padé 近似（x = R*DT/L），x 钳到 [0,3]：
+ * x=0.23 误差 <0.02%，x=1 误差 0.08%，x=2 误差 0.9%。不用 expf 是因为
+ * current_loop_retune() 会在状态切换时被控制 ISR 调用 */
+static float one_minus_exp_neg(float x)
+{
+	if (!(x > 0.0f)) { return 0.0f; }
+	if (x > 3.0f) { x = 3.0f; }
+	return 12.0f*x/(12.0f + 6.0f*x + x*x);
+}
+
+/* ---- 电流环 PI 增益：由标定的 R_PHASE / L_D / L_Q 推导 --------------------
+ *
+ * 对象是 dq 域的 R-L 环节，PI 做极点对消（零点对准 -R/L），于是 config.i_bw
+ * 就是**真正的穿越频率**：
+ *
+ *     k  = 2*pi*I_BW*L / V_PER_CMD     [指令 V/A]  -> |k*V_PER_CMD/(j*w*L)| = 1 @ w = 2*pi*I_BW
+ *     ki = 1 - exp(-R*DT/L)                        -> PI 零点 = R/L（每拍）
+ *
+ * 为什么不能用固定常数：k 正比于 L，ki 只取决于 R/L，两者都是电机参数。写死一套
+ * 只对"L≈24 µH、R/L≈1800 rad/s"的电机成立；同样的常数换一台电机，穿越频率会从
+ * 9 Hz（5 Ω / 300 µH 的云台电机）一路变到 2.3 kHz（10 µH 的高转速电机）——要么慢
+ * 得做不了外环，要么相位裕度掉到 50° 边缘。详见 docs/DEV.md 的"电流环增益"。
+ *
+ * 未标定（R_PHASE<=0 或 L<=0，出厂默认 R=0）时退回 hw_config.h 的
+ * K_SCALE/KI_D/KI_Q 常量，行为与改动前逐位一致。
+ */
+void current_loop_retune(ControllerStruct *controller){
+	float bw = I_BW;
+	const float r = R_PHASE;
+	const float ld = L_D;
+	const float lq = L_Q;
+
+	/* config_apply_limits() 已经把 I_BW 钳到 [100,2000]；这里只挡住"增益变成
+	 * 0 或 NaN"这一种致命情况（100 就是 params.json 里的下限） */
+	if (!(bw > 0.0f) || !(bw < 1.0e6f)) { bw = 100.0f; }
+
+	if ((r > 0.0f) && (ld > 0.0f) && (lq > 0.0f)) {
+		const float wc = 6.28318531f*bw;
+		float k_d = wc*ld/V_PER_CMD;
+		float k_q = wc*lq/V_PER_CMD;
+
+		/* 防手误：l_d/l_q 写成量级错误的值时增益会大 100 倍直接失稳。
+		 * 本机（45 µH @ 1 kHz）只需要 0.23，10 mH 级电机才用得到 10 */
+		if (k_d > I_LOOP_K_MAX) { k_d = I_LOOP_K_MAX; }
+		if (k_q > I_LOOP_K_MAX) { k_q = I_LOOP_K_MAX; }
+		controller->k_d = k_d;
+		controller->k_q = k_q;
+		controller->ki_d = one_minus_exp_neg(r*DT/ld);
+		controller->ki_q = one_minus_exp_neg(r*DT/lq);
+	}
+	else{
+		controller->k_d = K_SCALE*bw;
+		controller->k_q = K_SCALE*bw;
+		controller->ki_d = KI_D;
+		controller->ki_q = KI_Q;
+	}
+	controller->ki_fw = .1f*controller->ki_d;	// 弱磁积分沿用 d 轴零点的 1/10
+}
+
 void init_controller_params(ControllerStruct *controller){
 
-	controller->ki_d = KI_D;
-    controller->ki_q = KI_Q;
-    controller->k_d = K_SCALE*I_BW;
-    controller->k_q = K_SCALE*I_BW;
-    controller->ki_fw = .1f*controller->ki_d;
+	/* 电流环 PI 增益由标定的 R/L 推导（未标定时退回常量），见 current_loop_retune() */
+	current_loop_retune(controller);
     controller->flux_linkage = KT/(1.5f*PPAIRS);
     /* Fixed on-chip PGA configuration and 5 mOhm shunts; I_MAX does not
      * change the hardware gain or the current conversion coefficient. */
@@ -208,6 +264,9 @@ void reset_foc(ControllerStruct *controller){
      * 否则进电机模式的第一拍 torque_control() 会用上一次留下的（可能是 0）上限 */
     controller->i_max = I_MAX;
     controller->temp_i_lim = I_MAX;
+    /* 每次进电机模式都按当前标定的 R/L 与 config.i_bw 重算电流环增益，这样
+     * 标定完成或改了 i_bw 都不必等重启。纯浮点运算，只在状态切换时执行一次 */
+    current_loop_retune(controller);
     }
 
 /* ---- NTC 温度 --------------------------------------------------------------

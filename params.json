@@ -9,7 +9,8 @@
       "min": 100.0,
       "max": 2000.0,
       "unit": "Hz",
-      "brief": "电流环带宽",
+      "brief": "电流环目标穿越频率（Hz）：P/I 增益由标定的 config.r_phase / config.l_d / config.l_q 与 V_PER_CMD 推导（极点对消），与电机无关，写入后立即重算、无需重启（未标定 r_phase=0 时退回编译期常量）。实际穿越约 0.76×（2 拍 ADC→占空比延迟）：1000→762 Hz/PM 78°，2000→1650 Hz/PM 59°",
+      "set": "I_BW = v; current_loop_retune(&controller);",
       "persist": true,
       "default": 1000.0
     },
@@ -172,7 +173,7 @@
       "unit": "A/(rad/s)",
       "brief": "CSV/CSP 速度环 P 增益（电机端安培 / 输出轴角速度）；0 时速度环只剩积分器（要完全关闭请把 vel_integrator_gain 也设 0）",
       "persist": true,
-      "default": 2.469
+      "default": 2.158127
     },
     {
       "name": "config.vel_integrator_gain",
@@ -184,7 +185,7 @@
       "unit": "A/(rad/s)/s",
       "brief": "速度环 I 增益；消掉重力/摩擦下的稳态速度误差（抗饱和：输出限幅时积分按 0.99 衰减）",
       "persist": true,
-      "default": 44.44
+      "default": 38.846287
     },
     {
       "name": "config.pos_ff_gain",
@@ -354,9 +355,9 @@
       "min": 0.0,
       "max": 100.0,
       "unit": "kg·m^2",
-      "brief": "输出端惯量（关节折算值）。可由 action.measure_inertia 测得（只写 RAM，不自动保存）；用于推荐增益与 pos_error_fault。0 = 未知",
+      "brief": "输出端惯量（关节折算值）。可由 action.measure_inertia 测得（只写 RAM，不自动保存）；用于推荐增益与 pos_error_fault。0 = 未知。当前值=4 次实测均值（0.000826/0.000906/0.001005/0.001100，2026-11-06 台架，GR 9、KT 0.0334）",
       "persist": true,
-      "default": 0.0006
+      "default": 0.00096
     },
     {
       "name": "config.omega_c",
@@ -378,9 +379,9 @@
       "min": 0.2,
       "max": 5.0,
       "unit": "x",
-      "brief": "action.tune_gains 对速度环增益的放大系数。线性公式给的是惯性主导时的值，摩擦/齿隙大的关节要放大（台架实测约 2.6）；只放大速度环，pos_gain 不受影响。1 = 纯公式",
+      "brief": "action.tune_gains 对速度环增益的放大系数。线性公式给的是惯性主导时的值，摩擦/齿隙大的关节要放大（旧电机/旧电流环约 2.6）；只放大速度环，pos_gain 不受影响。1 = 纯公式。2026-11-06 台架（GR 9、电流环按标定 R/L 推导后）：1.5 给出 vel_gain 2.16，0.2 rad 位置阶跃与 1 rad/s 速度阶跃均干净（速度超调 3~7%、位置残差 <0.5 mrad），1.7 起速度超调 >25%，2.2 失稳",
       "persist": true,
-      "default": 2.2
+      "default": 1.5
     },
     {
       "name": "config.vel_loop_prescaler",
@@ -1359,6 +1360,36 @@
       "get": "(L_D - L_Q)",
       "unit": "H",
       "brief": "感差 Ld-Lq（标定得出；凸极电机为负）"
+    },
+    {
+      "name": "telemetry.current_k_d",
+      "type": "float",
+      "access": "r",
+      "get": "controller.k_d",
+      "unit": "V/A",
+      "brief": "电流环 d 轴 P 增益（指令伏/A，由 config.i_bw 与标定的 l_d 推导，见 current_loop_retune()）"
+    },
+    {
+      "name": "telemetry.current_k_q",
+      "type": "float",
+      "access": "r",
+      "get": "controller.k_q",
+      "unit": "V/A",
+      "brief": "电流环 q 轴 P 增益（指令伏/A）；凸极电机 q 轴电感更大，所以 k_q > k_d"
+    },
+    {
+      "name": "telemetry.current_ki_d",
+      "type": "float",
+      "access": "r",
+      "get": "controller.ki_d",
+      "brief": "电流环 d 轴积分零点（rad/sample）= 1-exp(-r_phase*DT/l_d)，与带宽无关"
+    },
+    {
+      "name": "telemetry.current_ki_q",
+      "type": "float",
+      "access": "r",
+      "get": "controller.ki_q",
+      "brief": "电流环 q 轴积分零点（rad/sample）= 1-exp(-r_phase*DT/l_q)"
     },
     {
       "name": "telemetry.v_setpoint",
