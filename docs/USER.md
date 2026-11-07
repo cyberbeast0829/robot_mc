@@ -532,10 +532,12 @@ python tools/mc_ep.py --port COM7 call action.save
 `Gear encoder: no second encoder - output position memory stays off`。
 
 - **`action.zero`**（把当前位置设成零点）现在**清零后 `telemetry.position` 就是 0**
-  （旧固件只重设单圈零点，整圈计数留在原处，读数会停在整圈上），并且会同时平移
-  双编参考、顺手重取一次参考，让断电记忆窗口重新以零点为中心（窗口是 ±4.5 转子圈
-  = ±0.5 输出圈，偏了会白丢一半行程）。`config.m_zero` 的写入口走同一个
-  `ps_set_m_zero()`，直接改它不会破坏双编参考（零点不是当前位姿时不重取参考）。
+  （旧固件只重设单圈零点，整圈计数留在原处，读数会停在整圈上），并且会把双编参考
+  平移同样的量，所以零点与记忆的位置始终一致。`config.m_zero` 的写入口走同一个
+  `ps_set_m_zero()`，直接改它不会破坏双编参考。
+  注意它**不会**重取参考：记忆窗口仍以原参考位姿为中心（窗口 ±4.5 转子圈 = ±0.5
+  输出圈），想让窗口重新以零点为中心，就在轴静止、门极关闭时再跑一次
+  `action.gear_capture` + `action.save`。
 - **`action.gear_read`** 只读一次并刷新 `telemetry.sec_enc_raw` /
   `telemetry.sec_enc_phase` / `telemetry.gear_abs_turns`，不写 flash —— 校准/验收
   时用它和 `telemetry.position_motor` 对比。
