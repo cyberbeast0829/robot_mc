@@ -461,6 +461,7 @@ def generate_source(endpoints, descriptor):
         '#include "structs.h"',
         '#include "timing.h"',
         '#include "main.h"',
+        '#include "cogging.h"',		# 齿槽补偿的遥测 getter（cogging_*）
         "",
         "const char endpoint_json[] =",
         c_string_literal(descriptor) + ";",
@@ -590,6 +591,7 @@ def generate_prefs_source(endpoints, lim):
         '#include "user_config.h"',
         '#include "hw_config.h"',
         '#include "position_sensor.h"',
+        '#include "cogging.h"',		# internal.cogging_lut（COGGING_LUT / COG_N）
         "",
         "/* 顺序按 endpoint ID 升序，便于 diff 和线性查找 */",
         "const prefs_entry_t prefs_entries[] = {",

@@ -49,7 +49,7 @@ extern "C" {
 #define PREFS_REC_HDR_LEN		8u
 #define PREFS_MAX_PAYLOAD		4096u
 #define PREFS_MAX_RECORDS		256u
-#define PREFS_MAX_VALUE			512u
+#define PREFS_MAX_VALUE			4096u	// 单条记录上限（internal.cogging_lut 是 1024×int16 = 2048 B）
 
 typedef enum{
 	PREFS_OK = 0,

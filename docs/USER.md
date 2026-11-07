@@ -555,6 +555,95 @@ python tools/mc_ep.py --port COM7 call action.save
   在每个位置断电重启后比对。判据是差值为几十分之一 count 的抖动，出现整圈级偏差就是
   齿数/方向配错或超出窗口。
 
+## 5.2 齿槽转矩补偿（anti-cogging）
+
+齿槽力矩让关节在低速时"一顿一顿"、位置保持时有周期性误差。补偿的做法是标定一张
+"转子位置 → 需要的 q 轴电流"表，运行时按编码器位置把这段电流前馈加上去。
+
+**前提**
+
+1. 已经 `action.calibrate`（`config.pre_calibrated = true`）；
+2. 外环增益已经配好（建议先 `action.measure_inertia` + `action.tune_gains`）。
+   标定用的就是这套增益，增益不对表也不可信；
+3. 关节能在一个转子圈内自由转动（输出轴约 1/GR 圈，本机 40°），标定期间
+   **不要有人或外力碰它**。撞到机械限位会让标定直接失败。
+   默认方法会让转子**正转一圈再反转一圈**（约 20 s），所以输出轴要有 ±40° 的行程。
+
+**标定**
+
+```python
+dev.call("action.cogging_calibrate")      # 自动进出电机模式，约 20 s
+# 进度：system.cogging_progress / system.cogging_progress_total（共 2048 点）
+# 结果：system.cogging_status（2 = 成功）
+```
+
+或者用台架工具（它顺便打印进度和诊断量）：
+
+```bash
+python tools/cogging_test.py --port COM7 calibrate
+python tools/cogging_test.py --port COM7 status
+```
+
+**它是怎么测的**：位置目标以恒定速度扫过一个转子圈，同时按转子位置把速度环的
+输出（"维持这个速度所需的 i_q"）分箱累积；正反各扫一遍，动摩擦方向相反、平均后
+抵消，剩下的随位置周期变化的部分就是齿槽。所以标定时**转子的匀速性比停得准更
+重要**，不要去扶它。
+
+标定完表在 RAM、`config.cogging_valid = 1`，但**补偿还没打开**：
+先用低速 `csv`（`tools/csv_csp_test.py`）走一段比较速度波动，确认有效再：
+
+```python
+dev.write("config.cogging_en", True)      # 打开补偿
+dev.call("action.save")                   # 门极关闭（回到菜单）时才写 flash
+```
+
+台架实测（空载，48 V）：主导齿槽阶次的速度纹波下降 **71~90%**（22/24/44/72 次/转）。
+总速度纹波 RMS 基本不变——因为本机低速纹波的大部分不是齿槽（高空间频率的振铃 +
+4 次/转成分），所以验证时要看**阶次**而不是总 RMS。
+
+**怎么看结果**
+
+| 端点 | 含义 |
+|---|---|
+| `system.cogging_status` | 0 没跑 / 1 运行中 / 2 成功 / -1 中止 / -2 坏点太多 / -3 两遍不一致 / -4 超时 / -5 增益没配 |
+| `system.cogging_amp` | 表的 RMS 幅值（A）。本机应在 0.05~0.5 A；接近 0 说明齿槽很弱或转子没动 |
+| `system.cogging_mismatch` | 正反两遍的差异。与 `amp` 同量级 ⇒ 重复性差（多半是 `cogging_sweep_ms` 太小，其次才是增益不对/标定时有外力/编码器丢帧） |
+| `system.cogging_bad` | 两遍都没收敛的点数（> 1/4 直接判失败） |
+| `telemetry.cogging_ff` | 当前实际叠加的前馈电流 |
+| `telemetry.cogging_value` + `config.cogging_index` | 逐个读表（`tools/cogging_test.py dump` 会读全表并给出主要谐波、可存 CSV） |
+
+**参数**
+
+- `config.cogging_method`（默认 1）：1 = 匀速扫描（推荐，约 20 s）；
+  0 = 逐点停住（约 10 分钟，受静摩擦影响、精度差，**不推荐**）；
+- `config.cogging_sweep_ms`（默认 8000）：扫描法一个转子圈走多少毫秒。台架实测
+  太快会让两遍差异变大（2000 ms 时 0.24 A，信号只有 0.05 A）；4000 以下不建议；
+- `config.cogging_gain`（默认 1.0）：补偿缩放。不确定时先用 0.7~0.9；
+- `config.cogging_max`（默认 1.0 A）：前馈钳位，用来兜住一张错的表（0 = 不补偿）；
+- `config.cogging_pos_thr` / `cogging_settle_ms` / `cogging_avg`：只对方法 0
+  （逐点停住）有效；
+- `config.cogging_detrend`：去趋势阶数，见下。
+
+**重力/外载**（重要）
+
+标定测的是"维持速度/位置需要的总电流"，里面有重力矩。正反两遍抵消不了重力（方向
+相同），所以标定时会去掉一个多项式趋势（`config.cogging_detrend`，默认 3 阶）：
+一个转子圈只走 `2π/GR` 的输出角（本机 40°），重力在这段里几乎就是一条三次曲线，
+而齿槽是 20~120 次/转，不会被误删。经验：`tools/cogging_test.py dump` 里 1~3 阶
+幅值应该接近 0；如果明显不是，把 `cogging_detrend` 调大（直接驱动 GR=1 用 5~6）。
+最稳妥仍然是**卸掉负载 / 让关节水平**再标定。
+
+**注意**
+
+- 换编码器、重新标定编码器之后表就失效了（相位跟着编码器走），必须重标；
+  只改 `config.m_zero` / `action.zero` **不影响**表。
+- `action.cogging_reset` 丢弃表（RAM），换电机/拆装后用它清掉再重标。
+- 补偿是在 `i_q_des` 上加前馈，仍然要经过电流限幅、弱磁和 `i_q` 的 `i_max` 钳位，
+  不会绕过保护。
+- 没有做"在线自适应"：温度变化带来的齿槽漂移（NdFeB 约 −0.12%/°C）不跟踪。
+- 表是**隐藏记录**，不在第 6 节的 backup/restore 里（换控制器板要重标，不能靠
+  参数备份搬过去）。
+
 ## 6. 备份与恢复
 
 只备份"持久化 = 是"的参数（见 [parameters.md](parameters.md)）。LUT 是隐藏记录，

@@ -36,7 +36,7 @@ Two equivalent builds produce the same firmware:
   `make DEBUG=1` (-Og/-g3), `make size`, `make clean`, and `make flash` (J-Link; override
   with `JLINK_DEVICE`/`JLINK_IF`/`JLINK_SPEED`; `flash-pyocd` / `flash-openocd` also exist).
   `make check` 校验生成表/文档是否最新；`make hosttest` 在主机上跑 `prefs_codec`、
-  CAN codec、`motion_law` 和 `endpoint_process()` 单测。
+  CAN codec、`motion_law`、`dual_gear`、`cogging_law` 和 `endpoint_process()` 单测。
   ⚠ The startup vector table must match the device IRQ numbering — a mismatch silently
   misroutes every ISR (keep it in sync if you ever edit it).
 - **Keil MDK (uVision)**: project `Keil/mit_h473.uvprojx`, target `mit_h473`, device
@@ -55,8 +55,8 @@ Two equivalent builds produce the same firmware:
   Bench-verify with the **Keil** image (`Keil/Objects/mit_h473.axf`) until this is fixed, and
   don't conclude "the firmware is broken" from a `make` image symptom.
 - Testing: `make check` (generated tables/docs are current) and `make hosttest`
-  (`tools/test_{prefs_codec,can_cyberbeast,motion_law,endpoint_proto}.c`, no target
-  hardware) are the only automated checks.
+  (`tools/test_{prefs_codec,can_cyberbeast,motion_law,dual_gear,cogging,endpoint_proto}.c`,
+  no target hardware) are the only automated checks.
   Everything else is verified by a clean build + bench testing by the maintainer
   (`tools/cb_bench.py` drives the CYBERBEAST platform over slcan: `--stage-a/-b/-c/-c-static/-d`,
   `--reset-test`, `--timeout-test`; `tools/csv_csp_test.py` drives the velocity/position
@@ -196,6 +196,36 @@ Same shape as upstream, with these N32 names:
     压到 `v_max`，`command.v_des` 端点也改成固定 ±200 rad/s（否则写不进去）；
     `config.enable_torque_vel_lim`（默认 false）在阻抗/力矩模式按
     `i_q = clamp(i_q, (v_max−v)·vel_gain, (−v_max−v)·vel_gain)` 限速（安培域，量纲天然成立）。
+- **齿槽转矩补偿（anti-cogging）**：纯数学在 `Core/Inc/cogging_law.h`（host 测
+  `tools/test_cogging.c`），状态机/前馈在 `Core/Src/cogging.c`。
+  - 表 `COGGING_LUT[COG_N=1024]`（int16，4096 counts/A）覆盖**一个转子机械周期**，
+    索引用 `encoder->count`（线性化后、**未减 `M_ZERO`**）——所以 `action.zero` 不会
+    让表失效，换编码器才会。持久化是 `internal.cogging_lut`（hidden blob 2048 B，
+    `PREFS_MAX_VALUE` 因此是 4096）。
+  - `action.cogging_calibrate` = 自动进电机模式 + **匀速扫两圈**（`config.cogging_method`
+    默认 1；`cogging_sweep_ms` 一圈的毫秒数，默认 8000，全程约 20 s）：位置目标匀速
+    斜坡，按转子位置把速度环输出（P+I）分箱累积；分箱前过两级 90 Hz 低通压掉速度环
+    振铃；换向各丢 0.25 s。主循环合并：两遍各自去均值 + 三次多项式去趋势 → 取平均 →
+    坏点插值 → 再整体去均值/去趋势 → 量化，并质检（坏点 > 1/4 或两遍差异 > 0.5×信号
+    + 5 mA → 失败并停用补偿，旧表不动）；成功只置 `config.cogging_valid`，
+    **不自动保存、不自动打开** `config.cogging_en`。
+    - ⚠ `config.cogging_method = 0` 是旧的"逐点停住读积分器"，保留但**不推荐**：
+      台架实测 564 s、两遍差异 0.021 A（信号 0.052 A 的 40%，静摩擦所致）。它的
+      幅值是对的，但要慢得多。**两种方法存表都必须按"物理格"索引**
+      （`cog_bin_of_count()` / `start_bin`）—— hold 法曾经用"从起点数起的点号"
+      当索引，整张表被旋转了一个随机的 `k0` 格，补偿相位全错；`tools/test_cogging.c`
+      有回归测试。
+    - ⚠ 多项式去趋势（`config.cogging_detrend`）是必须的：重力/外载在正反两遍里方向
+      相同、抵消不了，而它在一个转子圈里只是慢变趋势（本机 40° 输出角）；齿槽是
+      20~120 次/转，不会被误删。
+  - 标定用**用户自己的** `pos_gain`/`vel_gain`/`vel_integrator_gain`（所以要先
+    `action.tune_gains`）。状态机在 `motion_control()` 里接管（同惯量标定），
+    ISR 里 `cogging_apply()` 紧跟 `motion_control()`、**在 `field_weaken()` 之前**
+    把前馈加进 `i_q_des`；`zero_commands()` 会 `cogging_abort()`。
+  - ⚠ `run_fsm()` 的 CAN 超时 `zero_commands()` 条件里必须保留
+    `cogging_cal.state == COG_CAL_IDLE && !controller.cogging_req`，否则标定每拍都被
+    清零（`vel_integ` 是测量量）。
+  - 台架：`python tools/cogging_test.py --port COMx status|calibrate|dump|on|off|reset`。
 
 ATIM1 update/TRGO and the control ISR are fixed at the PWM **peak**, inside the
 low-side sampling window. Preserve `tim.c`'s startup sequence: load the internal

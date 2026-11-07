@@ -68,7 +68,13 @@ extern "C" {
 #define TRAP_VEL_LIMIT			__float_reg[48]									// TRAP_TRAJ 的巡航上限 rad/s（与运行期限速取较小值）
 #define TRAP_ACCEL_LIMIT		__float_reg[49]									// TRAP_TRAJ 的加速度 rad/s²
 #define TRAP_DECEL_LIMIT		__float_reg[50]									// TRAP_TRAJ 的减速度 rad/s²
-
+/* ---- 齿槽转矩补偿（anti-cogging，见 cogging.h）----
+ * 表本身是 internal.cogging_lut（hidden blob，1024 × int16，一个转子机械周期）。
+ * 标定用外环自己的增益（pos_gain / vel_gain / vel_integrator_gain），所以
+ * **先 action.tune_gains 再标定**。 */
+#define COG_GAIN				__float_reg[51]									// 补偿缩放（0..2，1 = 标定值原样）
+#define COG_MAX					__float_reg[52]									// 前馈电流钳位 A（0 = 不使用补偿）
+#define COG_POS_THR				__float_reg[53]									// 标定收敛阈值（输出轴 rad），建议 ≤ 半个表距
 
 #define PHASE_ORDER             __int_reg[0]                                    // Phase swapping during calibration
 #define CAN_ID                  __int_reg[1]                                    // CAN bus ID
@@ -113,6 +119,15 @@ extern "C" {
 #define GEAR_TEETH_SEC          __int_reg[142]                                  // T2：副编码器侧齿轮齿数
 #define GEAR_ZERO_COUNT         __int_reg[144]                                  // 标定时刻的多圈计数 turns*CPR + count_wrapped
 #define GEAR_ZERO_PHASE         __float_reg[46]                                 // 标定时刻的韦尼尔相位 Δ ∈ [0,1)
+/* 齿槽补偿的标定参数（一个转子机械周期的 1024 个点，见 cogging.h）。
+ * settle_ms 是"位置误差进阈值后还要连续保持多久才开始采样"，
+ * avg 是采样平均的控制周期数（40 kHz，默认 80 = 2 ms）。 */
+#define COG_SETTLE_MS           __int_reg[145]                                  // 标定：每点收敛后的保持时间 ms
+#define COG_AVG                 __int_reg[146]                                  // 标定：每点平均的控制周期数
+#define COG_INDEX               __int_reg[147]                                  // 诊断：读表用的索引（不持久化）
+#define COG_DETREND             __int_reg[148]                                  // 标定后去掉一个 N 阶多项式趋势（重力/外载，0 = 不去）
+#define COG_METHOD              __int_reg[149]                                  // 标定方法：1 = 匀速扫描（默认），0 = 逐点停住
+#define COG_SWEEP_MS            __int_reg[150]                                  // 扫描法：一个转子机械圈走多少毫秒
 #define GEAR_SEC_REVERSED       gear_sec_reversed_flag	// 副编码器读数随正转变小（磁铁反装/外啮合）→ 解算前镜像
 #define GEAR_REF_VALID          gear_ref_valid_flag		// 双编参考是否已建立（=1 才在上电时恢复位置）
 /* 布尔/标志类配置单独用 uint8_t 存：TLV 里 bool 记录只有 1 字节，塞进 __int_reg
@@ -122,10 +137,13 @@ extern "C" {
 #define MOT_TEMP_EN             mot_temp_en_flag			// 电机温度保护开关
 #define VEL_LIMIT_EN            vel_limit_en_flag			// 速度设定值限幅开关（config.enable_vel_limit）
 #define TORQUE_VEL_LIM_EN       torque_vel_lim_en_flag		// 阻抗/力矩模式下的速度限制开关
+#define COGGING_EN              cogging_en_flag				// 齿槽补偿开关（config.cogging_en）
+#define COGGING_VALID           cogging_valid_flag			// 齿槽补偿表有效（标定成功才置 1，config.cogging_valid）
 extern uint8_t pre_calibrated_flag, fet_temp_en_flag, mot_temp_en_flag;
 extern uint8_t vel_limit_en_flag, torque_vel_lim_en_flag;
 extern uint8_t gear_ref_valid_flag;
 extern uint8_t gear_sec_reversed_flag;
+extern uint8_t cogging_en_flag, cogging_valid_flag;
 
 
 

@@ -455,6 +455,11 @@
               <FilePath>..\Core\Src\foc.c</FilePath>
             </File>
             <File>
+              <FileName>cogging.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Core\Src\cogging.c</FilePath>
+            </File>
+            <File>
               <FileName>motion.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\Core\Src\motion.c</FilePath>

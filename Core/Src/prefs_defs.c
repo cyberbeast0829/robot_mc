@@ -11,6 +11,7 @@
 #include "user_config.h"
 #include "hw_config.h"
 #include "position_sensor.h"
+#include "cogging.h"
 
 /* 顺序按 endpoint ID 升序，便于 diff 和线性查找 */
 const prefs_entry_t prefs_entries[] = {
@@ -87,12 +88,24 @@ const prefs_entry_t prefs_entries[] = {
 	{211, PREFS_T_F32, 4, (void *)&(TRAP_VEL_LIMIT)},
 	{212, PREFS_T_F32, 4, (void *)&(TRAP_ACCEL_LIMIT)},
 	{213, PREFS_T_F32, 4, (void *)&(TRAP_DECEL_LIMIT)},
+	{218, PREFS_T_BOOL, 1, (void *)&(COGGING_EN)},
+	{219, PREFS_T_BOOL, 1, (void *)&(COGGING_VALID)},
+	{220, PREFS_T_F32, 4, (void *)&(COG_GAIN)},
+	{221, PREFS_T_F32, 4, (void *)&(COG_MAX)},
+	{222, PREFS_T_F32, 4, (void *)&(COG_POS_THR)},
+	{223, PREFS_T_I32, 4, (void *)&(COG_SETTLE_MS)},
+	{224, PREFS_T_I32, 4, (void *)&(COG_AVG)},
+	{236, PREFS_T_BLOB, 2048, (void *)&(COGGING_LUT)},
+	{237, PREFS_T_I32, 4, (void *)&(COG_DETREND)},
+	{238, PREFS_T_I32, 4, (void *)&(COG_METHOD)},
+	{239, PREFS_T_I32, 4, (void *)&(COG_SWEEP_MS)},
 };
 const unsigned prefs_entry_count = sizeof(prefs_entries) / sizeof(prefs_entries[0]);
 
 _Static_assert(sizeof(prefs_entries) / sizeof(prefs_entries[0]) <= 256u,
             "params.json: 持久化条目超过 PREFS_MAX_RECORDS");
 _Static_assert(N_LUT * sizeof(int) == 512, "internal.encoder_lut: 尺寸与固件不一致");
+_Static_assert(COG_N * sizeof(int16_t) == 2048, "internal.cogging_lut: 尺寸与固件不一致");
 
 void config_apply_defaults(void){
 	I_BW = 1000.0f;
@@ -168,6 +181,17 @@ void config_apply_defaults(void){
 	TRAP_VEL_LIMIT = 0.0f;
 	TRAP_ACCEL_LIMIT = 0.0f;
 	TRAP_DECEL_LIMIT = 0.0f;
+	COGGING_EN = 0;
+	COGGING_VALID = 0;
+	COG_GAIN = 1.0f;
+	COG_MAX = 1.0f;
+	COG_POS_THR = 0.0003f;
+	COG_SETTLE_MS = 40;
+	COG_AVG = 80;
+	memset((void *)&(COGGING_LUT), 0, 2048);
+	COG_DETREND = 3;
+	COG_METHOD = 1;
+	COG_SWEEP_MS = 8000;
 }
 
 void config_apply_limits(void){
@@ -331,4 +355,25 @@ void config_apply_limits(void){
 	if(!isfinite(TRAP_DECEL_LIMIT)){TRAP_DECEL_LIMIT = 0.0f;}
 	if(TRAP_DECEL_LIMIT < 0.0f){TRAP_DECEL_LIMIT = 0.0f;}
 	if(TRAP_DECEL_LIMIT > 100000.0f){TRAP_DECEL_LIMIT = 100000.0f;}
+	if(COGGING_EN > 1){COGGING_EN = 1;}
+	if(COGGING_VALID > 1){COGGING_VALID = 1;}
+	if(!isfinite(COG_GAIN)){COG_GAIN = 1.0f;}
+	if(COG_GAIN < 0.0f){COG_GAIN = 0.0f;}
+	if(COG_GAIN > 2.0f){COG_GAIN = 2.0f;}
+	if(!isfinite(COG_MAX)){COG_MAX = 1.0f;}
+	if(COG_MAX < 0.0f){COG_MAX = 0.0f;}
+	if(COG_MAX > 10.0f){COG_MAX = 10.0f;}
+	if(!isfinite(COG_POS_THR)){COG_POS_THR = 0.0003f;}
+	if(COG_POS_THR < 1e-05f){COG_POS_THR = 1e-05f;}
+	if(COG_POS_THR > 0.01f){COG_POS_THR = 0.01f;}
+	if(COG_SETTLE_MS < 0){COG_SETTLE_MS = 0;}
+	if(COG_SETTLE_MS > 500){COG_SETTLE_MS = 500;}
+	if(COG_AVG < 1){COG_AVG = 1;}
+	if(COG_AVG > 400){COG_AVG = 400;}
+	if(COG_DETREND < 0){COG_DETREND = 0;}
+	if(COG_DETREND > 6){COG_DETREND = 6;}
+	if(COG_METHOD < 0){COG_METHOD = 0;}
+	if(COG_METHOD > 1){COG_METHOD = 1;}
+	if(COG_SWEEP_MS < 500){COG_SWEEP_MS = 500;}
+	if(COG_SWEEP_MS > 20000){COG_SWEEP_MS = 20000;}
 }

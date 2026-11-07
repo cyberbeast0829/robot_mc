@@ -825,6 +825,129 @@
       "default": 0
     },
     {
+      "name": "config.cogging_en",
+      "type": "bool",
+      "access": "rw",
+      "ref": "COGGING_EN",
+      "brief": "齿槽转矩补偿开关。只有 config.cogging_valid 为 true 时才真正生效（表没标定过就打开会被忽略）。建议先用 action.cogging_calibrate 标定、验证，再打开",
+      "persist": true,
+      "default": 0
+    },
+    {
+      "name": "config.cogging_valid",
+      "type": "bool",
+      "access": "rw",
+      "ref": "COGGING_VALID",
+      "brief": "齿槽补偿表是否有效（标定成功后置 1，action.cogging_reset 或恢复出厂值清 0）。手动清 0 等于停用补偿但保留表，重新 action.save 也不会再自动置 1",
+      "persist": true,
+      "default": 0
+    },
+    {
+      "name": "config.cogging_gain",
+      "type": "float",
+      "access": "rw",
+      "ref": "COG_GAIN",
+      "min": 0.0,
+      "max": 2.0,
+      "unit": "x",
+      "brief": "齿槽补偿缩放：1.0 = 用标定值原样前馈。偏小（0.7~0.9）更保守；大于 1 只在确认标定低估时用",
+      "persist": true,
+      "default": 1.0
+    },
+    {
+      "name": "config.cogging_max",
+      "type": "float",
+      "access": "rw",
+      "ref": "COG_MAX",
+      "min": 0.0,
+      "max": 10.0,
+      "unit": "A",
+      "brief": "前馈电流钳位（A，0 = 不使用补偿）。用来兜住一张错误的表，正常齿槽补偿只有零点几安，取 1~2 A 足够",
+      "persist": true,
+      "default": 1.0
+    },
+    {
+      "name": "config.cogging_pos_thr",
+      "type": "float",
+      "access": "rw",
+      "ref": "COG_POS_THR",
+      "min": 1e-05,
+      "max": 0.01,
+      "unit": "rad",
+      "brief": "标定收敛阈值（输出轴 rad）：位置误差连续低于它 cogging_settle_ms 毫秒后才开始采样。建议 ≤ 半个表距 2π/(1024·GR)，本机（GR=9）约 0.0007 rad",
+      "persist": true,
+      "default": 0.0003
+    },
+    {
+      "name": "config.cogging_settle_ms",
+      "type": "int32",
+      "access": "rw",
+      "ref": "COG_SETTLE_MS",
+      "min": 0,
+      "max": 500,
+      "unit": "ms",
+      "brief": "标定：每个点位置进入阈值后还要保持多久才开始采样（默认 40 ms）。调大更稳、标定更慢",
+      "persist": true,
+      "default": 40
+    },
+    {
+      "name": "config.cogging_avg",
+      "type": "int32",
+      "access": "rw",
+      "ref": "COG_AVG",
+      "min": 1,
+      "max": 400,
+      "unit": "cycle",
+      "brief": "标定：每个点采样平均的控制周期数（40 kHz，默认 80 = 2 ms）。调大抑制噪声、标定更慢",
+      "persist": true,
+      "default": 80
+    },
+    {
+      "name": "config.cogging_detrend",
+      "type": "int32",
+      "access": "rw",
+      "ref": "COG_DETREND",
+      "min": 0,
+      "max": 6,
+      "brief": "标定后去掉一个 N 阶多项式趋势（0 = 不去）。重力/外载正反两遍抵消不了，而它在一个转子圈里是慢变趋势（本机 GR=9，只走 1/9 输出圈 ≈ 40°），三次多项式就能拟合掉；齿槽是 84/168… 次/转，不会被误删。有重力负载的关节保持默认 3；直接驱动（GR=1）用 5~6；确认无外载可设 0",
+      "persist": true,
+      "default": 3
+    },
+    {
+      "name": "config.cogging_method",
+      "type": "int32",
+      "access": "rw",
+      "ref": "COG_METHOD",
+      "min": 0,
+      "max": 1,
+      "brief": "标定方法：1 = 匀速扫描（默认，约 10 s）—— 转子匀速转一圈再反向转回来，按转子位置分箱累积速度环输出；动摩擦是常值且两向相反，平均后抵消，没有静摩擦误差。0 = 逐点停住读积分器 —— 测的是纯静态力矩，但静摩擦（本机粘滞带 ±0.15 A）会把 0.02 A 量级的齿槽信号淹没，台架实测幅值偏大 3 倍、相位差 60°，不推荐",
+      "persist": true,
+      "default": 1
+    },
+    {
+      "name": "config.cogging_sweep_ms",
+      "type": "int32",
+      "access": "rw",
+      "ref": "COG_SWEEP_MS",
+      "min": 500,
+      "max": 20000,
+      "unit": "ms",
+      "brief": "扫描法：一个转子机械圈走多少毫秒（默认 8000 = 0.125 圈/s，齿槽基波约 3~15 Hz，远低于速度环带宽）。台架实测：2000/4000/8000/16000 对应两遍差异 0.243/0.111/0.043/0.032 A（信号约 0.055 A）；已经加了 90 Hz 二阶低通，默认值够用。调慢更干净但更久（两圈合计约 2×该值）",
+      "persist": true,
+      "default": 8000
+    },
+    {
+      "name": "config.cogging_index",
+      "type": "int32",
+      "access": "rw",
+      "ref": "COG_INDEX",
+      "min": 0,
+      "max": 1023,
+      "brief": "诊断游标：配合 telemetry.cogging_value 逐个读表（tools/cogging_test.py dump 用），不持久化",
+      "persist": false,
+      "default": 0
+    },
+    {
       "name": "command.t_ff",
       "type": "float",
       "access": "rw",
@@ -1549,6 +1672,38 @@
       "brief": "台阶 HI 的拟合加速度（输出轴）；与 LO 的差决定 J"
     },
     {
+      "name": "telemetry.cogging_ff",
+      "type": "float",
+      "access": "r",
+      "get": "controller.cog_ff",
+      "unit": "A",
+      "brief": "本拍实际叠加到 i_q_des 上的齿槽补偿电流（0 = 未生效：没标定、config.cogging_en=false，或正在标定）"
+    },
+    {
+      "name": "telemetry.cogging_value",
+      "type": "float",
+      "access": "r",
+      "get": "cogging_index_value(COG_INDEX)",
+      "unit": "A",
+      "brief": "齿槽补偿表在 config.cogging_index 处的值（A，已去掉直流分量）。标定点 i 对应转子绝对计数 i·ENC_CPR/1024"
+    },
+    {
+      "name": "telemetry.cogging_pass1",
+      "type": "float",
+      "access": "r",
+      "get": "cogging_pass1_value(COG_INDEX)",
+      "unit": "A",
+      "brief": "诊断：最近一次标定正转那一遍在 config.cogging_index 处的原始测量值（未去均值/去趋势）。与 cogging_pass2 对比可以看出重复性"
+    },
+    {
+      "name": "telemetry.cogging_pass2",
+      "type": "float",
+      "access": "r",
+      "get": "cogging_pass2_value(COG_INDEX)",
+      "unit": "A",
+      "brief": "诊断：最近一次标定反转那一遍在 config.cogging_index 处的原始测量值"
+    },
+    {
       "name": "timing.isr_period",
       "type": "uint32",
       "access": "r",
@@ -1784,6 +1939,50 @@
       "persist": false
     },
     {
+      "name": "system.cogging_status",
+      "type": "int8",
+      "access": "r",
+      "get": "cogging_status()",
+      "brief": "齿槽补偿标定状态：0 未运行 / 1 运行中 / 2 成功（表已写 RAM，用 action.save 落盘）/ -1 中止（离开电机模式或 CAN 超时）/ -2 太多点没收敛 / -3 正反两遍差异过大 / -4 超时 / -5 外环增益未配置"
+    },
+    {
+      "name": "system.cogging_progress",
+      "type": "int32",
+      "access": "r",
+      "get": "cogging_progress()",
+      "brief": "本次标定已完成的表点数（正转 + 反转，共 2×1024 点）"
+    },
+    {
+      "name": "system.cogging_progress_total",
+      "type": "int32",
+      "access": "r",
+      "get": "cogging_progress_total()",
+      "brief": "一次完整标定的总点数（2 × 1024）"
+    },
+    {
+      "name": "system.cogging_amp",
+      "type": "float",
+      "access": "r",
+      "get": "cogging_amplitude()",
+      "unit": "A",
+      "brief": "最近一次标定得到的齿槽力矩 RMS 幅值（折算成 i_q 电流）。太小（< 0.01 A）说明电机本身齿槽很弱"
+    },
+    {
+      "name": "system.cogging_mismatch",
+      "type": "float",
+      "access": "r",
+      "get": "cogging_mismatch()",
+      "unit": "A",
+      "brief": "正转/反转两遍的 RMS 差异（A）。与 cogging_amp 同量级说明重复性差（齿隙/摩擦大、增益不对或有外力）"
+    },
+    {
+      "name": "system.cogging_bad",
+      "type": "uint16",
+      "access": "r",
+      "get": "cogging_bad_points()",
+      "brief": "两遍都没收敛的点数（这些点用相邻有效点插值补上；超过 1/4 判定失败）"
+    },
+    {
       "name": "action.save",
       "type": "void",
       "access": "w",
@@ -1892,6 +2091,22 @@
       "call": "motion_tune_gains(&controller);"
     },
     {
+      "name": "action.cogging_calibrate",
+      "type": "void",
+      "access": "w",
+      "brief": "齿槽转矩补偿标定：自动进电机模式 → 转子逐点保持（正转 1024 点 + 反转 1024 点）→ 回菜单。每点几十毫秒，全程约 2~4 分钟。结果写 RAM（表 + config.cogging_valid），**不自动保存**，也不自动打开 config.cogging_en。进度读 system.cogging_progress，结果读 system.cogging_status / cogging_amp。要求外环增益已配置（先 action.tune_gains）",
+      "require": "state.state == MENU_MODE && PRE_CALIBRATED && GR > 0.0f && POS_GAIN > 0.0f && VEL_GAIN > 0.0f && VEL_INTEGRATOR_GAIN > 0.0f",
+      "call": "state.cogging_pending = 1;"
+    },
+    {
+      "name": "action.cogging_reset",
+      "type": "void",
+      "access": "w",
+      "brief": "丢弃齿槽补偿表：清零并置 config.cogging_valid=false（只改 RAM，action.save 后才会写进 flash）。换编码器/拆装电机后必须重标",
+      "require": "!controller.gate_drive_enabled",
+      "call": "cogging_reset(&controller);"
+    },
+    {
       "name": "internal.encoder_lut",
       "type": "blob",
       "hidden": true,
@@ -1900,6 +2115,16 @@
       "size": 512,
       "assert": "N_LUT * sizeof(int) == 512",
       "brief": "编码器查找表（128 × int32），标定后写入，持久化但不对外暴露"
+    },
+    {
+      "name": "internal.cogging_lut",
+      "type": "blob",
+      "hidden": true,
+      "persist": true,
+      "ref": "COGGING_LUT",
+      "size": 2048,
+      "assert": "COG_N * sizeof(int16_t) == 2048",
+      "brief": "齿槽补偿表（1024 × int16，一个转子机械周期的 i_q 电流，1 A = 4096），标定后写入，持久化但不对外暴露"
     }
   ]
 }

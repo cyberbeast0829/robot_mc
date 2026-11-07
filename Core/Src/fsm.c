@@ -16,6 +16,7 @@
 #include "foc.h"
 #include "math_ops.h"
 #include "position_sensor.h"
+#include "cogging.h"
 #include "prefs_defs.h"		// config_apply_defaults() / config_apply_limits()
 
 extern uint32_t _reboot_cookie;
@@ -26,6 +27,10 @@ extern uint32_t _reboot_cookie;
 /* 惯量标定每个 action 连跑几轮取中位。单次读数受齿隙/摩擦与突破电流档位影响，
  * 台架实测离散 ±50%，中位数才稳（见 docs/DEV.md"惯量标定"一节） */
 #define INERTIA_RUNS            3u
+
+/* 齿槽补偿标定的整体超时（控制周期，40 kHz ⇒ 24e6 拍 = 10 分钟）。
+ * 正常一次 2*COG_N 个点是 2~4 分钟；超时只是兜底（门极是开的） */
+#define COGGING_TIMEOUT_CYCLES  24000000u
 
  static int save_preferences(void);
 
@@ -117,13 +122,18 @@ extern uint32_t _reboot_cookie;
 			  * zero_commands() 会在 motion_control() 采纳它之前把标志清掉。 */
 			 if((CAN_TIMEOUT > 0 ) && (controller.timeout > CAN_TIMEOUT_CYCLES)
 			    && (controller.inertia_state == INERTIA_IDLE)
-			    && !controller.inertia_req){
+			    && !controller.inertia_req
+			    && (cogging_cal.state == COG_CAL_IDLE)
+			    && !controller.cogging_req){
 				 zero_commands(&controller);
 			 }
 			 /* 控制律分发：CTRL_IMPEDANCE 走原来的 torque_control()（MIT/legacy），
 			  * CTRL_POSITION/CTRL_VELOCITY 走 motion.c 的串级外环。两者都只产生
 			  * i_q_des，电流环（commutate）照旧在 40 kHz 上跑 */
 			 motion_control(&controller, &comm_encoder);
+			 /* 齿槽补偿：按转子位置查表，把前馈电流叠到 i_q_des 上（在弱磁之前，
+			  * 这样弱磁仍有最终话语权）。标定期间它自己什么都不做 */
+			 cogging_apply(&controller, &comm_encoder);
 			 field_weaken(&controller);
 			 commutate(&controller, &comm_encoder);
 
@@ -526,6 +536,10 @@ extern uint32_t _reboot_cookie;
 	 static int8_t inertia_fail = 0;		// 最近一次的失败码
 	 static float inertia_samples[INERTIA_RUNS];
 	 static uint32_t inertia_deadline = 0;
+	 static uint8_t cog_phase = 0;			// 0 idle / 1 等门极 / 2 等采集 / 3 等回菜单
+	 static uint8_t cog_started = 0;		// ISR 是否已经把请求转成状态机
+	 static uint32_t cog_deadline = 0;
+	 static uint16_t cog_last_print = 0;
 
 	 /* Print any calibration milestone messages queued by the ISR (calibration
 	  * runs in the control interrupt and must not print there) */
@@ -659,6 +673,84 @@ extern uint32_t _reboot_cookie;
 			 break;
 		 default:
 			 inertia_phase = 0;
+			 break;
+	 }
+
+	 /* 齿槽补偿标定的编排（action.cogging_calibrate）：与惯量标定同样的模式 ——
+	  * 进电机模式 → 置请求 → 等 ISR 扫完 → 主循环合并/质检 → 回菜单。
+	  * 一次扫描 = 正转 COG_N 点 + 反转 COG_N 点，每点几十毫秒，约 2~4 分钟；
+	  * 这期间门极是开的，所以必须保留超时兜底。 */
+	 if(fsmstate->cogging_pending){
+		 fsmstate->cogging_pending = 0;
+		 cogging_cal.status = COG_STATUS_RUNNING;
+		 cog_phase = 1;
+		 cog_started = 0;
+		 cog_last_print = 0;
+		 cog_deadline = (uint32_t)controller.loop_count + REBOOT_DELAY_CYCLES / 4;	/* 0.125 s 等到门极 */
+		 request_fsm_state(fsmstate, MOTOR_MODE);
+	 }
+	 switch(cog_phase){
+		 case 1:
+			 if((fsmstate->state == MOTOR_MODE) && controller.gate_drive_enabled){
+				 controller.cogging_req = 1;
+				 cog_phase = 2;
+				 cog_deadline = (uint32_t)controller.loop_count + COGGING_TIMEOUT_CYCLES;
+			 }
+			 else if((uint32_t)controller.loop_count > cog_deadline){
+				 cogging_cal.status = COG_ERR_ABORT;		/* 进不了电机模式 */
+				 myprintf("\r\n  Anti-cogging: could not enter motor mode\r\n");
+				 cog_phase = 0;
+			 }
+			 break;
+		 case 2: {
+			 if(cogging_cal.state != COG_CAL_IDLE){
+				 if(!cog_started){
+					 cog_started = 1;
+					 cog_deadline = (uint32_t)controller.loop_count + COGGING_TIMEOUT_CYCLES;
+				 }
+			 }
+			 if(cog_started && (cogging_cal.done >= (uint16_t)(cog_last_print + 256u))){
+				 cog_last_print = cogging_cal.done;
+				 myprintf("\r\n  Anti-cogging: %u/%u points...\r\n",
+						  cogging_cal.done, (unsigned)(2 * COG_N));
+			 }
+
+			 uint32_t now = (uint32_t)controller.loop_count;
+			 uint8_t start_failed = (!cog_started && (controller.cogging_req == 0u)
+			                        && (cogging_cal.state == COG_CAL_IDLE)
+			                        && (cogging_cal.status != COG_STATUS_RUNNING));
+			 if((cog_started && (cogging_cal.state == COG_CAL_IDLE)) || start_failed
+			    || (now > cog_deadline) || (fsmstate->state != MOTOR_MODE)){
+				 if(cogging_cal.data_ready){
+					 cogging_publish_result();
+					 cogging_cal.data_ready = 0;
+				 }
+				 else if(cogging_cal.status == COG_STATUS_RUNNING){
+					 cogging_cal.status = COG_ERR_ABORT;	/* 状态机没跑完 */
+				 }
+				 if(cogging_cal.status == COG_STATUS_OK){
+					 myprintf("\r\n  Anti-cogging: %.3f A RMS, mismatch %.3f A, %u bad points (%d-point table)\r\n",
+							  (double)cogging_cal.amp, (double)cogging_cal.mismatch,
+							  cogging_cal.bad, COG_N);
+					 myprintf("  ...RAM only - run action.save to keep it\r\n");
+				 }
+				 else{
+					 myprintf("\r\n  Anti-cogging failed (status %d) - compensation disabled, old table kept\r\n",
+							  (int)cogging_cal.status);
+				 }
+				 request_fsm_state(fsmstate, MENU_MODE);
+				 cog_phase = 3;
+				 cog_deadline = now + REBOOT_DELAY_CYCLES / 4;
+			 }
+			 break; }
+		 case 3:
+			 if((fsmstate->state == MENU_MODE) || ((uint32_t)controller.loop_count > cog_deadline)){
+				 cog_phase = 0;
+				 cog_started = 0;
+			 }
+			 break;
+		 default:
+			 cog_phase = 0;
 			 break;
 	 }
 

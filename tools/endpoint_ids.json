@@ -1,5 +1,5 @@
 {
-  "next_id": 218,
+  "next_id": 242,
   "map": {
     "config.i_bw": 1,
     "config.i_max": 2,
@@ -216,6 +216,30 @@
     "telemetry.current_k_d": 214,
     "telemetry.current_k_q": 215,
     "telemetry.current_ki_d": 216,
-    "telemetry.current_ki_q": 217
+    "telemetry.current_ki_q": 217,
+    "config.cogging_en": 218,
+    "config.cogging_valid": 219,
+    "config.cogging_gain": 220,
+    "config.cogging_max": 221,
+    "config.cogging_pos_thr": 222,
+    "config.cogging_settle_ms": 223,
+    "config.cogging_avg": 224,
+    "config.cogging_index": 225,
+    "telemetry.cogging_ff": 226,
+    "telemetry.cogging_value": 227,
+    "system.cogging_status": 228,
+    "system.cogging_progress": 229,
+    "system.cogging_progress_total": 230,
+    "system.cogging_amp": 231,
+    "system.cogging_mismatch": 232,
+    "system.cogging_bad": 233,
+    "action.cogging_calibrate": 234,
+    "action.cogging_reset": 235,
+    "internal.cogging_lut": 236,
+    "config.cogging_detrend": 237,
+    "config.cogging_method": 238,
+    "config.cogging_sweep_ms": 239,
+    "telemetry.cogging_pass1": 240,
+    "telemetry.cogging_pass2": 241
   }
 }

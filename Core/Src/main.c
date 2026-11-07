@@ -91,6 +91,8 @@ uint8_t vel_limit_en_flag = 1;			// config.enable_vel_limit 默认 true：与改
 uint8_t torque_vel_lim_en_flag = 0;		// config.enable_torque_vel_lim 默认 false
 uint8_t gear_ref_valid_flag = 0;		// 双编参考未建立（跑一次 action.gear_capture 才置 1）
 uint8_t gear_sec_reversed_flag = 0;		// 副编码器读数方向（1 = 随正转变小，解算前镜像）
+uint8_t cogging_en_flag = 0;			// config.cogging_en：默认关（标定成功后再打开）
+uint8_t cogging_valid_flag = 0;			// config.cogging_valid：表有效（标定成功才置 1）
 PreferenceWriter prefs;
 
 /* Structs for control, etc */

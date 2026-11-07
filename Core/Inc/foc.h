@@ -147,6 +147,13 @@ typedef struct{
     float inertia_v_peak;                                   // 静置窗内的最大速度（判断"是否静止"）
     ml_fit_t inertia_fit_lo, inertia_fit_hi;                // 流式最小二乘
     float pos_fault_suggest;                                // 位置跟随误差故障的推荐阈值（telemetry）
+
+    /* ---- 齿槽转矩补偿（anti-cogging，见 cogging.h）----
+     * 标定请求由 action.cogging_calibrate 置位，控制中断采纳后清零；
+     * 标定期间 motion_control() 被它接管（同惯量标定）。cog_ff 是本拍实际
+     * 叠加到 i_q_des 上的前馈电流（遥测用）。 */
+    volatile uint8_t cogging_req;                           // 标定请求（ISR 采纳后清零）
+    float cog_ff;                                           // 本拍齿槽补偿电流（A，0 = 未生效）
     } ControllerStruct;
 
 typedef struct{

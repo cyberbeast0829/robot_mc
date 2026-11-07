@@ -12,6 +12,7 @@
 #include "math_ops.h"
 #include "hw_config.h"
 #include "user_config.h"
+#include "cogging.h"
 #include "timing.h"
 #include <math.h>
 
@@ -693,4 +694,9 @@ void zero_commands(ControllerStruct * controller){
 	controller->inertia_cycles = 0;
 	controller->inertia_i = 0;
 	controller->inertia_v_peak = 0;
+
+	/* 齿槽补偿标定同理：中途退出电机模式后不能接着上次的表点继续扫
+	 * （齿槽标定会清空自己的结果，见 cogging_abort） */
+	cogging_abort(controller);
+	controller->cog_ff = 0;
 }

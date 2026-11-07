@@ -18,6 +18,7 @@
 
 #include "foc.h"
 #include "motion_law.h"
+#include "cogging.h"
 #include "user_config.h"
 #include "hw_config.h"
 #include "position_sensor.h"
@@ -311,6 +312,12 @@ void motion_control(ControllerStruct *controller, EncoderStruct *encoder)
 {
 	int vel_pre = prescaler(VEL_LOOP_PRESCALER);
 	int pos_pre = prescaler(POS_LOOP_PRESCALER);
+
+	/* 齿槽补偿标定独占控制权（与惯量标定同构）：它自己产生 i_q_des，
+	 * 不走任何控制律，也不参与外环分频 */
+	if (cogging_cal_step(controller, encoder)) {
+		return;
+	}
 
 	/* 惯量标定期间独占控制权：它会自己产生 i_q_des，不走任何控制律 */
 	if (controller->inertia_req && (controller->inertia_state == INERTIA_IDLE)) {

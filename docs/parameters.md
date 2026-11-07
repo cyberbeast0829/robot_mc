@@ -82,6 +82,17 @@ ID 由 `tools/endpoint_ids.json` 锁定，固件升级不会改变；`access` �
 | `config.gear_zero_phase` | 198 | float | rw |  | 0.0 .. 1.0 | 0.0 | 是 | 齿轮式双编的相位参考（action.gear_capture 写入，不要手改）：标定时刻两路编码器的韦尼尔相位，上电时据此解出转子第几圈 |
 | `config.gear_zero_count` | 199 | int32 | rw |  | — | 0 | 是 | 齿轮式双编的计数参考（action.gear_capture 写入，不要手改）：标定时刻的多圈计数 turns*CPR + count_wrapped，与 gear_zero_phase 配对使用 |
 | `config.gear_ref_valid` | 200 | bool | rw |  | — | 0 | 是 | 齿轮式双编参考是否有效：true 才在上电时用副编码器恢复输出轴位置（action.gear_capture 置 1，恢复默认值清 0）。没有第二编码器的板子保持 false 即可，行为与改动前一致 |
+| `config.cogging_en` | 218 | bool | rw |  | — | 0 | 是 | 齿槽转矩补偿开关。只有 config.cogging_valid 为 true 时才真正生效（表没标定过就打开会被忽略）。建议先用 action.cogging_calibrate 标定、验证，再打开 |
+| `config.cogging_valid` | 219 | bool | rw |  | — | 0 | 是 | 齿槽补偿表是否有效（标定成功后置 1，action.cogging_reset 或恢复出厂值清 0）。手动清 0 等于停用补偿但保留表，重新 action.save 也不会再自动置 1 |
+| `config.cogging_gain` | 220 | float | rw | x | 0.0 .. 2.0 | 1.0 | 是 | 齿槽补偿缩放：1.0 = 用标定值原样前馈。偏小（0.7~0.9）更保守；大于 1 只在确认标定低估时用 |
+| `config.cogging_max` | 221 | float | rw | A | 0.0 .. 10.0 | 1.0 | 是 | 前馈电流钳位（A，0 = 不使用补偿）。用来兜住一张错误的表，正常齿槽补偿只有零点几安，取 1~2 A 足够 |
+| `config.cogging_pos_thr` | 222 | float | rw | rad | 1e-05 .. 0.01 | 0.0003 | 是 | 标定收敛阈值（输出轴 rad）：位置误差连续低于它 cogging_settle_ms 毫秒后才开始采样。建议 ≤ 半个表距 2π/(1024·GR)，本机（GR=9）约 0.0007 rad |
+| `config.cogging_settle_ms` | 223 | int32 | rw | ms | 0 .. 500 | 40 | 是 | 标定：每个点位置进入阈值后还要保持多久才开始采样（默认 40 ms）。调大更稳、标定更慢 |
+| `config.cogging_avg` | 224 | int32 | rw | cycle | 1 .. 400 | 80 | 是 | 标定：每个点采样平均的控制周期数（40 kHz，默认 80 = 2 ms）。调大抑制噪声、标定更慢 |
+| `config.cogging_detrend` | 237 | int32 | rw |  | 0 .. 6 | 3 | 是 | 标定后去掉一个 N 阶多项式趋势（0 = 不去）。重力/外载正反两遍抵消不了，而它在一个转子圈里是慢变趋势（本机 GR=9，只走 1/9 输出圈 ≈ 40°），三次多项式就能拟合掉；齿槽是 84/168… 次/转，不会被误删。有重力负载的关节保持默认 3；直接驱动（GR=1）用 5~6；确认无外载可设 0 |
+| `config.cogging_method` | 238 | int32 | rw |  | 0 .. 1 | 1 | 是 | 标定方法：1 = 匀速扫描（默认，约 10 s）—— 转子匀速转一圈再反向转回来，按转子位置分箱累积速度环输出；动摩擦是常值且两向相反，平均后抵消，没有静摩擦误差。0 = 逐点停住读积分器 —— 测的是纯静态力矩，但静摩擦（本机粘滞带 ±0.15 A）会把 0.02 A 量级的齿槽信号淹没，台架实测幅值偏大 3 倍、相位差 60°，不推荐 |
+| `config.cogging_sweep_ms` | 239 | int32 | rw | ms | 500 .. 20000 | 8000 | 是 | 扫描法：一个转子机械圈走多少毫秒（默认 8000 = 0.125 圈/s，齿槽基波约 3~15 Hz，远低于速度环带宽）。台架实测：2000/4000/8000/16000 对应两遍差异 0.243/0.111/0.043/0.032 A（信号约 0.055 A）；已经加了 90 Hz 二阶低通，默认值够用。调慢更干净但更久（两圈合计约 2×该值） |
+| `config.cogging_index` | 225 | int32 | rw |  | 0 .. 1023 | 0 | 否 | 诊断游标：配合 telemetry.cogging_value 逐个读表（tools/cogging_test.py dump 用），不持久化 |
 
 ## command：运行命令（电机模式下有效）
 
@@ -185,6 +196,10 @@ ID 由 `tools/endpoint_ids.json` 锁定，固件升级不会改变；`access` �
 | `telemetry.inertia_break_current` | 156 | float | r | A | — | — | 否 | 标定试探得到的"摩擦+重力"等效电流；台阶电流取它的 1.5×/2.5× |
 | `telemetry.inertia_accel_lo` | 157 | float | r | rad/s^2 | — | — | 否 | 台阶 LO 的拟合加速度（输出轴） |
 | `telemetry.inertia_accel_hi` | 158 | float | r | rad/s^2 | — | — | 否 | 台阶 HI 的拟合加速度（输出轴）；与 LO 的差决定 J |
+| `telemetry.cogging_ff` | 226 | float | r | A | — | — | 否 | 本拍实际叠加到 i_q_des 上的齿槽补偿电流（0 = 未生效：没标定、config.cogging_en=false，或正在标定） |
+| `telemetry.cogging_value` | 227 | float | r | A | — | — | 否 | 齿槽补偿表在 config.cogging_index 处的值（A，已去掉直流分量）。标定点 i 对应转子绝对计数 i·ENC_CPR/1024 |
+| `telemetry.cogging_pass1` | 240 | float | r | A | — | — | 否 | 诊断：最近一次标定正转那一遍在 config.cogging_index 处的原始测量值（未去均值/去趋势）。与 cogging_pass2 对比可以看出重复性 |
+| `telemetry.cogging_pass2` | 241 | float | r | A | — | — | 否 | 诊断：最近一次标定反转那一遍在 config.cogging_index 处的原始测量值 |
 
 ## timing：ISR 耗时统计（只读）
 
@@ -228,6 +243,12 @@ ID 由 `tools/endpoint_ids.json` 锁定，固件升级不会改变；`access` �
 | `system.can_prot_active` | 123 | int32 | r |  | — | — | 否 | 当前生效的 CAN 协议（0=旧 11-bit，1=CYBERBEAST） |
 | `system.can_fd` | 124 | bool | r |  | — | — | 否 | 当前是否以 CAN FD 运行 |
 | `system.can_baud_active` | 125 | int32 | r | bit/s | — | — | 否 | 当前生效的 CAN 速率（Classic 为位速率；FD 为数据域速率） |
+| `system.cogging_status` | 228 | int8 | r |  | — | — | 否 | 齿槽补偿标定状态：0 未运行 / 1 运行中 / 2 成功（表已写 RAM，用 action.save 落盘）/ -1 中止（离开电机模式或 CAN 超时）/ -2 太多点没收敛 / -3 正反两遍差异过大 / -4 超时 / -5 外环增益未配置 |
+| `system.cogging_progress` | 229 | int32 | r |  | — | — | 否 | 本次标定已完成的表点数（正转 + 反转，共 2×1024 点） |
+| `system.cogging_progress_total` | 230 | int32 | r |  | — | — | 否 | 一次完整标定的总点数（2 × 1024） |
+| `system.cogging_amp` | 231 | float | r | A | — | — | 否 | 最近一次标定得到的齿槽力矩 RMS 幅值（折算成 i_q 电流）。太小（< 0.01 A）说明电机本身齿槽很弱 |
+| `system.cogging_mismatch` | 232 | float | r | A | — | — | 否 | 正转/反转两遍的 RMS 差异（A）。与 cogging_amp 同量级说明重复性差（齿隙/摩擦大、增益不对或有外力） |
+| `system.cogging_bad` | 233 | uint16 | r |  | — | — | 否 | 两遍都没收敛的点数（这些点用相邻有效点插值补上；超过 1/4 判定失败） |
 
 ## action：动作（只写）
 
@@ -247,3 +268,5 @@ ID 由 `tools/endpoint_ids.json` 锁定，固件升级不会改变；`access` �
 | `action.reset_timing` | 116 | function | w |  | — | — | 否 | 清零 ISR 耗时统计 |
 | `action.measure_inertia` | 154 | function | w |  | — | — | 否 | 一条指令完成惯量标定：自动进电机模式 → 打两个电流台阶测输出端惯量 → 回菜单。约 3 s（内部连测 3 次取中位数，单次离散太大）、关节净行程 ~0.5 rad。结果写 config.inertia（**只写 RAM，不自动保存**），进度/结果读 system.inertia_status；测完自动回菜单，可直接 action.save |
 | `action.tune_gains` | 161 | function | w |  | — | — | 否 | 用 config.inertia 算外环增益并写进 RAM（不自动保存）：vel_gain = tune_margin·J·omega_c/(KT·GR)；vel_integrator_gain = vel_gain·clamp(omega_c/25, 5, 30)；pos_gain = omega_c/20。写完用 csv/csp 子命令验证，满意再 action.save |
+| `action.cogging_calibrate` | 234 | function | w |  | — | — | 否 | 齿槽转矩补偿标定：自动进电机模式 → 转子逐点保持（正转 1024 点 + 反转 1024 点）→ 回菜单。每点几十毫秒，全程约 2~4 分钟。结果写 RAM（表 + config.cogging_valid），**不自动保存**，也不自动打开 config.cogging_en。进度读 system.cogging_progress，结果读 system.cogging_status / cogging_amp。要求外环增益已配置（先 action.tune_gains） |
+| `action.cogging_reset` | 235 | function | w |  | — | — | 否 | 丢弃齿槽补偿表：清零并置 config.cogging_valid=false（只改 RAM，action.save 后才会写进 flash）。换编码器/拆装电机后必须重标 |
