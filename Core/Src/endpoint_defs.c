@@ -1740,93 +1740,77 @@ ep_status_t endpoint_handler(uint16_t id, ep_op_t op, ep_cbuf_t *in, ep_buf_t *o
 			return EP_OK;
 		}
 		case EP_ACTION_SAVE: {
-			if(op != EP_OP_WRITE){return EP_ERR_WRITE_ONLY;}
 			if(controller.gate_drive_enabled){return EP_ERR_STATE;}
 			state.save_status = 0; state.save_pending = 1;
 			return EP_OK;
 		}
 		case EP_ACTION_ZERO: {
-			if(op != EP_OP_WRITE){return EP_ERR_WRITE_ONLY;}
 			if(!(state.state == MENU_MODE)){return EP_ERR_STATE;}
 			state.zero_pending = 1;
 			return EP_OK;
 		}
 		case EP_ACTION_GEAR_CAPTURE: {
-			if(op != EP_OP_WRITE){return EP_ERR_WRITE_ONLY;}
 			if(controller.gate_drive_enabled){return EP_ERR_STATE;}
 			state.gear_status = 0; state.gear_capture_pending = 1;
 			return EP_OK;
 		}
 		case EP_ACTION_GEAR_READ: {
-			if(op != EP_OP_WRITE){return EP_ERR_WRITE_ONLY;}
 			if(controller.gate_drive_enabled){return EP_ERR_STATE;}
 			state.gear_status = 0; state.gear_read_pending = 1;
 			return EP_OK;
 		}
 		case EP_ACTION_IDLE_MODE: {
-			if(op != EP_OP_WRITE){return EP_ERR_WRITE_ONLY;}
 			request_fsm_state(&state, MENU_MODE);
 			return EP_OK;
 		}
 		case EP_ACTION_CLEAR_FAULT: {
-			if(op != EP_OP_WRITE){return EP_ERR_WRITE_ONLY;}
 			request_fsm_state(&state, MENU_MODE);
 			return EP_OK;
 		}
 		case EP_ACTION_MOTOR_MODE: {
-			if(op != EP_OP_WRITE){return EP_ERR_WRITE_ONLY;}
 			if(!(state.state == MENU_MODE && PRE_CALIBRATED)){return EP_ERR_STATE;}
 			request_fsm_state(&state, MOTOR_MODE);
 			return EP_OK;
 		}
 		case EP_ACTION_CALIBRATE: {
-			if(op != EP_OP_WRITE){return EP_ERR_WRITE_ONLY;}
 			if(!(state.state == MENU_MODE)){return EP_ERR_STATE;}
 			request_fsm_state(&state, CALIBRATION_MODE);
 			return EP_OK;
 		}
 		case EP_ACTION_RESET_CONFIG: {
-			if(op != EP_OP_WRITE){return EP_ERR_WRITE_ONLY;}
 			if(controller.gate_drive_enabled){return EP_ERR_STATE;}
 			state.save_status = 0; state.reset_config_pending = 1;
 			return EP_OK;
 		}
 		case EP_ACTION_REBOOT: {
-			if(op != EP_OP_WRITE){return EP_ERR_WRITE_ONLY;}
 			state.reboot_pending = 1;
 			return EP_OK;
 		}
 		case EP_ACTION_ENTER_DFU_MODE: {
-			if(op != EP_OP_WRITE){return EP_ERR_WRITE_ONLY;}
 			if(controller.gate_drive_enabled){return EP_ERR_STATE;}
 			state.dfu_pending = 1;
 			return EP_OK;
 		}
 		case EP_ACTION_RESET_TIMING: {
-			if(op != EP_OP_WRITE){return EP_ERR_WRITE_ONLY;}
 			isr_timing.reset_req = 1;
 			return EP_OK;
 		}
 		case EP_ACTION_MEASURE_INERTIA: {
-			if(op != EP_OP_WRITE){return EP_ERR_WRITE_ONLY;}
 			if(!(state.state == MENU_MODE && KT > 0.0f && GR > 0.0f && PRE_CALIBRATED)){return EP_ERR_STATE;}
 			state.inertia_pending = 1;
 			return EP_OK;
 		}
 		case EP_ACTION_TUNE_GAINS: {
-			if(op != EP_OP_WRITE){return EP_ERR_WRITE_ONLY;}
 			if(!(state.state == MENU_MODE && INERTIA > 0.0f && KT > 0.0f && GR > 0.0f && PRE_CALIBRATED)){return EP_ERR_STATE;}
 			motion_tune_gains(&controller);
 			return EP_OK;
 		}
 		case EP_ACTION_COGGING_CALIBRATE: {
-			if(op != EP_OP_WRITE){return EP_ERR_WRITE_ONLY;}
 			if(!(state.state == MENU_MODE && PRE_CALIBRATED && GR > 0.0f && POS_GAIN > 0.0f && VEL_GAIN > 0.0f && VEL_INTEGRATOR_GAIN > 0.0f)){return EP_ERR_STATE;}
 			state.cogging_pending = 1;
 			return EP_OK;
 		}
 		case EP_ACTION_COGGING_RESET: {
-			if(op != EP_OP_WRITE){return EP_ERR_WRITE_ONLY;}
 			if(controller.gate_drive_enabled){return EP_ERR_STATE;}
 			cogging_reset(&controller);
 			return EP_OK;

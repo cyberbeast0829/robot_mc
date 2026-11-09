@@ -3,7 +3,8 @@
 
 ID 由 `tools/endpoint_ids.json` 锁定，固件升级不会改变；`access` 为 `r` 的只能读，
 `w` 的只能写/执行，`rw` 可读写。写入值在固件里做 NaN 检查和上下限限幅。
-`function` 就是 `action.*` 动作端点。`默认` 列偶尔是固件宏（如 `I_MAX_LIMIT`），
+`function` 就是 `action.*` 动作端点：读和写都会执行（ODrive 的 endpoint 协议
+不区分读写，兼容按 `PARAM_READ` 调用动作的上位机）。`默认` 列偶尔是固件宏（如 `I_MAX_LIMIT`），
 以固件为准。
 
 ## config：可写参数
@@ -250,7 +251,7 @@ ID 由 `tools/endpoint_ids.json` 锁定，固件升级不会改变；`access` �
 | `system.cogging_mismatch` | 232 | float | r | A | — | — | 否 | 正转/反转两遍的 RMS 差异（A）。与 cogging_amp 同量级说明重复性差（齿隙/摩擦大、增益不对或有外力） |
 | `system.cogging_bad` | 233 | uint16 | r |  | — | — | 否 | 两遍都没收敛的点数（这些点用相邻有效点插值补上；超过 1/4 判定失败） |
 
-## action：动作（只写）
+## action：动作（读/写都执行）
 
 | 名称 | ID | 类型 | 访问 | 单位 | 范围 | 默认 | 持久化 | 说明 |
 |---|---|---|---|---|---|---|---|---|

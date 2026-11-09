@@ -537,6 +537,8 @@ static void cb_param_read(const can_frame_t *f)
     uint8_t value[8] = {0};
     ep_cbuf_t in = { &empty, &empty };
     ep_buf_t out = { value, value + sizeof(value) };
+    /* 动作端点（线上 function）在 EP_OP_READ 下也会执行——ODrive 的 endpoint
+     * 协议不区分读写，PARAM_READ 是 JointSDK 调用动作的标准方式。 */
     ep_status_t st = endpoint_handler(ep, EP_OP_READ, &in, &out);
     uint8_t full_len = (st == EP_OK) ? (uint8_t)(out.begin - value) : 0u;
 

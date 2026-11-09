@@ -18,8 +18,12 @@
     * `ref`  是可直接读写的 C 左值（宏也可以，例如 user_config.h 里的 I_MAX）；
     * `get`  是只读表达式；
     * `set`  是写入语句（可以引用 v）；
-    * `call` 是动作端点的语句；
+    * `call` 是动作端点的语句（`type: void`；读或写都会触发，见下）；
     * `require` 为假的写入返回 EP_ERR_STATE。
+
+动作端点（`type: void`，线上描述符为 `"type":"function"`）**不区分读写**：
+ODrive 的 endpoint 协议没有读写标志，function 端点被“读”也会执行，为了兼容
+按 ODrive 语义调用的上位机（JointSDK），读和写都会触发 `call`。
 
 线上描述符（设备回给上位机的那份）有两条硬约束，改 descriptor_json() 时别破坏：
     * 纯 ASCII：中文 brief 只留在 params.json，不进描述符（JointSDK/ODrive 的
@@ -378,9 +382,9 @@ def gen_case(ep):
     lines = ["\t\tcase %s: {" % ep["_enum"]]
 
     if t == "void":
-        # 动作端点没有数据：必须由传输层明确声明“这是写/执行”。只靠
-        # “载荷为空”判断会让一次读把电机停掉。
-        lines.append("\t\t\tif(op != EP_OP_WRITE){return EP_ERR_WRITE_ONLY;}")
+        # 动作端点没有数据。ODrive 的 endpoint 协议没有读写标志，function
+        # 端点被“读”进去也会执行，所以这里读、写两种意图都放行（JointSDK 等
+        # 按 ODrive 语义调用动作的上位机只会发读）。副作用由 require 兜底。
         if "require" in ep:
             lines.append("\t\t\t" + require_check(ep["require"]))
         lines.append("\t\t\t%s" % ep["call"])
@@ -672,7 +676,7 @@ PREFIX_TITLES = [
     ("telemetry", "telemetry：实时测量（只读）"),
     ("timing", "timing：ISR 耗时统计（只读）"),
     ("system", "system：状态与版本（只读）"),
-    ("action", "action：动作（只写）"),
+    ("action", "action：动作（读/写都执行）"),
 ]
 
 
@@ -722,7 +726,8 @@ def generate_docs(endpoints):
         "",
         "ID 由 `tools/endpoint_ids.json` 锁定，固件升级不会改变；`access` 为 `r` 的只能读，",
         "`w` 的只能写/执行，`rw` 可读写。写入值在固件里做 NaN 检查和上下限限幅。",
-        "`function` 就是 `action.*` 动作端点。`默认` 列偶尔是固件宏（如 `I_MAX_LIMIT`），",
+        "`function` 就是 `action.*` 动作端点：读和写都会执行（ODrive 的 endpoint 协议",
+        "不区分读写，兼容按 `PARAM_READ` 调用动作的上位机）。`默认` 列偶尔是固件宏（如 `I_MAX_LIMIT`），",
         "以固件为准。",
         "",
     ]

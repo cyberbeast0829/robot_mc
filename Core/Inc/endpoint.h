@@ -17,8 +17,13 @@
  * id 字段的 flag 位：
  *   bit15 EP_REQ_REPLY  需要应答（主机总是置位）
  *   bit14 EP_REQ_WRITE  这是一次写/执行；不置位就是读
- * 读和写必须由传输层显式给出，不能靠“有没有数据”来猜：动作端点如果被
- * 当成读来执行，一次 PARAM_READ 就能让电机停机。
+ * 读和写必须由传输层显式给出，不能靠“有没有数据”来猜。
+ *
+ * 唯一的例外是动作端点（线上描述符 type=="function"，固件里是 `type: void`）：
+ * ODrive 的 endpoint 协议从来没有读写标志，function 端点被“读”也会执行，
+ * 所以这里读和写都放行（兼容 JointSDK 等按 ODrive 语义调用动作的上位机）。
+ * `require` 只是状态前置条件，不是读写判别，而且 action.idle_mode/clear_fault/
+ * reboot/reset_timing 连 require 都没有 —— 遍历参数的上位机必须跳过 function 类型。
  *
  * id==0 是 JSON 描述符，trailer 为 EP_PROTOCOL_VERSION；其它 endpoint 的
  * trailer 是 JSON 描述符的 CRC16。这样固件升级后旧上位机发来的请求会被
@@ -79,7 +84,8 @@ typedef struct{
 }ep_buf_t;
 
 /* 请求意图。传输层必须显式给出：USB 用 EP_REQ_WRITE 位，CAN 用
- * PARAM_READ/PARAM_WRITE 操作码。生成的 handler 按描述符的 access 校验。 */
+ * PARAM_READ/PARAM_WRITE 操作码。生成的 handler 按描述符的 access 校验
+ * 标量端点；动作（`type: void` / 线上 `function`）端点忽略 op，读和写都执行。 */
 typedef enum{
 	EP_OP_READ = 0,
 	EP_OP_WRITE = 1

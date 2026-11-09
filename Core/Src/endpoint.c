@@ -197,8 +197,9 @@ bool endpoint_process(const uint8_t *req, uint16_t req_len,
 	}
 	if((id_field & EP_REQ_REPLY) == 0){return false;}		// 不需要回复
 	uint16_t id = id_field & EP_ID_MASK;
-	/* 读/写由主机显式声明（bit14）。不靠“有没有数据”猜，否则读一次
-	 * action.* 就会执行动作 */
+	/* 读/写由主机显式声明（bit14），不靠“有没有数据”猜。动作端点例外：
+	 * ODrive 的协议没有读写标志，function 端点被读也会执行，所以生成的
+	 * handler 对动作端点两种意图都放行（见 endpoint.h）。 */
 	ep_op_t op = (id_field & EP_REQ_WRITE) ? EP_OP_WRITE : EP_OP_READ;
 
 	if((size_t)(in.end - in.begin) < 2){return false;}	// 缺少 trailer

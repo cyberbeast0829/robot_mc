@@ -53,14 +53,19 @@ python tools/mc_ep.py --port COM7 monitor <name>... --rate 20
 | `telemetry.*` | 实时测量 | `r` |
 | `timing.*` | ISR 耗时统计 | `r` |
 | `system.*` | 版本、硬件版本、序列号、配置序号、schema、保存状态 | `r` |
-| `action.*` | 保存、置零、切模式、标定 | `w` |
+| `action.*` | 保存、置零、切模式、标定 | `w`（读/写都执行） |
 
 规则：
 
 - **写会被限幅**：超出 `min`/`max` 夹到边界，不报错。`set` 打印实际写入值。
 - `NaN`/`Inf` → `EP_ERR_BAD_VALUE`（3）。
 - 写只读端点 → `EP_ERR_READ_ONLY`（4）。
-- **读动作端点 → `EP_ERR_WRITE_ONLY`（5）**。这是安全设计：一次读不能让电机动作。
+- **读动作端点也会执行它**（ODrive 的 endpoint 协议没有读写标志，功能端点被读
+  也会执行，这里跟随它以便兼容按 ODrive 语义调用动作的上位机）。`require`/状态
+  前置条件仍生效，例如门极使能时读 `action.save` 返回 `EP_ERR_STATE`（6）而不会存盘；
+  但 `action.idle_mode`/`action.clear_fault`/`action.reboot` 等没有 `require`，一次读
+  就会停机或复位。**遍历参数的上位机要跳过 `function` 类型**（`mc_ep.py dump`
+  已经这么做）。
 - 状态前置条件不满足（如门极使能时改 `config.ppairs`）→ `EP_ERR_STATE`（6）。
 - `config.p_min`/`v_min` 可单独写（通常由 `p_max`/`v_max` 联动），用于备份恢复。
 

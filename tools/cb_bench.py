@@ -839,14 +839,17 @@ def stage_d(bus):
           vbus1 is not None and abs(vbus1 - 999.0) > 1.0 and abs(vbus1 - vbus0) < 2.0,
           "%.2f -> %.2f" % (vbus0 or 0.0, vbus1 or 0.0))
 
-    print("[D3] read a write-only action (action.save) -> no data, no side effect")
+    print("[D3] read a function endpoint (action.save) -> also triggers it (ODrive 兼容)")
+    # 先钉住状态：菜单 + 门极关闭，否则 action.save 的 require 会返回 EP_ERR_STATE
+    bus.send_cb(cb_id(3, MT_CLEAR, NODE), b"")
+    time.sleep(0.2)
     seq0 = read_int_ep(bus, EP_PREFS_SEQUENCE)
     raw, ln = sdo_read(bus, EP_ACTION_SAVE)
     time.sleep(0.4)
     seq1 = read_int_ep(bus, EP_PREFS_SEQUENCE)
-    check("write-only endpoint returns no payload", raw == b"" and ln == 0,
+    check("function endpoint returns no payload", raw == b"" and ln == 0,
           "len=%s" % ln)
-    check("reading an action does not trigger it", seq1 == seq0,
+    check("reading an action triggers it", seq1 is not None and seq1 == (seq0 or 0) + 1,
           "seq %s -> %s" % (seq0, seq1))
 
     print("[D4] clamp both ends + NaN (config.i_bw, 100..2000)")

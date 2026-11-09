@@ -402,10 +402,16 @@ Zadig 装 WinUSB（CDC 不受影响）。
   endpoint 0 外的每个请求都必须在 payload 末尾带这个 CRC，否则返回
   `EP_ERR_VERSION`，避免新旧固件静默错配。
 - **读和写必须显式区分**：请求 `id` 字段的 bit14 是 `EP_REQ_WRITE`，bit15 是
-  `EP_REQ_REPLY`，低 14 位是 ID。handler 按描述符的 `access` 校验（`r` 拒绝写、
-  `w` 拒绝读）。**不要**退回“payload 为空就当读”的写法：那样一次读
-  `action.idle_mode` 就会停机。USB 侧由 `mc_ep.py` 置位；CAN 侧由
-  `PARAM_READ(0x20)`/`PARAM_WRITE(0x21)` 操作码映射。协议版本已升到 2。
+  `EP_REQ_REPLY`，低 14 位是 ID。handler 按描述符的 `access` 校验标量端点
+  （`r` 拒绝写、`w` 拒绝读）；**动作端点（`type: void` / 线上 `function`）例外：
+  读和写都会执行**，因为 ODrive 的 endpoint 协议没有读写位、function 端点被“读”
+  也会执行（JointSDK 就用 `PARAM_READ(0x20)` 调动作）。
+  ⚠ `require` 只是**状态前置条件**，不是读写判别：`action.idle_mode` /
+  `action.clear_fault` / `action.reboot` / `action.reset_timing` 连 `require` 都没有，
+  一次读就会停机/复位。所以**上位机遍历参数时必须跳过 `function` 类型**
+  （`mc_ep.py dump` 就是这么做的）。**不要**把标量端点退回“payload 为空就是
+  读”的写法。USB 侧由 `mc_ep.py` 置位；CAN 侧由 `PARAM_READ(0x20)`/`PARAM_WRITE(0x21)`
+  操作码映射。协议版本已升到 2。
 - 两条传输共用 `endpoint_process()`（`endpoint.c`），只是外层不同：
   **USB CDC** 是 `0xAA+LEN+CRC8/CRC16` 字节流（和 ASCII 菜单共用数据流，
   `0xAA` 帧头之外的字节交给 `update_fsm()`）；**vendor interface 2** 上一个

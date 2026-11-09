@@ -44,7 +44,12 @@ ADC，采样点在 PWM 峰值、低侧采样窗口内。
 
 - **ISR 不 printf、不写 flash、不阻塞**（唯一例外：`ps_sample` 的编码器 SPI+DMA）。
 - **handler 只读写变量/置标志**：它将来会在 CAN 中断上下文里被调用。
-- **动作端点必须由 `EP_OP_WRITE` 触发**，不能从"payload 为空"推断读/写。
+- **动作端点（`type: void`，线上 `"type":"function"`）读和写都会触发**，与 ODrive
+  一致（它的 endpoint 协议没有读写位，function 端点被“读”也会执行）。⚠ `require`
+  只是状态前置条件，不是读写判别：`action.idle_mode` / `action.clear_fault` /
+  `action.reboot` / `action.reset_timing` 连 `require` 都没有，一次读就会停机/复位，
+  所以遍历参数的上位机必须跳过 `function` 类型。标量端点仍必须由传输层显式给出
+  读/写意图，不能从 "payload 为空"推断。
 - **`save_preferences()` 只在主循环、门极关闭时调用**；它内部关中断覆盖整个
   擦写序列（N32 的 64-bit 编程在两次写之间被中断会死锁）。
 - **IWDG 由控制 ISR kick**；不要制造 > 4 s 的停顿。
@@ -1096,8 +1101,10 @@ interface 2 是 vendor specific（EP1 OUT / EP3 IN），见
 `Core/Src/usb_desc.c`、`usb_conf.h` 的 PMA 布局。CDC 的端点分配和以前完全一样。
 
 > **不是 odrivetool 的线上协议**：本固件保留 `EP_REQ_WRITE`（bit14）显式区分
-> 读写、响应多一个 `status` 字节、endpoint 0 的版本探测是 `[crc][len]`。
-> 优点是一次“读”绝不会执行 `action.*`；代价是标准 fibre 客户端不能直接用。
+> 读写、响应多一个 `status` 字节、endpoint 0 的版本探测是 `[crc][len]`。标量
+> 端点严格区分读写；动作端点（线上 `"type":"function"`）**读和写都会执行**——
+> ODrive 的协议没有读写位，function 端点被“读”也会执行，这里跟随它，好让
+> 按 ODrive 语义调用动作的上位机（JointSDK）直接可用。
 > 上位机请用 `tools/mc_ep.py`（`--port` 或 `--usb`）。
 
 ### CDC 帧
@@ -1140,7 +1147,7 @@ seq|0x8000(2) | status(1) | data...
 | 2 `EP_ERR_BAD_LEN` | 长度不够/缓冲区太小 |
 | 3 `EP_ERR_BAD_VALUE` | NaN / 无法表示 |
 | 4 `EP_ERR_READ_ONLY` | 写了 `r` 端点 |
-| 5 `EP_ERR_WRITE_ONLY` | 读了 `w` 端点（含所有 `action.*`） |
+| 5 `EP_ERR_WRITE_ONLY` | 读了只写标量端点（动作端点不再返回它） |
 | 6 `EP_ERR_STATE` | 状态不允许（如门极使能时保存） |
 | 7 `EP_ERR_VERSION` | 描述符 CRC 不匹配，主机应重新下载 |
 
@@ -1148,6 +1155,13 @@ seq|0x8000(2) | status(1) | data...
 
 **由传输层显式给出**：USB 用 bit14，CyberBeast CAN 用 `0x20`/`0x21` 操作码。
 生成的 handler 按 `access` 统一校验：`r` 拒绝写、`w` 拒绝读、`rw` 写后回读新值。
+
+**动作端点例外**：`action.*`（线上描述符 `"type":"function"`）不看 op——读和写
+都执行。ODrive 的 endpoint 协议没有读写标志，`endpoint_handler()` 对 function
+端点无论从哪个方向进来都会调用它，JointSDK 也按 `PARAM_READ(0x20)` 调动作。
+所以 `PARAM_READ` 一个 `action.*` 会真的执行它（返回值 0 字节），危险动作由
+`require` 门禁兜底；上位机遍历参数时应跳过 `function` 类型（`mc_ep.py dump`
+就是这么做的）。
 
 ### USB 复合设备与实时性
 
@@ -1206,6 +1220,12 @@ frame   = AA 08 <crc8> 01 00 02 80 04 00 56 34 <crc16_hi> <crc16_lo>
 
 ```
 payload = 03 00 | 47 40 | 00 00 | 56 34      ; 0x4047 = 71 | EP_REQ_WRITE
+```
+
+读 `action.save` 也会执行它（ODrive 兼容，见上文“动作端点例外”）：
+
+```
+payload = 03 00 | 47 00 | 00 00 | 56 34      ; 0x0047 = 71（不置 EP_REQ_WRITE）
 ```
 
 动作端点里与运维相关的两个（都只置标志，真正的工作在 `run_fsm_slow()`）：
@@ -1581,7 +1601,8 @@ schema 1 → 2 迁移已实机验证（同一块配置，不动 flash）：旧�
 - **写的 ACK 不含成败位**（协议如此）：只读端点、类型不符、`require` 不满足都**照样回 ACK**，
   必须读回判定。实测：写 `telemetry.v_bus` 无效果；门极使能时写 `config.gr` 被拒（值不变）。
 - 错误路径实测：批量读（flags bit6）回 `BATCH|ERR`（`0x60`）；读 `action.*` 回 0 字节
-  且**不会触发动作**；越界写钳到 min/max（`config.i_bw` 1e9→2000、-1e9→100）；
+  但**会执行动作**（ODrive 兼容，见“动作端点例外”；2026-11-09 起 D3 用例就是这样测的，
+  只有 `require` 不满足时才回 `EP_ERR_STATE`）；越界写钳到 min/max（`config.i_bw` 1e9→2000、-1e9→100）；
   NaN 被丢弃（值不变）；宽度不符（`config.gr` 用 int16）被丢弃；`0x03` TORQUE 超大值
   钳到 `I_MAX·KT·GR`，NaN 帧被忽略。
 - 台架脚本：`python tools/cb_bench.py --port COMx --stage-a|--stage-b|--stage-c|--stage-c-static|--stage-d|--reset-test|--timeout-test [--fd]`。
@@ -1704,7 +1725,9 @@ python tools/flash_jlink.py --bin build/motorcontrol.bin   # GNU 构建产物也
 对外契约只有三样：endpoint 协议、描述符、配置记录格式。
 
 - **endpoint 协议**语义变化 → `EP_PROTOCOL_VERSION` +1（当前 2；v2 增加了
-  bit14 读写标志，v1 的"空 payload 即执行"已移除）。
+  bit14 读写标志，v1 的"空 payload 即执行"已移除）。**例外**：动作端点重新
+  接受“读”来执行（对齐 ODrive/JointSDK）是向后兼容的放宽——写路径不变，
+  老上位机照旧工作，所以没有升版本。
 - **描述符**内容变化 → CRC 自动变，旧上位机会收到 `EP_ERR_VERSION`。
   改名不改 ID；改单位/含义用新 ID。
 - **配置格式**变化 → `PREFS_SCHEMA` +1 + 迁移函数。

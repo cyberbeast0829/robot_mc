@@ -31,7 +31,9 @@ ep_status_t endpoint_handler(uint16_t id, ep_op_t op, ep_cbuf_t *in, ep_buf_t *o
 			}
 			return ep_put_u32(out, fake_value) ? EP_OK : EP_ERR_BAD_LEN;
 
-		case 2:		/* w：动作，只能写 */
+		case 2:		/* w：只写端点。生成的 handler 对 action 端点不再这样校验
+					 *    （读也会执行，见 gen_endpoints.py），这里只用来验证
+					 *    传输层把 EP_OP_READ 如实交给 handler。 */
 			if(op != EP_OP_WRITE){return EP_ERR_WRITE_ONLY;}
 			action_calls++;
 			return EP_OK;
@@ -118,7 +120,9 @@ static void test_write_readback(void){
 	CHECK(fake_value == v);
 }
 
-static void test_action_read_does_not_execute(void){
+/* 读请求必须以 EP_OP_READ 到达 handler：标量只写端点靠它拒绝读。动作端点是否
+ * 接受读由 handler 自己决定（生成代码对 action 是放行的，见 gen_endpoints.py）。 */
+static void test_read_op_flag_delivered(void){
 	uint8_t req[32], resp[64];
 	int before = action_calls;
 	uint16_t n = build_request(req, 2, false, NULL, 0, 0, endpoint_json_crc);
@@ -205,7 +209,7 @@ int main(void){
 	test_descriptor_probe();
 	test_read();
 	test_write_readback();
-	test_action_read_does_not_execute();
+	test_read_op_flag_delivered();
 	test_action_write();
 	test_action_with_arg();
 	test_version_mismatch();

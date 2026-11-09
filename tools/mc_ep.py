@@ -24,6 +24,7 @@ motorcontrol endpoint 上位机（odrivetool 风格）。
     python tools/mc_ep.py --usb get config.i_max
     python tools/mc_ep.py --usb set config.i_max 3.5
     python tools/mc_ep.py --usb call action.save
+    python tools/mc_ep.py --usb call action.save --read   # 用“读”触发（ODrive 语义）
     python tools/mc_ep.py --usb monitor telemetry.i_q telemetry.position --rate 100
 
 协议（见 Core/Inc/endpoint.h）:
@@ -32,6 +33,8 @@ motorcontrol endpoint 上位机（odrivetool 风格）。
     请求 PAYLOAD: seq(2) | id|flags(2) | rxlen(2) | tx_data | trailer(2)
     响应 PAYLOAD: seq|0x8000(2) | status(1) | rx_data
     flags: bit15 = 需要应答，bit14 = 写/执行（不置位是读）
+    动作端点（action.*）例外：读和写都会执行——ODrive 的 endpoint 协议没有
+    读写位，function 端点被“读”也会执行，这里跟随它以兼容 JointSDK。
 """
 
 import argparse
@@ -397,12 +400,14 @@ class Device:
         data = self._transact(ep["id"], self._encode(ep, value), size, self.json_crc, write=True)
         return self._decode(ep, data) if data else None
 
-    def call(self, name):
+    def call(self, name, via_read=False):
         ep = self._entry(name)
         # "void" 是我们 params.json 的内部写法；线上描述符是 ODrive 的 "function"
         if ep["type"] not in ("void", "function"):
             raise EpError("%s 不是动作端点" % name)
-        self._transact(ep["id"], b"", 0, self.json_crc, write=True)
+        # ODrive 的 endpoint 协议没有读写位，function 端点被“读”也会执行；
+        # 固件两种意图都接受，via_read 用来验证这条兼容路径。
+        self._transact(ep["id"], b"", 0, self.json_crc, write=not via_read)
 
 
 def format_value(value):
@@ -482,6 +487,8 @@ def main():
 
     p = sub.add_parser("call", help="执行一个 action.* 端点")
     p.add_argument("name")
+    p.add_argument("--read", action="store_true",
+                   help="用“读”请求触发（ODrive/JointSDK 的做法；固件两种都接受）")
 
     p = sub.add_parser("monitor", help="周期读取若干参数")
     p.add_argument("names", nargs="+")
@@ -511,7 +518,7 @@ def main():
         elif args.cmd == "set":
             print(format_value(dev.write(args.name, args.value)))
         elif args.cmd == "call":
-            dev.call(args.name)
+            dev.call(args.name, via_read=args.read)
             print("OK")
         elif args.cmd == "monitor":
             cmd_monitor(dev, args.names, args.rate)
