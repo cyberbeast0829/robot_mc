@@ -29,7 +29,7 @@ python tools/mc_ep.py --usb tree         # vendor interface（fibre）
 
 > 同一个串口只能有一个使用者：`mc_ep.py` 运行时不要再开串口终端。原来的
 > ASCII 菜单仍然可用（115200 8N1：`m` 电机、`c` 标定、`s` 设置、`e` 编码器、
-> `z` 零点、`d` DFU）。
+> `z` 零点、`b` 进 OpenBootloader（CAN 升级）、`d` 进 ROM DFU）。
 >
 > `--usb` 只占用 vendor interface，**不会**和 CDC 串口互相干扰；但请只在
 > 一个进程里同时使用（不要两个 `--usb` 进程抢同一组端点）。
@@ -673,8 +673,11 @@ dev.call("action.save")
 
 ## 7. OTA 升级
 
-**只要 OTA 只擦 app 区（`0x08000000..0x0807BFFF`），升级后配置、零点、标定 LUT
-全部保留。** 整片擦除会全丢——这是固件救不了的。
+固件分成两段：**`0x08000000` 起 32 KB 是 OpenBootloader**，应用程序在
+**`0x08008000`**（最多到 `0x0807BFFF`）。
+
+**只要 OTA 只擦 app 区（`0x08008000..0x0807BFFF`），升级后配置、零点、标定 LUT
+全部保留。** 整片擦除会全丢（连 bootloader 一起没）——这是固件救不了的。
 
 升级前（建议）：
 
@@ -707,10 +710,43 @@ LUT 的验证：把电机停到升级前同一机械角度，比较 `telemetry.e
 **第一次刷入 TLV 配置格式的固件**（本仓库之前的版本用的是裸数组）会忽略旧块，
 参数回默认值，需要重新设置 + 标定一次；之后每次升级都会保留。
 
-### 进 DFU 引导程序（救砖 / 整片烧写）
+### 进 OpenBootloader（CAN 升级，保留配置）
 
-如果固件已经跑不起来、或者需要用 DFU 工具整片烧写，可以让设备自己跳进 ROM
-bootloader：
+正常的固件升级走这条：让设备停在 `0x08000000` 的 OpenBootloader 里，再用
+CAN 把新的 app 镜像写进去。本固件**没有** USB/串口升级通道，bootloader 只认 CAN。
+
+```bash
+# 1) 让设备进 bootloader（门极关闭；串口菜单按 'b' 也行）
+python tools/mc_ep.py --port COM7 call action.enter_bootloader_mode
+
+# 2) 用 CAN 工具升级（OpenBootloader 仓库的 tools/blcan.py，
+#    python-can，支持 CANable(slcan) / PCAN；bootloader 固定 500 kbit/s、Classic 帧）
+blcan.py --bitrate 500000 sync
+blcan.py --bitrate 500000 upgrade --firmware build/mit_h473.bin \
+         --erase auto --addr 0x08008000 --chunk-size 256 --verify --go-addr 0x08008000
+```
+
+- **进 bootloader 后不会再自动跳回 App**（要断电或 `go` 才离开），可以从容升级。
+- `--erase auto` 只擦镜像覆盖的页；**绝对不要用 `--erase mass`**——那会把 bootloader
+  和两页配置一起擦掉，之后只能用 J-Link 重烧 bootloader。
+- `build/mit_h473.bin` 是从 `0x08008000` 开始的原样镜像，所以 `--addr`/`--go-addr`
+  必须是 `0x08008000`。
+- 上电时不发 SYNC 的话，bootloader 等 200 ms 就跳回 App，正常使用感觉不到它的存在。
+- 升级完核对 `system.fw_version_*` 与 `system.prefs_loaded`，并确认 `config.*` 还在
+  （见上一节）。
+- **变砖恢复**：app 区写坏也能救——bootloader 在 `0x08000000`，OTA/擦 app 都不会碰它。
+  让 CAN 工具持续发 `SYNC`（循环跑 `blcan.py sync`，或让主站一直发 ID `0x128`
+  data `0x7F`），再给板子上电，200 ms 窗口内握手成功就停在 bootloader 里。
+
+### 进 DFU 引导程序（整片烧写）
+
+> ⛔ **装了 OpenBootloader 的机器上，这个功能目前用不了**：动作会照常执行、设备也会
+> 复位，但约 0.4 s 后芯片自己从 `0x08000000` 重新启动（台架实测是**上电复位**弹回来，
+> 不是固件逻辑问题，详见 `docs/DEV.md` 的"⚠ 装了 OpenBootloader 之后 `enter_dfu_mode`
+> 进不去"）。**刷机请走上一节的 CAN OTA**；真要 DFU/整片烧写，等这个问题查清或者用
+> J-Link。下面保留原始说明，便于问题查清后直接使用。
+
+如果需要用 DFU 工具整片烧写，可以让设备自己跳进 ROM bootloader：
 
 ```bash
 python tools/mc_ep.py --port COM7 call action.enter_dfu_mode

@@ -9,10 +9,14 @@
 继续跑旧镜像，看现象像"新加的参数没生效 / 遥测值自相矛盾"，很难查。
 实测 250 kHz + 8 KB 分块写、每块回读比对，可以稳定通过（本文件就是那套流程）。
 
+App 链接在 0x08008000（前 32 KB 是 OpenBootloader），所以默认把镜像烧到那里；
+镜像文件本身从 0x08008000 开始（hex/bin/axf 都是），基址只用来算写入地址和回读比对。
+
 用法：
-    python tools/flash_jlink.py                    # 烧 Keil/Objects/mit_h473.axf
-    python tools/flash_jlink.py --bin build/motorcontrol.bin
-    python tools/flash_jlink.py --erase            # 先整片擦除（会清配置页！）
+    python tools/flash_jlink.py                    # 烧 Keil/Objects/mit_h473.axf 到 0x08008000
+    python tools/flash_jlink.py --bin build/mit_h473.bin
+    python tools/flash_jlink.py --bin bl.bin --base 0x08000000   # 烧 OpenBootloader
+    python tools/flash_jlink.py --erase            # 先整片擦除（bootloader + 配置页都会没！）
     python tools/flash_jlink.py --no-run           # 烧完停在 halt，不 reset&go
     python tools/flash_jlink.py --speed 1000       # 换 SWD 时钟（默认 250 kHz）
 
@@ -26,7 +30,14 @@ import subprocess
 import sys
 import tempfile
 
-FLASH_BASE = 0x08000000
+APP_BASE = 0x08008000      # application (behind the 32 KB OpenBootloader)
+BOOT_BASE = 0x08000000     # OpenBootloader
+CONFIG_PAGE_A = 0x0807C000 # first of the two ping-ponged config pages
+
+
+def parse_int(text):
+    return int(text, 0)
+
 
 JLINK_CANDIDATES = [
     r"D:\Program Files\SEGGER\JLink_V826\JLink.exe",
@@ -112,11 +123,11 @@ def read_matches(jl, addr, data, retries, read_file):
     return False
 
 
-def verify_range(jl, image, chunk, retries, read_file):
+def verify_range(jl, base, image, chunk, retries, read_file):
     for off in range(0, len(image), chunk):
         data = image[off:off + chunk]
-        if not read_matches(jl, FLASH_BASE + off, data, retries, read_file):
-            return FLASH_BASE + off
+        if not read_matches(jl, base + off, data, retries, read_file):
+            return base + off
     return None
 
 
@@ -136,13 +147,23 @@ def flash(args):
     if not image:
         sys.exit("镜像是空的。")
 
+    base = args.base
+    if base == APP_BASE and base + len(image) > CONFIG_PAGE_A:
+        sys.exit("镜像 %d 字节超出 app 区（0x%08X 起会压到配置页）—— 检查链接脚本。"
+                 % (len(image), CONFIG_PAGE_A))
+    if base == BOOT_BASE and base + len(image) > APP_BASE:
+        sys.exit("镜像 %d 字节超出 bootloader 区（0x%08X 起会压掉 app）—— "
+                 "整片镜像请从 0x%08X 起烧，或先 --erase 再分别烧两段。"
+                 % (len(image), APP_BASE, BOOT_BASE))
+
     jl = JLink(jlink_exe, args.device, args.speed, tmpdir)
     print("J-Link : %s" % jlink_exe)
-    print("镜像   : %d 字节 -> 0x%08X..0x%08X" % (len(image), FLASH_BASE, FLASH_BASE + len(image) - 1))
+    print("镜像   : %d 字节 -> 0x%08X..0x%08X" % (len(image), base, base + len(image) - 1))
     print("SWD    : %d kHz，分块 %d 字节" % (args.speed, args.chunk))
 
     if args.erase:
-        print("整片擦除（配置页 0x0807C000/0x0807E000 也会被清掉）...")
+        print("整片擦除（OpenBootloader 与配置页 0x0807C000/0x0807E000 都会没掉，"
+              "之后必须先重烧 bootloader）...")
         if not jl.erase_chip():
             sys.exit("擦除失败。")
 
@@ -151,7 +172,7 @@ def flash(args):
     try:
         for index, off in enumerate(range(0, len(image), args.chunk)):
             data = image[off:off + args.chunk]
-            addr = FLASH_BASE + off
+            addr = base + off
             with open(chunk_file, "wb") as fh:
                 fh.write(data)
 
@@ -167,7 +188,7 @@ def flash(args):
                 sys.exit("块 %d @0x%08X 写入失败，放弃。检查目标板供电/接线，或降 --speed。" % (index, addr))
             print("  块 %d @0x%08X %5d 字节  OK" % (index, addr, len(data)))
 
-        bad_addr = verify_range(jl, image, args.chunk, args.retries, read_file)
+        bad_addr = verify_range(jl, base, image, args.chunk, args.retries, read_file)
         if bad_addr is not None:
             sys.exit("全镜像回读不一致（0x%08X 附近），烧录不可信。" % bad_addr)
         print("全镜像回读一致。")
@@ -192,11 +213,15 @@ def main(argv=None):
     parser.add_argument("--axf", default=os.path.join(here, "Keil", "Objects", "mit_h473.axf"),
                         help="输入 .axf（默认 Keil 构建产物）")
     parser.add_argument("--bin", help="直接给 .bin（给了就不调用 fromelf）")
+    parser.add_argument("--base", type=parse_int, default=APP_BASE,
+                        help="镜像的起始地址（默认 app=0x%08X；烧 bootloader 用 0x%08X）"
+                             % (APP_BASE, BOOT_BASE))
     parser.add_argument("--device", default="N32H473CE")
     parser.add_argument("--speed", type=int, default=250, help="SWD 时钟 kHz（默认 250；1 MHz 以上读回可能不稳）")
     parser.add_argument("--chunk", type=int, default=8192, help="每块字节数（默认 8 KB，等于一个擦除页）")
     parser.add_argument("--retries", type=int, default=3)
-    parser.add_argument("--erase", action="store_true", help="先整片擦除（会丢配置页）")
+    parser.add_argument("--erase", action="store_true",
+                        help="先整片擦除（bootloader + 配置页都会丢，之后要重烧 bootloader）")
     parser.add_argument("--no-run", dest="run", action="store_false", help="烧完不复位运行")
     parser.add_argument("--keep", action="store_true", help="保留临时目录")
     parser.add_argument("--jlink", help="JLink.exe 路径")

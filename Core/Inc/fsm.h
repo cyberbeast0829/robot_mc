@@ -30,7 +30,8 @@ extern "C" {
 #define ENCODER_CMD		'e'
 #define SETUP_CMD			's'
 #define ZERO_CMD			'z'
-#define DFU_CMD       'd'
+#define DFU_CMD       'd'		// ROM ISP bootloader (整片烧写/救砖)
+#define BOOTLOADER_CMD 'b'		// OpenBootloader at 0x08000000 (CAN OTA, 保留配置页)
 #define ENTER_CMD			13
 
 
@@ -51,6 +52,7 @@ typedef struct{
 	volatile uint8_t reset_config_pending;		// restore factory defaults + save (endpoint action.reset_config)
 	volatile uint8_t reboot_pending;		// reboot after the reply went out (endpoint action.reboot)
 	volatile uint8_t dfu_pending;			// reset into the ROM DFU bootloader after the reply (endpoint action.enter_dfu_mode)
+	volatile uint8_t bootloader_pending;		// reset into the OpenBootloader at 0x08000000 (endpoint action.enter_bootloader_mode / menu 'b')
 	volatile uint8_t inertia_pending;		// run the inertia calibration (endpoint action.measure_inertia)
 	volatile uint8_t cogging_pending;		// run the cogging-torque calibration (endpoint action.cogging_calibrate)
 	volatile uint8_t gear_capture_pending;	// 建立双编参考（endpoint action.gear_capture，主循环里读副编码器）

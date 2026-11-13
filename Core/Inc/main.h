@@ -64,6 +64,11 @@ extern "C" {
  * 修订号不进 float（float32 只有 ~7 位有效数字，塞三段会失真），需要时读
  * system.fw_version_revision。 */
 _Static_assert(FW_VERSION_MINOR < 100, "legacy CAN 的 float 版本号只能容纳两位 minor");
+/* 从 App 主动进 OpenBootloader 的握手值：写进 _reboot_cookie（NO_INIT，固定在
+ * 0x20023FF0，不会上电清零）后软复位，0x08000000 处的 bootloader 看到它就一直
+ * 停在升级模式，不再 200 ms 后跳回 App。bootloader 的 Core/Src/main.c 里有同样的
+ * 字面量，两边必须一致。 */
+#define BOOTLOADER_MAGIC_VALUE	0xB00710ADU
 /* USER CODE END EM */
 
 /* Exported functions prototypes ---------------------------------------------*/

@@ -302,6 +302,13 @@ extern uint32_t _reboot_cookie;
 					_reboot_cookie = 0xDEADBEEF;
 					NVIC_SystemReset();
 					break;
+				case BOOTLOADER_CMD:
+					/* 进 0x08000000 的 OpenBootloader（CAN OTA，配置页保留）。
+					 * 只置 pending：cookie + 复位由主循环在 0.5 s 后统一做
+					 * （和 endpoint action.enter_bootloader_mode 同一条路径），
+					 * 这样门极先关、应答/串口提示也发得出去 */
+					fsmstate->bootloader_pending = 1;
+					break;
 				case CAL_CMD:
 					fsmstate->next_state = CALIBRATION_MODE;
 					fsmstate->ready = 0;
@@ -374,7 +381,8 @@ extern uint32_t _reboot_cookie;
 	    myprintf(" s - Setup\n\r");
 	    myprintf(" e - Display Encoder\n\r");
 	    myprintf(" z - Set Zero Position\n\r");
-	    myprintf(" d - Enter DFU/Bootloader\n\r");
+	    myprintf(" b - Enter Bootloader (CAN OTA)\n\r");
+	    myprintf(" d - Enter ROM DFU Bootloader\n\r");
 	    myprintf(" esc - Exit to Menu\n\r");
 
 	    //gpio.led->write(0);
@@ -528,7 +536,7 @@ extern uint32_t _reboot_cookie;
 	 static int encoder_print_count = 0;
 	 static uint8_t reboot_armed = 0;		// 1 = a reset is queued
 	 static uint32_t reboot_deadline = 0;	// loop_count threshold (valid when reboot_armed)
-	 static uint8_t reboot_dfu = 0;		// 1 = reset into the ROM DFU bootloader (cookie), 0 = plain reset
+	 static uint8_t reboot_mode = 0;		// 0 = plain reset, 1 = ROM DFU (0xDEADBEEF), 2 = OpenBootloader (BOOTLOADER_MAGIC_VALUE)
 	 static uint8_t inertia_phase = 0;		// 0 idle / 1 等门极 / 2 等结果 / 3 等回菜单 / 4 两轮之间停稳
 	 static uint8_t inertia_started = 0;	// ISR 是否已经把请求转成状态机
 	 static uint8_t inertia_tries = 0;		// 已完成的轮数
@@ -875,35 +883,46 @@ extern uint32_t _reboot_cookie;
 		 }
 	 }
 
-	 /* endpoint action.reboot / action.enter_dfu_mode：应答已经发完（调用者已返回）
-	  * 才复位。用控制 ISR 的 loop_count 计时，不在主循环里阻塞。
-	  * 先回菜单：由控制 ISR 走 fsm_enter_state() 把门极关掉，0.5 s 后才真正复位，
+	 /* endpoint action.reboot / action.enter_dfu_mode / action.enter_bootloader_mode：
+	  * 应答已经发完（调用者已返回）才复位。用控制 ISR 的 loop_count 计时，不在主循环里
+	  * 阻塞。先回菜单：由控制 ISR 走 fsm_enter_state() 把门极关掉，0.5 s 后才真正复位，
 	  * 避免带着 PWM 直接复位（引脚复位成输入，功率级状态不确定）。
 	  *
-	  * reboot_dfu = 0（action.reboot）：普通复位，**不动** _reboot_cookie ——
+	  * reboot_mode = 0（action.reboot）：普通复位，**不动** _reboot_cookie ——
 	  *   正常启动之后它本来就是 42，而 main.c 的 "启动状态不确定就再复位一次"
 	  *   （!= 42）是故意留的保险，不该由这里关掉。
-	  * reboot_dfu = 1（action.enter_dfu_mode）：与菜单里的 'd'（DFU_CMD）同义，
-	  *   cookie 置 0xDEADBEEF，early_start_checks() 会先延时 ~2 s（等功率级放电）
-	  *   再 Jump_To_BOOT()。 */
+	  * reboot_mode = 1（action.enter_dfu_mode / 菜单 'd'）：cookie 置 0xDEADBEEF，
+	  *   early_start_checks() 会先延时 ~2 s（等功率级放电）再 Jump_To_BOOT()。
+	  * reboot_mode = 2（action.enter_bootloader_mode / 菜单 'b'）：cookie 置
+	  *   BOOTLOADER_MAGIC_VALUE，0x08000000 处的 OpenBootloader 看到后停在升级模式
+	  *   （不再 200 ms 后跳回 App），CAN 500 kbit/s、握手 ID 0x128。 */
 	 if(fsmstate->reboot_pending){
 		 fsmstate->reboot_pending = 0;
 		 request_fsm_state(fsmstate, MENU_MODE);
-		 reboot_dfu = 0;
+		 reboot_mode = 0;
 		 reboot_deadline = (uint32_t)controller.loop_count + REBOOT_DELAY_CYCLES;
 		 reboot_armed = 1;
 	 }
 	 if(fsmstate->dfu_pending){
 		 fsmstate->dfu_pending = 0;
 		 request_fsm_state(fsmstate, MENU_MODE);
-		 reboot_dfu = 1;
+		 reboot_mode = 1;
 		 reboot_deadline = (uint32_t)controller.loop_count + REBOOT_DELAY_CYCLES;
 		 reboot_armed = 1;
 		 myprintf("\r\n  Entering ROM DFU bootloader in 0.5 s...\r\n");
 	 }
+	 if(fsmstate->bootloader_pending){
+		 fsmstate->bootloader_pending = 0;
+		 request_fsm_state(fsmstate, MENU_MODE);
+		 reboot_mode = 2;
+		 reboot_deadline = (uint32_t)controller.loop_count + REBOOT_DELAY_CYCLES;
+		 reboot_armed = 1;
+		 myprintf("\r\n  Entering bootloader (CAN, 500 kbit/s, SYNC 0x128) in 0.5 s...\r\n");
+	 }
 	 if(reboot_armed && ((int32_t)((uint32_t)controller.loop_count - reboot_deadline) >= 0)){
 		 reboot_armed = 0;
-		 if(reboot_dfu){_reboot_cookie = 0xDEADBEEF;}
+		 if(reboot_mode == 1){_reboot_cookie = 0xDEADBEEF;}
+		 else if(reboot_mode == 2){_reboot_cookie = BOOTLOADER_MAGIC_VALUE;}
 		 __disable_irq();
 		 NVIC_SystemReset();
 	 }

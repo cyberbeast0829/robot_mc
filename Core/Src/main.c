@@ -229,7 +229,7 @@ static void Jump_To_BOOT(void)
     /* clean up ICache*/
     FLASH_iCacheCmd(DISABLE);
     FLASH_iCacheRST();
-    
+
     /* Get BOOT Version */
     Get_NVR(0x1FFF37A8,value1,value2);
     
@@ -248,7 +248,12 @@ static void Jump_To_BOOT(void)
     }
     /* Disable all interrupt */
     __disable_irq();
-    
+
+    /* 顺序说明（2026-11-13 台架排查 DFU）：原来是先 __enable_irq() 再切 VTOR，
+     * 那期间任何一拍挂起的中断都会按 App 的向量表分发；现在先切 VTOR 再开中断。
+     * 注意：这只是顺序上的健壮性，**没有**解决"App 装在 OpenBootloader 后面时
+     * enter_dfu_mode 停在 ROM DFU"的问题（实测仍然进了就弹回，见 docs/DEV.md）。*/
+
     /* Config IWDG */
     IWDG_ReloadKey();
     IWDG_WriteConfig(IWDG_WRITE_DISABLE);
@@ -259,15 +264,18 @@ static void Jump_To_BOOT(void)
     
     /* Set JumpBoot addr */
     pFunction JumpBoot = (pFunction)BootAddr;
-    
+
+    /* Initialize vector table BEFORE enabling interrupts, so a pending exception
+     * can never be taken with the App's vector table */
+    SCB->VTOR = SRAM_VECTOR_ADDR;
+    __DSB();
+    __ISB();
+
     /* Initalize Stack Pointer */
     __set_MSP(SPAddr);
-    
+
     /* Enable interrupt */
     __enable_irq();
-    
-    /* Initialize vector table */
-    SCB->VTOR = SRAM_VECTOR_ADDR;
 
     /* Jump to BOOT */
     JumpBoot();

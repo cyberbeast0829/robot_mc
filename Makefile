@@ -193,6 +193,11 @@ hosttest: $(BUILD_DIR)
 # Alternative probes (both installed here) are provided too:
 #     make flash-pyocd                     (override PYOCD_TARGET)
 #     make flash-openocd                   (override OPENOCD_ARGS)
+#
+# The application links at 0x08008000 (the first 32 KB hold the OpenBootloader),
+# so the .hex already carries that address.  For the chunked/verified flashing
+# path use tools/flash_jlink.py (default base 0x08008000; --base 0x08000000 when
+# flashing the bootloader itself).
 ######################################
 JLINK_EXE    ?= JLink
 JLINK_DEVICE ?= N32H473CE

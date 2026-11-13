@@ -2068,6 +2068,14 @@
       "call": "state.dfu_pending = 1;"
     },
     {
+      "name": "action.enter_bootloader_mode",
+      "type": "void",
+      "access": "w",
+      "brief": "先应答、约 0.5 s 后复位并停在 0x08000000 的 OpenBootloader（CAN 500 kbit/s、Classic 8 字节帧、握手 ID 0x128；不会再自动跳回 App）。与串口菜单的 'b' 同义，用于 CAN OTA；只擦写 app 区（0x08008000 起）时配置/零点/标定全部保留。进不去（app 区已写坏）时让 CAN 工具循环发 SYNC 帧再上电，200 ms 窗口内握手成功同样能停在 bootloader 里",
+      "require": "!controller.gate_drive_enabled",
+      "call": "state.bootloader_pending = 1;"
+    },
+    {
       "name": "action.reset_timing",
       "type": "void",
       "access": "w",

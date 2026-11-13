@@ -266,6 +266,7 @@ ID 由 `tools/endpoint_ids.json` 锁定，固件升级不会改变；`access` �
 | `action.reset_config` | 126 | function | w |  | — | — | 否 | 恢复出厂默认值并写入 flash（要求门极关闭；会清掉标定，需重新标定并重启） |
 | `action.reboot` | 127 | function | w |  | — | — | 否 | 重启控制器（应答发出后约 0.5 s 复位，配置按已保存的值重新加载） |
 | `action.enter_dfu_mode` | 180 | function | w |  | — | — | 否 | 先应答、约 0.5 s 后复位并跳进 ROM DFU 引导程序（之后约 2 s 跳转，USB 会重新枚举）。与串口菜单的 'd' 同义，用于救砖/整片烧写；配置与标定是否保留取决于下载的地址范围（只写 app 区就保留） |
+| `action.enter_bootloader_mode` | 242 | function | w |  | — | — | 否 | 先应答、约 0.5 s 后复位并停在 0x08000000 的 OpenBootloader（CAN 500 kbit/s、Classic 8 字节帧、握手 ID 0x128；不会再自动跳回 App）。与串口菜单的 'b' 同义，用于 CAN OTA；只擦写 app 区（0x08008000 起）时配置/零点/标定全部保留。进不去（app 区已写坏）时让 CAN 工具循环发 SYNC 帧再上电，200 ms 窗口内握手成功同样能停在 bootloader 里 |
 | `action.reset_timing` | 116 | function | w |  | — | — | 否 | 清零 ISR 耗时统计 |
 | `action.measure_inertia` | 154 | function | w |  | — | — | 否 | 一条指令完成惯量标定：自动进电机模式 → 打两个电流台阶测输出端惯量 → 回菜单。约 3 s（内部连测 3 次取中位数，单次离散太大）、关节净行程 ~0.5 rad。结果写 config.inertia（**只写 RAM，不自动保存**），进度/结果读 system.inertia_status；测完自动回菜单，可直接 action.save |
 | `action.tune_gains` | 161 | function | w |  | — | — | 否 | 用 config.inertia 算外环增益并写进 RAM（不自动保存）：vel_gain = tune_margin·J·omega_c/(KT·GR)；vel_integrator_gain = vel_gain·clamp(omega_c/25, 5, 30)；pos_gain = omega_c/20。写完用 csv/csp 子命令验证，满意再 action.save |

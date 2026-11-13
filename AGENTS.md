@@ -16,6 +16,14 @@ gate drive is now enabled/disabled directly through the **ATIM1 break/MOE bits**
 (`ATIM1->BKDT |= TIM_BKDT_AOEN | TIM_BKDT_MOEN` to enable, `&= ~` to disable — see
 `fsm_enter_state`/`fsm_exit_state` in `fsm.c`). Do **not** reintroduce DRV8323 code.
 
+**The image runs behind a 32 KB OpenBootloader** (separate repo, not built here): the
+bootloader owns `0x08000000..0x08007FFF`, waits 200 ms for a CAN `SYNC` (`0x128`,
+500 kbit/s Classic) and otherwise jumps to the application at **`0x08008000`**
+(`VECT_TAB_OFFSET = 0x8000`). To stay in the bootloader, the app writes
+`BOOTLOADER_MAGIC_VALUE` (`0xB00710AD`) into `_reboot_cookie` (NO_INIT at `0x20023FF0`,
+the address the bootloader polls) and resets — `action.enter_bootloader_mode` / menu `b`.
+Bootloader and app must both keep the IWDG fed (see "配置持久化" below).
+
 `CLAUDE.md` (repo root) is inherited from the STM32F446 upstream and is the best
 description of the **control architecture** (FSM, FOC, flash config, watchdog, CAN).
 **Its hardware/build specifics are stale for this fork** — read the corrections below
@@ -30,8 +38,9 @@ Two equivalent builds produce the same firmware:
 - **GNU Make (command line)**: `make` (needs `arm-none-eabi-gcc` on PATH; override the
   directory with `GCC_PATH=`). It uses the Nations-supplied GNU startup
   `Drivers/CMSIS/device/startup/startup_n32h47x_48x_gcc.S` (capital `.S` — the Makefile has
-  a `.S` rule) and `N32H473CE_FLASH.ld` (mirrors `Keil/ODrive_N32.sct`, including the
-  16-byte NO_INIT region that holds `_reboot_cookie`). Defines:
+  a `.S` rule) and `N32H473CE_FLASH.ld` (mirrors `Keil/ODrive_N32.sct`: app at
+  `0x08008000`, length `0x74000`, plus the 16-byte NO_INIT region at `0x20023FF0`
+  that holds `_reboot_cookie`). Defines:
   `N32H473, ARM_MATH_CM4, HSE_VALUE=24000000, __FPU_PRESENT=1`. Also:
   `make DEBUG=1` (-Og/-g3), `make size`, `make clean`, and `make flash` (J-Link; override
   with `JLINK_DEVICE`/`JLINK_IF`/`JLINK_SPEED`; `flash-pyocd` / `flash-openocd` also exist).
@@ -67,7 +76,9 @@ Two equivalent builds produce the same firmware:
   `Verify` fails at random addresses, and the device then keeps running the **old image** —
   which looks like "the new endpoint isn't there / telemetry contradicts itself". Always
   flash with `python tools/flash_jlink.py` (250 kHz, 8 KB chunks, per-chunk read-back
-  compare + retry, full-image verify, then `r`+`g`; `--erase` also clears the config pages).
+  compare + retry, full-image verify, then `r`+`g`; writes the app to `0x08008000`,
+  `--base 0x08000000` flashes the bootloader; `--erase` clears the **whole** chip —
+  bootloader and config pages included).
   After flashing, sanity-check `system.prefs_loaded` / `config.kt` to confirm the new image
   really is running; after a mass erase re-run `action.calibrate` and `action.save`.
 
@@ -432,11 +443,20 @@ Zadig 装 WinUSB（CDC 不受影响）。
   会自动置 `reboot_pending`（`CAN_ID/CAN_PROT/CAN_BAUD` 运行期生效，改了不重启
   会让主站失联）；`action.reboot` 不要动 `_reboot_cookie`（`main.c` 的
   `!= 42 → 再复位一次` 是启动状态不确定时的保险）。
-  **唯一的例外是 `action.enter_dfu_mode`**：它置 `state.dfu_pending`，`run_fsm_slow()`
-  在应答发完后把 cookie 写成 `0xDEADBEEF` 再复位，等价于串口菜单的 `d`
-  （`early_start_checks()` 延时 ~2 s 后 `Jump_To_BOOT()`）。两条复位路径共用
-  `reboot_armed/reboot_deadline`，靠 `reboot_dfu` 区分；**不要在 handler 里直接复位**，
-  否则 USB/CAN 的应答发不出去。
+  **例外是进引导程序的两个动作**：`action.enter_dfu_mode` 置 `state.dfu_pending`，
+  `run_fsm_slow()` 在应答发完后把 cookie 写成 `0xDEADBEEF` 再复位，等价于串口菜单的
+  `d`（`early_start_checks()` 延时 ~2 s 后 `Jump_To_BOOT()`，走 ROM ISP）；
+  `action.enter_bootloader_mode` 置 `state.bootloader_pending`，cookie 写成
+  `BOOTLOADER_MAGIC_VALUE`（`0xB00710AD`，`main.h`），`0x08000000` 的 OpenBootloader
+  看到后永久停在升级模式（CAN 500 kbit/s、Classic、SYNC ID `0x128`），等价于菜单 `b`。
+  三条复位路径共用 `reboot_armed/reboot_deadline`，靠 `reboot_mode`（0 普通 /
+  1 ROM DFU / 2 OpenBootloader）区分；**不要在 handler 里直接复位**，否则 USB/CAN
+  的应答发不出去。
+  ⚠ 装了 OpenBootloader 之后 **`action.enter_dfu_mode` 进不去 ROM DFU**（台架两次
+  复现）：ROM ISP 确实被启动了（它用自己的栈改写了 `0x20023FF0` 附近），但 ~0.4 s
+  后芯片以上电复位（`POR|PIN`，无 `SFTRSTF`）从 `0x08000000` 回来，多出一个 boot
+  cycle。所以**刷机只走 CAN OTA**（`action.enter_bootloader_mode` + `blcan.py`），
+  详见 `docs/DEV.md`。
 - **`command.*`（t_ff/p_des/v_des/kp/kd）有两条硬语义**：写入必须刷新命令租约
   （`"set": "... = v; controller.timeout = 0;"`，与 CAN 帧一致，否则默认 100 ms
   的 `config.can_timeout` 一到就会被 `zero_commands()` 清掉；**不要**用把
@@ -514,11 +534,16 @@ SysInit 段）。
   语义变化用新 ID + 一次性迁移（`PREFS_SCHEMA` +1，迁移函数在
   `prefs_codec.c`/`preference_writer.c` 里加）。
 - **存储区**：`0x0807C000` / `0x0807E000` 两个 8 KB 页 ping-pong。链接脚本
-  （`N32H473CE_FLASH.ld`）和 Keil scatter（`ODrive_N32.sct`）的 app 区已收紧到
-  `0x7C000`，镜像不可能长进配置页。**bootloader 必须只擦 app 区**；整片擦除
-  会清掉配置，任何软件格式都救不了。这是 OTA 保留配置的唯一硬前提，发布前
-  必须做一次“设参数 + 标定 → OTA → 读回”的闭环验证（见 `docs/DEV.md` 的
-  “Flash 布局与 OTA 契约”“发布检查表”）。
+  （`N32H473CE_FLASH.ld`）和 Keil scatter（`ODrive_N32.sct`）的 app 区是
+  `0x08008000..0x0807BFFF`（`0x74000`），镜像不可能长进配置页，也不会压到
+  `0x08000000..0x08007FFF` 的 OpenBootloader。**bootloader 必须只擦 app 区**；
+  整片擦除会连 bootloader 和配置一起清掉，任何软件格式都救不了。这是 OTA 保留
+  配置的唯一硬前提，发布前必须做一次“设参数 + 标定 → OTA → 读回”的闭环验证
+  （见 `docs/DEV.md` 的“Flash 布局与 OTA 契约”“发布检查表”）。
+- **bootloader 必须喂 IWDG**：App 一上电就启动 IWDG（~4 s），它只有上电复位才停，
+  所以从 App 软复位进 bootloader 后仍在计数。OpenBootloader 的
+  `OPENBL_IWDG_Refresh()` 已实现为 `IWDG_ReloadKey()` 并在主循环 / CAN 收包等待里
+  调用——**不要把它改回空函数**，否则 OTA 每 4 s 被复位一次，永远写不完。
 - **保存**：仍只由 `save_preferences()` 在门极关闭时执行；序列化在关中断
   之前完成，关中断只覆盖擦除 + 编程。掉电时另一页仍是完整旧块。
 - 产测/OTA 前后可用 `system.config_schema`、`system.prefs_sequence`、

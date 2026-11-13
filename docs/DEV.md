@@ -1233,7 +1233,8 @@ payload = 03 00 | 47 00 | 00 00 | 56 34      ; 0x0047 = 71（不置 EP_REQ_WRITE
 | 端点 | ID | 行为 |
 |---|---|---|
 | `action.reboot` | 127 | `state.reboot_pending = 1` → 先 `request_fsm_state(MENU_MODE)`（关栅），0.5 s 后（`REBOOT_DELAY_CYCLES`）`NVIC_SystemReset()`。**不动 `_reboot_cookie`**：正常启动后它本来就是 42，而 `main.c` 的 `!= 42 → 再复位一次` 是"启动状态不确定"的保险，不该由这里关掉。没保存的改动会丢 |
-| `action.enter_dfu_mode` | 180 | `state.dfu_pending = 1` → 与 `action.reboot` 同一条延迟复位路径（共用 `reboot_armed/reboot_deadline`，用 `reboot_dfu` 区分），但复位前把 `_reboot_cookie` 写成 **`0xDEADBEEF`**，`early_start_checks()` 会先延时 ~2 s 再 `Jump_To_BOOT()` —— 与串口菜单的 `d`（`DFU_CMD`）完全同义。`require` 要求门极关闭；**handler 里不能直接复位**，否则应答发不出去 |
+| `action.enter_dfu_mode` | 180 | `state.dfu_pending = 1` → 与 `action.reboot` 同一条延迟复位路径（共用 `reboot_armed/reboot_deadline`，用 `reboot_mode` 区分），但复位前把 `_reboot_cookie` 写成 **`0xDEADBEEF`**，`early_start_checks()` 会先延时 ~2 s 再 `Jump_To_BOOT()` —— 与串口菜单的 `d`（`DFU_CMD`）完全同义。`require` 要求门极关闭；**handler 里不能直接复位**，否则应答发不出去 |
+| `action.enter_bootloader_mode` | 242 | `state.bootloader_pending = 1` → 同一条延迟复位路径，但 cookie 写成 **`BOOTLOADER_MAGIC_VALUE`（`0xB00710AD`）**，`0x08000000` 的 OpenBootloader 看到后停在升级模式（CAN 500 kbit/s、Classic、握手 ID `0x128`）。与菜单 `b`（`BOOTLOADER_CMD`）同义；`require` 要求门极关闭 |
 | `action.reset_config` | 126 | `state.reset_config_pending = 1` → `config_apply_defaults()` + `config_apply_limits()` + `save_preferences()`，**保存成功后自动 `reboot_pending = 1`**（`CAN_ID/CAN_PROT/CAN_BAUD` 是运行期读取的，改了不重启会让主站失联，而且 `config.*` 与 `comm_encoder.*` 会处于混合状态）；`require` 要求门极关闭（否则端点返回 `EP_ERR_STATE=6`），主循环里再加一道 `save_status = 2` 兜底。写 flash 失败时**不**重启 |
 
 **`action.encoder_mode`(77) / `action.setup_mode`(78) 已退役**：固件不再提供它们
@@ -1406,18 +1407,71 @@ schema 1→2 单位迁移与降级块仍可读）。
 
 | 区域 | 地址 | 大小 |
 |---|---|---|
-| App | `0x08000000` – `0x0807BFFF` | 496 KB (`0x7C000`) |
+| OpenBootloader | `0x08000000` – `0x08007FFF` | 32 KB (`0x8000`)，不在本镜像里 |
+| App | `0x08008000` – `0x0807BFFF` | 464 KB (`0x74000`) |
 | 配置页 A | `0x0807C000` – `0x0807DFFF` | 8 KB |
 | 配置页 B | `0x0807E000` – `0x0807FFFF` | 8 KB |
 
-链接器强制：`N32H473CE_FLASH.ld` 的 `LENGTH = 0x7C000`；
-`Keil/ODrive_N32.sct` 的 `LR_IROM1 0x08000000 0x0007C000`。镜像超了直接报错。
+链接器强制：`N32H473CE_FLASH.ld` 的 `ORIGIN = 0x08008000, LENGTH = 0x74000`；
+`Keil/ODrive_N32.sct` 的 `LR_IROM1 0x08008000 0x00074000`。镜像超了直接报错。
+向量表偏移 `VECT_TAB_OFFSET = 0x8000`（`Core/Src/system_n32h47x_48x.c`）必须跟着改——
+三处不一致的表现是"能启动、但所有中断按 bootloader 的向量表分发"。
 
-bootloader 契约（本仓库不含 bootloader，app 链接在 `0x08000000`）：
+bootloader 契约（bootloader 是独立仓库 OpenBootloader 的固件，App 链接在 `0x08008000`）：
 
-1. **只擦/写 `0x08000000..0x0807BFFF`**，禁止 mass erase / 512 KB 整段擦。
+1. **只擦/写 `0x08008000..0x0807BFFF`**，禁止 mass erase / 512 KB 整段擦
+   （整片擦会连 bootloader 和两个配置页一起清掉，之后必须重新烧 bootloader）。
 2. 不把 bootloader 自己的参数放在这两个页。
 3. "恢复出厂"只擦 app 区，配置由固件自己的 action 清理。
+4. **bootloader 必须喂 IWDG**：App 一上电就启用 IWDG（~4 s），而 IWDG 只有上电复位
+   才会停。App 用 magic 软复位进 bootloader 后它仍在计数，不喂狗的话升级到一半就复位，
+   magic 已被清掉 → 200 ms 后跳回 App，OTA 永远做不完。OpenBootloader 的
+   `OPENBL_IWDG_Refresh()`（`iwdg_interface.c`）已实现为 `IWDG_ReloadKey()`，主循环和
+   CAN 收包等待循环里都调它（IWDG 没启动时写 KR 是无害空操作）。
+
+### 进入/使用 OpenBootloader
+
+- **App 侧入口**：`call action.enter_bootloader_mode` 或串口菜单 `b`。固件先关门极、把
+  应答发完，0.5 s 后把 `_reboot_cookie`（NO_INIT，固定 **`0x20023FF0`**，bootloader 用
+  同一个地址）写成 `BOOTLOADER_MAGIC_VALUE = 0xB00710AD` 再 `NVIC_SystemReset()`。
+  bootloader 读到后清成 42 并**永久停留**（不再 200 ms 超时跳转）；magic 的定义在
+  `Core/Inc/main.h`，两边字面量必须一致。
+- **上电时的普通流程**：bootloader 等 200 ms 看有没有 CAN `SYNC`（ID `0x128`，
+  data `0x7F`），没有就跳到 `0x08008000`。所以正常上电只多 200 ms。
+- **升级工具**：OpenBootloader 仓库的 `tools/blcan.py`（python-can，CANable/slcan 或 PCAN）：
+
+  ```
+  blcan.py --bitrate 500000 sync
+  blcan.py upgrade --firmware build/mit_h473.bin --erase auto \
+           --addr 0x08008000 --chunk-size 256 --verify --go-addr 0x08008000
+  ```
+
+  `--erase auto` 只擦镜像覆盖的页（从 app 页开始），**不要**用 `--erase mass`。
+  `build/mit_h473.bin` 是从 `0x08008000` 开始的原样镜像（`objcopy -O binary`），
+  所以 `--addr` 必须是 `0x08008000`。`--go-addr` 让 bootloader 直接跳转、不再复位。
+- **本地烧写**：`tools/flash_jlink.py` 默认把镜像写到 `0x08008000`；烧 bootloader 用
+  `--base 0x08000000`。`--erase`（整片）会连 bootloader 一起擦掉。
+
+⚠ **装了 OpenBootloader 之后 `action.enter_dfu_mode`（ROM ISP / DFU）进不去**
+（2026-11-13 台架，两次复现）。App 侧临时打点（已删除）测到的完整事实链：
+
+1. **请求链完全正常**：`action.enter_dfu_mode` → cookie `0xDEADBEEF` → 0.5 s 后
+   `NVIC_SystemReset()` → OpenBootloader 不动这个地址 → `early_start_checks()` 确实看到
+   `0xDEADBEEF` 并调用 `Jump_To_BOOT()`（第 2 条就是证据）。
+2. **ROM ISP 确实被启动了**：`Jump_To_BOOT()` 把 `0x20023E00` 起 128 个字清零后，ROM ISP
+   用自己的栈把 `0x20023FF0` 附近改成了随机值（两次分别读到 `0x9798705C` / `0x9698705C`）。
+3. **约 0.4 s 后芯片回到 `0x08000000` 重新启动，而且复位源是真正的上电复位**：`RCC` 复位
+   标志是 `POR|PIN`，**没有 `SFTRSTF`**；同一套打点里普通 `action.reboot` 一直是
+   `PIN|SFT`。于是 bootloader(200 ms) → App 再跑一次，App 发现 cookie 既不是 42 也不是
+   `0xDEADBEEF`，执行它自己"启动状态不确定就再复位一次"的保险分支 → **这就是
+   `enter_dfu_mode` 的 USB 重枚举间隔 0.96 s 而普通复位 0.48 s（多一整个 boot cycle）的来源**。
+4. 所以问题既不在 bootloader 的 cookie/RAM 处理（已验证正确），也不在 App 的 DFU 代码
+   路径——是 ROM ISP 起来之后**掉电复位**把它弹回去了。最可能的方向是 ROM ISP 接管引脚时
+   扰动功率级/供电（本板六路栅极由 MCU 直驱，PB15 在 OpenBootloader 里还被当作 `MUX1`
+   输出拉高，而它在**本板是 `GLS_W`**），母线带电时更容易发生。
+   **待验证**：把 48 V 母线断电（只留 USB 供电）再试 `action.enter_dfu_mode`；若此时 DFU
+   能停住，就确认是上电扰动，并考虑在 `Jump_To_BOOT()` 里先把六路栅极引脚钳到安全电平。
+   在此之前**只把 CAN OTA 当刷机手段**（见上"变砖恢复"）。
 
 **OTA 闭环验证（发布前必做）**
 
@@ -1688,8 +1742,12 @@ python tools/flash_jlink.py --bin build/motorcontrol.bin   # GNU 构建产物也
 | 21 | CSP 时连发 3×`can_timeout` 不刷新 | 卸力（零转矩），不是“保持位置” |
 | 22 | `set config.pos_error_fault 0.2`，堵住关节让 CSP 追不上 | 约 100 ms 后 `telemetry.fault` 出现 `FAULT_POS(8)`，进 FAULT_MODE 关栅 |
 | 23 | `set config.vel_loop_prescaler 1` / `pos_loop_prescaler 1` | `timing.overrun` 仍为 0，`timing.period_max` < 0.6×`isr_period` |
-| 24 | `call action.enter_dfu_mode`（门极关闭） | 应答先返回（`EP_OK`）、串口打印 `Entering ROM DFU bootloader`；~0.5 s 后复位、~2 s 后设备从 USB 消失（进入 ROM DFU），可用 DFU 工具重新烧写 |
+| 24 | `call action.enter_dfu_mode`（门极关闭） | 应答先返回（`EP_OK`）、串口打印 `Entering ROM DFU bootloader`；~0.5 s 后复位。⚠ **装了 bootloader 后这条目前过不了**：设备约 0.4 s 后自己从 `0x08000000` 回来（ROM ISP 起来后被上电复位弹回，见上文），DFU 设备不会出现 |
 | 25 | 门极使能时 `call action.enter_dfu_mode` | `status 6`（`EP_ERR_STATE`），不复位、门极保持 |
+| 25a | `call action.enter_bootloader_mode`（门极关闭），CAN 侧接 `blcan.py sync` | 应答先返回（`EP_OK`）、串口打印 `Entering bootloader`；~0.5 s 后复位，`blcan.py sync` 拿到 ACK 且**超过 30 s 不自动跳回 App**（IWDG 被喂住） |
+| 25b | bootloader 里 `blcan.py upgrade --erase auto --addr 0x08008000 --verify --go-addr 0x08008000` | 升级完成、App 正常启动；`system.prefs_loaded = true`、`prefs_sequence` 不变、`config.gr`/`m_zero`/标定 LUT 都在（OTA 闭环） |
+| 25c | 门极使能时 `call action.enter_bootloader_mode` | `status 6`；不复位、门极保持 |
+| 25d | 串口菜单按 `b` | 同 25a（`b` 是 `BOOTLOADER_CMD`，不是设置前缀） |
 | 26 | `set config.pre_calibrated 0` 后 `call action.motor_mode` | `status 6`；串口按 `m` 打印 `Motor mode refused`；CYBERBEAST `START_MOTOR` 后状态仍是 IDLE |
 | 27 | 标定成功后读 `config.pre_calibrated` | `1`；进一次标定（即使失败回菜单）后变回 `0` |
 | 28 | 可调电源拉到 `config.vbus_ov_trip` 以上 | 锁 `FAULT_OV(1)`；串口故障报告打印实际峰值与阈值 |
@@ -1713,11 +1771,14 @@ python tools/flash_jlink.py --bin build/motorcontrol.bin   # GNU 构建产物也
       `PREFS_SCHEMA` 是否变化已确认；`FW_VERSION_UNRELEASED` 只在预发布构建里为 1；
 - [ ] ID 注册表只追加、没有复用/重排；
 - [ ] `make check` 通过，生成物与文档一起提交；
-- [ ] GNU Make 和 Keil AC6 都能干净构建；`make size` 镜像 < `0x0807C000`；
+- [ ] GNU Make 和 Keil AC6 都能干净构建；`make size` 镜像 < `0x0807C000`
+      （app 从 `0x08008000` 起，最多 `0x74000`）；
 - [ ] `make hosttest` + 台架清单通过（含 USB 复合设备的 CDC/vendor 两条传输）；
 - [ ] 改了齿槽补偿/外环：`action.cogging_calibrate` 跑通，`system.cogging_amp` /
       `cogging_mismatch` 在合理范围，"设参数 + 标定 → OTA → 读回"闭环仍然保留表；
-- [ ] bootloader 擦除范围已确认，OTA 闭环验证通过（参数/零点/LUT 保留）；
+- [ ] bootloader 擦除范围已确认（`blcan.py --erase auto`，**不是** mass），OTA 闭环验证
+      通过（参数/零点/LUT 保留）；bootloader 侧 `OPENBL_IWDG_Refresh()` 仍然是喂狗的
+      （否则从 App 进入后 4 s 就会被 IWDG 复位）；
 - [ ] [README](README.md) 的版本矩阵已更新；客户可见的接口变化写进发布说明。
 
 ## 接口变更规则
