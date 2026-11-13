@@ -126,6 +126,22 @@ static void motion_seed(ControllerStruct *controller, const EncoderStruct *encod
 	controller->pos_filter.seeded = 0;
 	controller->pos_trap.planned = 0;
 	controller->pos_trap.t = 0.0f;
+
+	/* 切到位置环时如果已经站在限位外：冻结位置参考（零速保持原地），
+	 * 不要去追那个可能很陈旧的 p_des —— 那会立刻拉出一大段误差，表现为
+	 * "一进门就自己往回冲"。
+	 * 例外：p_des 本身也在界外（只可能是在界外时写下的"往回收"目标，
+	 * 例如限位 0..10、当前 15、目标 12）——那是明确指令，直接跟踪。
+	 * 主站给新目标、或关节自己回到界内后解除。 */
+	controller->pos_hold = 0;
+	if (controller->ctrl_mode == CTRL_POSITION) {
+		float p_out = encoder->angle_multiturn * inv_gr;
+		if (ml_pos_outside(p_out, P_MIN, P_MAX)
+		    && !ml_pos_outside(controller->p_des, P_MIN, P_MAX)) {
+			controller->pos_hold = 1;
+			controller->pos_hold_des = controller->p_des;
+		}
+	}
 }
 
 /* ---- 惯量标定 ---------------------------------------------------------
@@ -355,6 +371,15 @@ void motion_control(ControllerStruct *controller, EncoderStruct *encoder)
 	if (controller->ctrl_mode == CTRL_IMPEDANCE) {
 		/* 现有阻抗律：每拍都算，与改动前完全一致 */
 		torque_control(controller);
+		/* 位置软限位的单向门（与 CSV 同一条规则，这里作用在电流指令上）：
+		 * 越过正限位只放行 i_q<=0（反向力矩 = 往回收），负限位同理。
+		 * 这条分支覆盖 MIT / TORQUE(0x03) / CURRENT(0x04) / 旧协议 packed，
+		 * 其中 kp=kd=0 的**纯力矩（CST）**最需要它 —— 它没有位置环，
+		 * 一个持续的 t_ff 会把关节一路推出 config.p_min/p_max。
+		 * MIT 的 p_des 已经被钳在限位内、弹簧本身就给反向力矩，通常不动作。 */
+		controller->i_q_des = ml_pos_dir_gate(controller->i_q_des,
+		                                      encoder->angle_multiturn * inv_gear_ratio(),
+		                                      P_MIN, P_MAX);
 		controller->i_q_ref = controller->i_q_des;	// 保持镜像，切模式时无扰
 		controller->vel_update = 0;
 		controller->pos_update = 0;
@@ -392,44 +417,72 @@ void motion_control(ControllerStruct *controller, EncoderStruct *encoder)
 			controller->pos_err = 0.0f;
 			controller->pos_fault_t = 0.0f;
 		} else if ((controller->ctrl_mode == CTRL_POSITION) && controller->pos_update) {
-			float p_meas = encoder->angle_multiturn * inv_gr;
-			float p_des = controller->p_des;
-			/* P_MAX/P_MIN 配反了就不限幅（默认 ±12.5 rad 是给整机留的软限位） */
-			if (P_MAX > P_MIN) { p_des = ml_clampf(p_des, P_MIN, P_MAX); }
+			const float p_meas = encoder->angle_multiturn * inv_gr;
 
-			/* 输入整形：POS_FILTER / TRAP_TRAJ 给出自己的 (位置, 速度) 设定，
-			 * 速度同时作为位置环前馈取代帧间差分的 pos_ff（两者叠加会过冲） */
-			float p_track = p_des;
-			float v_ff = controller->pos_ff;
-			if (in_mode == INPUT_MODE_TRAP_TRAJ) {
-				/* 轨迹用自己的一组限值：只配了 trap_* 就完全不碰通用的 v_max /
-				 * accel_limit，可以"轨迹慢速爬 + 手动高速点动"共存。
-				 * 三项都默认 0 ⇒ 退回通用值，行为与改动前一致。 */
-				(void)ml_trap_step(&controller->pos_trap, dt_p, p_des,
-				                   ml_trap_vel(TRAP_VEL_LIMIT, v_lim),
-				                   ml_limit_or(TRAP_ACCEL_LIMIT, ACCEL_LIMIT),
-				                   ml_limit_or(TRAP_DECEL_LIMIT, DECEL_LIMIT),
-				                   &p_track, &v_ff);
-			} else if (in_mode == INPUT_MODE_POS_FILTER) {
-				if (!controller->pos_filter.seeded) {
-					ml_posf_reset(&controller->pos_filter, p_meas, 0.0f);
+			/* 界外冻结：切到 CSP 时实测位置已经在限位外的话，p_des 会被钳到边界，
+			 * 追它就等于"强制把关节拉回限位"。冻结期间只做零速保持；主站给出
+			 * 新目标（p_des 变化）或关节自己回到界内，就恢复正常跟踪。 */
+			int holding = controller->pos_hold;
+			if (holding) {
+				if ((controller->p_des != controller->pos_hold_des)
+				    || !ml_pos_outside(p_meas, P_MIN, P_MAX)) {
+					holding = 0;
+					controller->pos_trap.planned = 0;		/* 恢复时从当前位置重新起步 */
+					controller->pos_filter.seeded = 0;
+					/* 冻结期间帧间差分可能已经攒出一个很大的前馈，别带到恢复的第一拍 */
+					controller->pos_ff = 0.0f;
+					controller->pos_ff_last = controller->p_des;
+					controller->pos_ff_cycle = controller->loop_count;
 				}
-				ml_posf_step(&controller->pos_filter, p_des, 0.0f, INPUT_BW, dt_p,
-				             &p_track, &v_ff);
 			}
+			controller->pos_hold = (uint8_t)holding;
 
-			float pos_err = p_track - p_meas;
-			float v_cmd = ml_pos_p(POS_GAIN, POS_FF_GAIN, pos_err, v_ff);
+			if (holding) {
+				/* 不追 p_des、也不跑轨迹/滤波：原地零速保持。
+				 * 冻结不是"跟随失败"，所以不参与 FAULT_POS 判定 */
+				controller->pos_err = 0.0f;
+				controller->pos_fault_t = 0.0f;
+				controller->v_target = 0.0f;
+			} else {
+				/* 软限位：界内钳到 [P_MIN,P_MAX]；界外放宽到当前位置这一侧
+				 * （目标 12、当前 15、限位 0..10 时允许 12，但不允许比 15 更外）。
+				 * 规则见 motion_law.h 的 ml_pos_cmd_range() */
+				float p_des = ml_pos_cmd_clamp(controller->p_des, p_meas, P_MIN, P_MAX);
 
-			controller->pos_err = pos_err;
-			/* config.enable_vel_limit 关掉时不再夹取（帧内的 vel_limit 也不生效） */
-			controller->v_target = VEL_LIMIT_EN ? ml_clampf(v_cmd, -v_lim, v_lim) : v_cmd;
+				/* 输入整形：POS_FILTER / TRAP_TRAJ 给出自己的 (位置, 速度) 设定，
+				 * 速度同时作为位置环前馈取代帧间差分的 pos_ff（两者叠加会过冲） */
+				float p_track = p_des;
+				float v_ff = controller->pos_ff;
+				if (in_mode == INPUT_MODE_TRAP_TRAJ) {
+					/* 轨迹用自己的一组限值：只配了 trap_* 就完全不碰通用的 v_max /
+					 * accel_limit，可以"轨迹慢速爬 + 手动高速点动"共存。
+					 * 三项都默认 0 ⇒ 退回通用值，行为与改动前一致。 */
+					(void)ml_trap_step(&controller->pos_trap, dt_p, p_des,
+					                   ml_trap_vel(TRAP_VEL_LIMIT, v_lim),
+					                   ml_limit_or(TRAP_ACCEL_LIMIT, ACCEL_LIMIT),
+					                   ml_limit_or(TRAP_DECEL_LIMIT, DECEL_LIMIT),
+					                   &p_track, &v_ff);
+				} else if (in_mode == INPUT_MODE_POS_FILTER) {
+					if (!controller->pos_filter.seeded) {
+						ml_posf_reset(&controller->pos_filter, p_meas, 0.0f);
+					}
+					ml_posf_step(&controller->pos_filter, p_des, 0.0f, INPUT_BW, dt_p,
+					             &p_track, &v_ff);
+				}
 
-			/* 被速度限幅 = 正在按上限追赶，这时误差大是正常的；
-			 * 只有“没饱和却一直追不上”才当成跟随故障 */
-			if (ml_pos_fault(POS_ERROR_FAULT, &controller->pos_fault_t, pos_err,
-			                 VEL_LIMIT_EN && (v_cmd != controller->v_target), dt_p)) {
-				controller->fault |= FAULT_POS;
+				float pos_err = p_track - p_meas;
+				float v_cmd = ml_pos_p(POS_GAIN, POS_FF_GAIN, pos_err, v_ff);
+
+				controller->pos_err = pos_err;
+				/* config.enable_vel_limit 关掉时不再夹取（帧内的 vel_limit 也不生效） */
+				controller->v_target = VEL_LIMIT_EN ? ml_clampf(v_cmd, -v_lim, v_lim) : v_cmd;
+
+				/* 被速度限幅 = 正在按上限追赶，这时误差大是正常的；
+				 * 只有“没饱和却一直追不上”才当成跟随故障 */
+				if (ml_pos_fault(POS_ERROR_FAULT, &controller->pos_fault_t, pos_err,
+				                 VEL_LIMIT_EN && (v_cmd != controller->v_target), dt_p)) {
+					controller->fault |= FAULT_POS;
+				}
 			}
 		} else if (controller->ctrl_mode == CTRL_VELOCITY) {
 			controller->pos_err = 0.0f;
@@ -450,6 +503,15 @@ void motion_control(ControllerStruct *controller, EncoderStruct *encoder)
 			                                    ml_limit_or(VEL_RAMP_RATE, DECEL_LIMIT), dt_v)
 			                         : controller->v_target;
 		}
+		/* 位置软限位的**单向速度门**：越过正限位只放行回转（v<=0），负限位同理。
+		 * CSV 没有位置目标，`p_des` 的钳位管不到它，靠这一条把行程封住；
+		 * CSP 的位置环本来就会被目标钳位拉回来，这里一般不动。
+		 * 用实测位置判方向，并且就地夹住 v_setpoint（= 斜坡状态），
+		 * 这样限位解除时不会从旧的正向设定值突然冲出去。 */
+		controller->v_setpoint = ml_pos_dir_gate(controller->v_setpoint,
+		                                         encoder->angle_multiturn * inv_gr,
+		                                         P_MIN, P_MAX);
+
 		controller->vel_err = controller->v_setpoint - v_meas;
 		controller->i_q_ref = ml_vel_pi(VEL_GAIN, VEL_INTEGRATOR_GAIN,
 		                                controller->i_cmd_max, &controller->vel_integ,

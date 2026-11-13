@@ -18,8 +18,8 @@ ID 由 `tools/endpoint_ids.json` 锁定，固件升级不会改变；`access` �
 | `config.i_cal` | 5 | float | rw | A | 0.0 .. 20.0 | 5.0 | 是 | 标定电流（编码器/R/L/Ld-Lq/磁链共用；测量时限制在 i_max 以内） |
 | `config.theta_min` | 6 | float | rw | rad | — | 0.0 | 是 | 机械角下限 |
 | `config.theta_max` | 7 | float | rw | rad | — | 0.0 | 是 | 机械角上限 |
-| `config.p_max` | 8 | float | rw | rad | ≥ 0.0 | 12.5 | 是 | 位置设定值上限；写入同时更新 p_min = -p_max |
-| `config.p_min` | 9 | float | rw | rad | ≤ 0.0 | -12.5 | 是 | 位置设定值下限（通常由 p_max 联动，也可单独写入以便备份恢复） |
+| `config.p_max` | 8 | float | rw | rad | ≥ 0.0 | 12.5 | 是 | 位置设定值上限（输出轴 rad）；写入同时更新 p_min = -p_max。允许的目标区间：界内是 [p_min, p_max]；实测位置已在界外时放宽到当前位置这一侧（限位 0~10、当前 15 时可以写 12，但写不了 16），见 motion_law.h 的 ml_pos_cmd_range()。p_max 与 p_min 都为 0（P_MAX <= P_MIN）时**不限位**。CSV 与纯力矩（CST，kp=kd=0）下同一组限位还按**实测位置**封住越界方向（越界只允许回转），见 motion_law.h 的 ml_pos_dir_gate()。CSP 切模式时若实测位置已在界外，位置环冻结、不强制回限位，直到主站写入不同的目标（见 motion.c 的 pos_hold） |
+| `config.p_min` | 9 | float | rw | rad | ≤ 0.0 | -12.5 | 是 | 位置设定值下限（通常由 p_max 联动，也可单独写入以便备份恢复）。与 p_max 一起构成 [p_min, p_max]；两者配反（只可能是都为 0）时软限位不生效 |
 | `config.v_max` | 10 | float | rw | rad/s | ≥ 0.0 | 65.0 | 是 | 速度设定值上限；写入同时更新 v_min = -v_max |
 | `config.v_min` | 11 | float | rw | rad/s | ≤ 0.0 | -65.0 | 是 | 速度设定值下限（通常由 v_max 联动，也可单独写入以便备份恢复） |
 | `config.kp_max` | 12 | float | rw |  | ≥ 0.0 | 500.0 | 是 | 位置增益上限 |
@@ -100,7 +100,7 @@ ID 由 `tools/endpoint_ids.json` 锁定，固件升级不会改变；`access` �
 | 名称 | ID | 类型 | 访问 | 单位 | 范围 | 默认 | 持久化 | 说明 |
 |---|---|---|---|---|---|---|---|---|
 | `command.t_ff` | 128 | float | rw | N-m | 运行期：`-I_MAX*KT*GR` .. `I_MAX*KT*GR` | — | 否 | 前馈转矩（输出轴 N·m）；写入会刷新命令租约，进入 MOTOR_MODE 时清零 |
-| `command.p_des` | 129 | float | rw | rad | 运行期：`P_MIN` .. `P_MAX` | — | 否 | 位置设定值（输出轴 rad）；范围由 config.p_max 决定，进入 MOTOR_MODE 时清零 |
+| `command.p_des` | 129 | float | rw | rad | 运行期：`pos_cmd_lo()` .. `pos_cmd_hi()` | — | 否 | 位置设定值（输出轴 rad）。范围：界内钳到 config.p_min/config.p_max；已在界外时放宽到当前实测位置这一侧（例：限位 0..10、当前 15，可写 12 让它往回收，但写不了 16），规则见 motion_law.h 的 ml_pos_cmd_range()。进入 MOTOR_MODE 时清零 |
 | `command.v_des` | 130 | float | rw | rad/s | -200.0 .. 200.0 | — | 否 | 速度设定值（输出轴 rad/s），进入 MOTOR_MODE 时清零。运行期限幅：config.enable_vel_limit=true 时压到 ±config.v_max，false 时只受 ±200 rad/s 的物理范围约束 |
 | `command.kp` | 131 | float | rw |  | 运行期：0.0 .. `KP_MAX` | — | 否 | 位置增益；上限由 config.kp_max 决定，进入 MOTOR_MODE 时清零 |
 | `command.kd` | 132 | float | rw |  | 运行期：0.0 .. `KD_MAX` | — | 否 | 速度增益；上限由 config.kd_max 决定，进入 MOTOR_MODE 时清零 |

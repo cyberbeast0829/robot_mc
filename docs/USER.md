@@ -169,6 +169,13 @@ python tools/mc_ep.py --port COM7 call action.reset_config  # 恢复出厂默认
 ⚠ 纯力矩没有速度环：**空载会一直加速**。必须接负载/测功机，并随时准备
 `action.idle_mode` 或断电。
 
+⚠ 纯力矩也受**位置软限位**约束：实测位置越过 `config.p_max`/`p_min` 之后，固件只
+放行**回转方向**的力矩（越界方向的 `i_q_des` 每拍被压成 0，`command.t_ff` 本身不变，
+`telemetry.i_q_des` 看到的是被闸后的值）。所以：持续给同方向力矩**推不动**它继续往外
+（该方向力矩为 0，负载/重力会把它带回界内，纯力矩没有速度环、不会主动"顶住"边界），
+给反方向就正常转回来。MIT（`kp > 0`）不受影响：它的 `p_des` 已被钳在限位内，弹簧本身
+就给反向力矩。`set config.p_max 0` 可关闭软限位（见“CSV”一节）。
+
 ```bash
 python tools/torque_test.py --port COM7 --torques 0,2,4,6 --dwell 5
 ```
@@ -266,9 +273,13 @@ python tools/mc_ep.py --port COM7 call action.idle_mode
 2. **CSP 要先把 `p_des` 写成当前位置，再切模式**。先 `set command.mode 2` 的话，
    `p_des` 还是 0（或上一次的值），位置环会立刻按 `pos_gain·err` 冲过去。
 3. **`p_des` 受 `config.p_max`（默认 ±12.5 rad）钳位**，超范围不是拒绝而是**钳到边界**，
-   目标可能落在关节另一侧。`telemetry.position` 是绝对多圈位置（跑过之后可能远大于
+   目标可能落在关节另一侧。**已经在限位外时**放宽：可以给一个仍在界外、但朝界内的
+   目标（限位 0~10、当前 15 → 写 12 会让它先退到 12；写 16 会被压回 15），但不能命令
+   比当前位置更外的点。`telemetry.position` 是绝对多圈位置（跑过之后可能远大于
    12.5）。要么临时放大 `config.p_max`，要么 `action.zero` **+ `action.reboot`**
    —— 零点只在重启后才生效（`M_ZERO` 在启动时重新对齐多圈计数）。
+   `set config.p_max 0`（会同时把 `p_min` 置 0）等于**关掉软限位**：通信层与位置环
+   都不再钳 `p_des`，只适合调试/行程未知的机构，**别留在整机上**。
 4. **`action.motor_mode` 只能在菜单态调用**，否则返回状态 6；`action.idle_mode`
    回菜单并关栅。`monitor` 会独占串口，Ctrl+C 退出后才能发下一条命令。
 
@@ -289,6 +300,12 @@ python tools/mc_ep.py --port COM6 set config.can_timeout 100
 判读：`velocity_pll` 应跟住 `v_des`；低速时 ±0.2~0.4 rad/s 的抖动是干摩擦 + 齿隙，
 正常。`vel_err` 长期很大 ⇒ `vel_gain` 不够；振荡发散 ⇒ 太大。
 
+⚠ **CSV 也受位置软限位约束**：实测位置越过 `config.p_max`/`p_min` 之后，固件只放行
+**回转方向**的速度（越界方向的那一拍按 0 处理），继续给越界方向的 `v_des` 只会让
+关节顶在边界上；给反方向就能正常转回来。判据是实测位置、没有滞环，
+`telemetry.v_setpoint` 可以看到被闸后的实际设定值（`command.v_des` 仍是主站写的值）。
+`set config.p_max 0` 可关闭（见上一节）。
+
 **CSP**（位置环）：
 
 ```bash
@@ -304,6 +321,22 @@ python tools/mc_ep.py --port COM6 set config.can_timeout 100
 
 判读：`pos_err` 收敛到 0.0x mrad，`position` 最后精确等于 `p_des`
 （台架实测 0.3 rad 阶跃最终 `pos_err ≈ 3e-5 rad`）。
+
+⚠ 切到 CSP 时如果关节**已经在 `config.p_max`/`p_min` 之外**，固件不会自己把它拉回
+限位：位置环冻结、零速保持原地，直到你写入一个**不同的** `command.p_des`，或者关节
+自己回到界内。所以界外恢复的顺序是**先切模式、再写目标**：
+
+```bash
+# 例：限位 0~10 rad，关节当前在 15 rad
+python tools/mc_ep.py --port COM6 set command.mode 2        # 冻结：不动
+python tools/mc_ep.py --port COM6 set command.p_des 12      # 解除冻结，退到 12（仍在界外）
+python tools/mc_ep.py --port COM6 set command.p_des 13      # 无效：被压回 12，无法远离限位
+python tools/mc_ep.py --port COM6 set command.p_des 5       # 继续往界内，正常跟踪
+```
+
+界内则两种顺序都可以（上面的「先给目标再切模式」仍然是最稳的写法）。如果界外时
+`p_des` 本身已经是一个界外的"往回收"目标（比如先写了 12 再切模式），会直接跟踪它、
+不冻结；冻结只针对"目标落在界内、很可能是陈旧值"的情况。
 
 - **增益要按关节整定**：出厂值（`vel_gain 2.158`、`vel_integrator_gain 38.85`、
   `pos_gain 15`、`accel_limit 50`）是本台架（`KT 0.0334`、`J 0.00096`、`GR 9`、
@@ -328,7 +361,8 @@ python tools/mc_ep.py --port COM6 set config.can_timeout 100
 - ⚠ **`command.p_des` 会被 `config.p_max` 钳位，不是拒绝**：反复跑速度测试后
   绝对位置会漂移，一旦漂到 `p_max`（默认 ±12.5 rad）之外，CSP 的每个目标都被钳在
   边界上，看起来像“位置环完全不动”。处理：放大 `config.p_max`，或 `action.zero`
-  **+`action.reboot`**（零点只在重启后生效）。
+  **+`action.reboot`**（零点只在重启后生效）。临时调试可以 `set config.p_max 0`
+  关掉软限位（见上）。
 - 每条命令都刷新“命令租约”（同 `command.*`）：`config.can_timeout` 内没有新命令，
   固件就把命令清零 → **卸力**，不是保持位置。周期同步的主站不会碰到这个问题。
 - 进电机模式、超时、故障都会把 `command.mode` 复位成 0（阻抗）。
@@ -780,7 +814,7 @@ python tools/mc_ep.py --port COM7 call action.enter_dfu_mode
 | `save_status = 3` | flash 写失败 | 看串口打印；`make check` 查容量；重试 |
 | `set` 的值和给的不一样 | 被限幅 | 正常，`set` 打印的是实际值 |
 | 串口终端乱码 | 两个程序抢一个串口 | 关掉多余连接，重新上电 |
-| CSP 命令发了但关节完全不动 | 绝对位置已漂到 `config.p_max` 外，`command.p_des` 被**钳位**在边界（不报错） | 放大 `config.p_max`，或 `action.zero` + `action.reboot` 重新对零 |
+| CSP 命令发了但关节完全不动 | ①目标比当前位置更外（界外只有"朝界内"的目标才生效）；②界外冻结生效中，而 `p_des` 与冻结时相同 | ①给一个朝界内的目标；②换一个 `command.p_des` 值（见 CSP 一节） |
 | CSP 大阶跃过冲很大 | `config.accel_limit` 太小（速度设定值被斜率限制拖慢） | 先放开 `accel_limit`（30~100），再考虑动 `pos_gain` |
 | 高速跑一段时间后突然卸力、`telemetry.fault=2` | `FAULT_OC`：相电流超过 1.5×`config.i_max`（猛加速或高压纹波） | `action.idle_mode` 清故障；降 `accel_limit` 或确认 `i_max` 与电机匹配 |
 | `telemetry.fault=4` | `FAULT_UV`：母线低于 `config.vbus_uv_trip`（只在门极使能时判定） | 查电源/电池与线束压降；不需要就把它设 0 关掉 |
@@ -801,7 +835,9 @@ python tools/mc_ep.py --port COM7 call action.enter_dfu_mode
 让电机停机。
 
 **为什么 `p_min` 可以单独写？** 正常由 `p_max` 联动；单独写是为了备份恢复，
-限幅仍保证它 ≤ 0。
+限幅仍保证它 ≤ 0。两者构成 `[p_min, p_max]`；`p_max` 写成 0 时 `p_min` 也是 0，
+此时 `P_MAX <= P_MIN`，软限位按“不限制”处理（`ml_pos_cmd_range()` 里只有这一个
+判据，不会出现“钳到一个反号边界”）。
 
 **LUT 能导出吗？** 不能，隐藏记录。它随配置页保留；换板/整片擦除要重新标定。
 

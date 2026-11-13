@@ -29,6 +29,8 @@ extern "C" {
 #define I_CAL					__float_reg[18]									// Calibration Current
 #define P_MIN					__float_reg[19]									// Position setpoint lower limit (rad)
 #define P_MAX					__float_reg[20]									// Position setupoint upper bound (rad)
+/* P_MAX/P_MIN 的软限位规则见 foc.c 的 pos_cmd_lo/hi/limit()（通信层写 p_des）
+ * 与 motion_law.h 的 ml_pos_cmd_range()（控制层与 host 测试） */
 #define V_MIN					__float_reg[21]									// Velocity setpoint lower bound (rad/s)
 #define V_MAX					__float_reg[22]									// Velocity setpoint upper bound (rad/s)
 #define KP_MAX					__float_reg[23]									// Max position gain (N-m/rad)
@@ -144,8 +146,6 @@ extern uint8_t vel_limit_en_flag, torque_vel_lim_en_flag;
 extern uint8_t gear_ref_valid_flag;
 extern uint8_t gear_sec_reversed_flag;
 extern uint8_t cogging_en_flag, cogging_valid_flag;
-
-
 
 
 extern float __float_reg[];

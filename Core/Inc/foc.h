@@ -120,6 +120,13 @@ typedef struct{
     int32_t pos_ff_cycle;                                   // loop_count of the previous CSP frame
     float pos_fault_t;                                      // following-error fault debounce timer (s)
 
+    /* ---- 位置软限位的“界外冻结”（见 motion.c 的 motion_seed / CTRL_POSITION 分支）----
+     * 切到 CSP 时如果实测位置已经在 [P_MIN,P_MAX] 外，不去追被钳到边界的 p_des
+     * （那等于强制把关节拉回限位），而是零速保持原地；主站给出新目标
+     * （p_des 变化）或关节自己回到界内后恢复跟踪。 */
+    uint8_t pos_hold;                                       // 1 = 界外冻结中
+    float pos_hold_des;                                     // 冻结时的 p_des 快照（判“新目标”）
+
     /* ---- 输入整形（config.input_mode；见 motion_law.h / motion.c）----
      * POS_FILTER / TRAP_TRAJ 产生 (位置, 速度) 设定给位置环跟踪；
      * TORQUE_RAMP 在阻抗模式下给 t_ff 限斜率。切模式时由 motion_seed() 对齐。 */
@@ -192,6 +199,15 @@ void update_thermistors(ControllerStruct *controller);
 void update_observer(ControllerStruct *controller, ObserverStruct *observer);
 void field_weaken(ControllerStruct *controller);
 void zero_commands(ControllerStruct * controller);
+
+/* 位置指令写入口的允许区间（输出轴 rad），实现见 foc.c：
+ *   界内 -> [P_MIN, P_MAX]；界外 -> 放宽到当前实测位置（可以往界内给任意目标，
+ *   哪怕目标仍在界外，但不能比现在更外）。P_MAX <= P_MIN 时返回 ±FLT_MAX。
+ * 通信层写 controller.p_des 时用它们；控制层每拍用 motion_law.h 的
+ * ml_pos_cmd_clamp() 重算。 */
+float pos_cmd_lo(void);
+float pos_cmd_hi(void);
+float pos_cmd_limit(float p);
 
 
 #endif /* INC_FOC_H_ */

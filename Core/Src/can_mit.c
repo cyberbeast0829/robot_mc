@@ -71,7 +71,9 @@ static void can_mit_rx(const can_frame_t *f)
 
     case CAN_OP_SET_PV:
         if ((dlc == 8) && can_unpack_two_floats(f, &f_a, &f_b)) {
-            controller.p_des = fast_fmaxf(fast_fminf(f_a, P_MAX), P_MIN);
+            /* 软限位规则见 foc.h/foc.c 的 pos_cmd_limit()：界内钳到限位，
+             * 界外放宽到当前位置（只能往界内给目标） */
+            controller.p_des = pos_cmd_limit(f_a);
             controller.v_des = fast_fmaxf(fast_fminf(f_b, V_MAX), V_MIN);
             controller.timeout = 0;
             send_telemetry_reply = 1;
