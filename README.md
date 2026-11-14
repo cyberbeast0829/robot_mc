@@ -48,3 +48,21 @@ python tools/mc_ep.py --port COM7 get config.i_max
 python tools/mc_ep.py --port COM7 set config.i_max 3.5
 python tools/mc_ep.py --port COM7 call action.save
 ```
+
+## 许可证
+
+本项目采用 **MIT License**（见 [LICENSE](LICENSE)）。原始版权归 Ben Katz（mini-cheetah
+`motorcontrol`，2020）；本仓库的 N32H473CE 移植与后续修改版权归 CyberBeast（北京守护兽科技有限公司）。
+
+MIT 条款只要求一件事：分发本软件或其派生作品时，**必须保留原始版权声明和许可全文**。
+因此 `LICENSE` 中同时保留原作者与本公司的版权行；在此前提下可以自由修改、再许可
+（sub-license）或闭源分发。
+
+以下第三方组件沿用其各自的原始许可，**不要**改动这些文件的版权头：
+
+| 组件 | 位置 | 许可 |
+| --- | --- | --- |
+| Nations N32H47x 标准外设库 / USBFSD | `Drivers/`、`Core/Src/usb*.c` | Nations Technologies Inc. 版权声明（见各文件头） |
+| STM32CubeMX 生成的外设初始化 | `Core/Src/{adc,tim,usart,gpio,spi}.c` 等 | BSD 3-Clause（STMicroelectronics） |
+| CMSIS | `Drivers/CMSIS/` | Apache-2.0（ARM） |
+| 移植自 ODrive 的算法（`motion_law`、`dual_gear`、`cogging_law`、标定、梯形规划等） | `Core/Inc`、`Core/Src` | MIT（ODrive Robotics） |
