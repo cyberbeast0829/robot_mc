@@ -719,24 +719,26 @@ CAN 把新的 app 镜像写进去。本固件**没有** USB/串口升级通道�
 # 1) 让设备进 bootloader（门极关闭；串口菜单按 'b' 也行）
 python tools/mc_ep.py --port COM7 call action.enter_bootloader_mode
 
-# 2) 用 CAN 工具升级（OpenBootloader 仓库的 tools/blcan.py，
-#    python-can，支持 CANable(slcan) / PCAN；bootloader 固定 500 kbit/s、Classic 帧）
-blcan.py --bitrate 500000 sync
-blcan.py --bitrate 500000 upgrade --firmware build/mit_h473.bin \
-         --erase auto --addr 0x08008000 --chunk-size 256 --verify --go-addr 0x08008000
+# 2) 用本仓库自带的 CAN 工具升级（tools/blcan.py，需要 pip install python-can pyserial；
+#    bootloader 固定 500 kbit/s、Classic 帧，支持 CANable(slcan) / PCAN）
+python tools/blcan.py --channel COM7 sync
+python tools/blcan.py --channel COM7 upgrade --firmware build/mit_h473.bin \
+        --erase auto --addr 0x08008000 --chunk-size 256 --verify --go-addr 0x08008000
 ```
 
+- 工具的完整用法、诊断命令和故障排查见 [`tools/blcan_使用说明.md`](../tools/blcan_使用说明.md)；
+  协议契约（握手 ID、IWDG 喂狗、擦除范围）见 `docs/DEV.md`。
 - **进 bootloader 后不会再自动跳回 App**（要断电或 `go` 才离开），可以从容升级。
 - `--erase auto` 只擦镜像覆盖的页；**绝对不要用 `--erase mass`**——那会把 bootloader
   和两页配置一起擦掉，之后只能用 J-Link 重烧 bootloader。
 - `build/mit_h473.bin` 是从 `0x08008000` 开始的原样镜像，所以 `--addr`/`--go-addr`
-  必须是 `0x08008000`。
+  必须是 `0x08008000`（Keil 构建直接用 `Keil/Objects/mit_h473.hex` 时可省 `--addr`）。
 - 上电时不发 SYNC 的话，bootloader 等 200 ms 就跳回 App，正常使用感觉不到它的存在。
 - 升级完核对 `system.fw_version_*` 与 `system.prefs_loaded`，并确认 `config.*` 还在
   （见上一节）。
 - **变砖恢复**：app 区写坏也能救——bootloader 在 `0x08000000`，OTA/擦 app 都不会碰它。
-  让 CAN 工具持续发 `SYNC`（循环跑 `blcan.py sync`，或让主站一直发 ID `0x128`
-  data `0x7F`），再给板子上电，200 ms 窗口内握手成功就停在 bootloader 里。
+  让 CAN 工具持续发 `SYNC`（循环跑 `python tools/blcan.py sync`，或让主站一直发
+  ID `0x128` data `0x7F`），再给板子上电，200 ms 窗口内握手成功就停在 bootloader 里。
 
 ### 进 DFU 引导程序（整片烧写）
 

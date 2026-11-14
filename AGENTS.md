@@ -23,6 +23,8 @@ bootloader owns `0x08000000..0x08007FFF`, waits 200 ms for a CAN `SYNC` (`0x128`
 `BOOTLOADER_MAGIC_VALUE` (`0xB00710AD`) into `_reboot_cookie` (NO_INIT at `0x20023FF0`,
 the address the bootloader polls) and resets — `action.enter_bootloader_mode` / menu `b`.
 Bootloader and app must both keep the IWDG fed (see "配置持久化" below).
+OTA flashing is done with the in-repo `tools/blcan.py` (usage:
+`tools/blcan_使用说明.md`; protocol/contract: `docs/DEV.md`).
 
 `CLAUDE.md` (repo root) is inherited from the STM32F446 upstream and is the best
 description of the **control architecture** (FSM, FOC, flash config, watchdog, CAN).
@@ -70,7 +72,9 @@ Two equivalent builds produce the same firmware:
   (`tools/cb_bench.py` drives the CYBERBEAST platform over slcan: `--stage-a/-b/-c/-c-static/-d`,
   `--reset-test`, `--timeout-test`; `tools/csv_csp_test.py` drives the velocity/position
   loops over USB: `plain|csv|csp|timeout|sweep`; `tools/gear_test.py` verifies the dual-gear
-  absolute position over USB CDC: `check|verify|powercycle|capture|zero|ratio`).
+  absolute position over USB CDC: `check|verify|powercycle|capture|zero|ratio`;
+  `tools/blcan.py` drives the OpenBootloader over CAN for OTA: `sync|version|id|read|write|
+  erase|go|upgrade` — usage in `tools/blcan_使用说明.md`).
 - ⚠ **Flashing this board is unreliable at high SWD clocks** (bench, 2026-10-30): reads and
   programming silently corrupt at 5 MHz (Keil default) and even 1 MHz, J-Link's own
   `Verify` fails at random addresses, and the device then keeps running the **old image** —

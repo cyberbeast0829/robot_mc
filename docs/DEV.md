@@ -1438,19 +1438,33 @@ bootloader 契约（bootloader 是独立仓库 OpenBootloader 的固件，App �
   `Core/Inc/main.h`，两边字面量必须一致。
 - **上电时的普通流程**：bootloader 等 200 ms 看有没有 CAN `SYNC`（ID `0x128`，
   data `0x7F`），没有就跳到 `0x08008000`。所以正常上电只多 200 ms。
-- **升级工具**：OpenBootloader 仓库的 `tools/blcan.py`（python-can，CANable/slcan 或 PCAN）：
+- **升级工具**：本仓库自带的 `tools/blcan.py`（python-can；`pip install python-can pyserial`，
+  默认 slcan/CANable，也支持 `--interface pcan`；默认 MCU profile 就是 `n32h473`）：
 
   ```
-  blcan.py --bitrate 500000 sync
-  blcan.py upgrade --firmware build/mit_h473.bin --erase auto \
-           --addr 0x08008000 --chunk-size 256 --verify --go-addr 0x08008000
+  python tools/blcan.py --channel COM7 sync
+  python tools/blcan.py --channel COM7 upgrade --firmware build/mit_h473.bin --erase auto \
+          --addr 0x08008000 --chunk-size 256 --verify --go-addr 0x08008000
   ```
 
   `--erase auto` 只擦镜像覆盖的页（从 app 页开始），**不要**用 `--erase mass`。
   `build/mit_h473.bin` 是从 `0x08008000` 开始的原样镜像（`objcopy -O binary`），
-  所以 `--addr` 必须是 `0x08008000`。`--go-addr` 让 bootloader 直接跳转、不再复位。
+  所以 `--addr` 必须是 `0x08008000`（`.hex` 自带地址，可省）；`--go-addr` 让
+  bootloader 直接跳转、不再复位。用法与故障排查见
+  [`tools/blcan_使用说明.md`](../tools/blcan_使用说明.md)。
 - **本地烧写**：`tools/flash_jlink.py` 默认把镜像写到 `0x08008000`；烧 bootloader 用
   `--base 0x08000000`。`--erase`（整片）会连 bootloader 一起擦掉。
+
+⚠ **刷完 App 先做一次"描述符自检"确认 flash 内容可信**（2026-11-14 台架）：用
+J-Link/Keil 的默认 5 MHz 下载 App 后，芯片上的镜像可能是坏的——表现是
+`python tools/mc_ep.py --usb get <任意参数>` 报 **"描述符 CRC 校验失败"**（设备声明的
+CRC 与读回的 JSON 对不上；实测 20491 字节里 528 字节错乱，因为设备上残留了上一版镜像
+的字节）。此时 App 看起来还在跑，但所有参数/遥测访问都失败。用
+`tools/blcan.py upgrade --verify` 走 OTA 重刷后逐字节一致。所以**刷完先跑一句
+`mc_ep.py --usb get system.prefs_loaded`：能返回就说明描述符自检通过**。
+bootloader 自己也可以用同一条 CAN 通路回读校验：`blcan.py read` 逐块读
+`0x08000000` 起的 10~11 KB，和 `Keil/Objects/LION_H473_Bootloader.hex`（或
+`MDK-ARM/N32H473/` 下的产物）解析出的镜像比 md5。
 
 ⚠ **装了 OpenBootloader 之后 `action.enter_dfu_mode`（ROM ISP / DFU）进不去**
 （2026-11-13 台架，两次复现）。App 侧临时打点（已删除）测到的完整事实链：
@@ -1744,8 +1758,8 @@ python tools/flash_jlink.py --bin build/motorcontrol.bin   # GNU 构建产物也
 | 23 | `set config.vel_loop_prescaler 1` / `pos_loop_prescaler 1` | `timing.overrun` 仍为 0，`timing.period_max` < 0.6×`isr_period` |
 | 24 | `call action.enter_dfu_mode`（门极关闭） | 应答先返回（`EP_OK`）、串口打印 `Entering ROM DFU bootloader`；~0.5 s 后复位。⚠ **装了 bootloader 后这条目前过不了**：设备约 0.4 s 后自己从 `0x08000000` 回来（ROM ISP 起来后被上电复位弹回，见上文），DFU 设备不会出现 |
 | 25 | 门极使能时 `call action.enter_dfu_mode` | `status 6`（`EP_ERR_STATE`），不复位、门极保持 |
-| 25a | `call action.enter_bootloader_mode`（门极关闭），CAN 侧接 `blcan.py sync` | 应答先返回（`EP_OK`）、串口打印 `Entering bootloader`；~0.5 s 后复位，`blcan.py sync` 拿到 ACK 且**超过 30 s 不自动跳回 App**（IWDG 被喂住） |
-| 25b | bootloader 里 `blcan.py upgrade --erase auto --addr 0x08008000 --verify --go-addr 0x08008000` | 升级完成、App 正常启动；`system.prefs_loaded = true`、`prefs_sequence` 不变、`config.gr`/`m_zero`/标定 LUT 都在（OTA 闭环） |
+| 25a | `call action.enter_bootloader_mode`（门极关闭），CAN 侧接 `python tools/blcan.py sync` | 应答先返回（`EP_OK`）、串口打印 `Entering bootloader`；~0.5 s 后复位，`blcan.py sync` 拿到 ACK（**ACK 落在 ID `0x128`**，再 `sync` 一次也应该是 ACK 而不是 NACK）且**超过 30 s 不自动跳回 App**（IWDG 被喂住） |
+| 25b | bootloader 里 `python tools/blcan.py upgrade --erase auto --addr 0x08008000 --verify --go-addr 0x08008000` | 升级完成、App 正常启动；`system.prefs_loaded = true`、`prefs_sequence` 不变、`config.gr`/`m_zero`/标定 LUT 都在，且 `mc_ep.py` 能下完整描述符（描述符 CRC 自检通过 = flash 内容与镜像一致） |
 | 25c | 门极使能时 `call action.enter_bootloader_mode` | `status 6`；不复位、门极保持 |
 | 25d | 串口菜单按 `b` | 同 25a（`b` 是 `BOOTLOADER_CMD`，不是设置前缀） |
 | 26 | `set config.pre_calibrated 0` 后 `call action.motor_mode` | `status 6`；串口按 `m` 打印 `Motor mode refused`；CYBERBEAST `START_MOTOR` 后状态仍是 IDLE |
@@ -1776,7 +1790,7 @@ python tools/flash_jlink.py --bin build/motorcontrol.bin   # GNU 构建产物也
 - [ ] `make hosttest` + 台架清单通过（含 USB 复合设备的 CDC/vendor 两条传输）；
 - [ ] 改了齿槽补偿/外环：`action.cogging_calibrate` 跑通，`system.cogging_amp` /
       `cogging_mismatch` 在合理范围，"设参数 + 标定 → OTA → 读回"闭环仍然保留表；
-- [ ] bootloader 擦除范围已确认（`blcan.py --erase auto`，**不是** mass），OTA 闭环验证
+- [ ] bootloader 擦除范围已确认（`tools/blcan.py ... --erase auto`，**不是** mass），OTA 闭环验证
       通过（参数/零点/LUT 保留）；bootloader 侧 `OPENBL_IWDG_Refresh()` 仍然是喂狗的
       （否则从 App 进入后 4 s 就会被 IWDG 复位）；
 - [ ] [README](README.md) 的版本矩阵已更新；客户可见的接口变化写进发布说明。

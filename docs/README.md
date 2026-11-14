@@ -9,7 +9,9 @@ N32H473CE 三相 FOC 固件。只有三份要读的文档，按"你是谁"选一
 | [parameters.md](parameters.md) | 所有人 | 参数手册（由 `params.json` 自动生成，勿手改） |
 
 构建命令、仓库结构见根目录 [README.md](../README.md)；给 AI 的短契约见
-[AGENTS.md](../AGENTS.md)。
+[AGENTS.md](../AGENTS.md)。刷机工具的使用说明在
+[`tools/blcan_使用说明.md`](../tools/blcan_使用说明.md)（放在 `tools/` 里，不占用
+`docs/` 的三份文档）。
 
 ## 版本
 
@@ -42,6 +44,23 @@ python tools/mc_ep.py --usb tree
 
 改完参数要 `action.save` 才写 flash；门极使能时保存会被拒绝（先
 `call action.idle_mode`）。细节见 [USER.md](USER.md)。
+
+## 升级固件（CAN OTA）
+
+板子上跑的是"OpenBootloader（`0x08000000`，32 KB）+ App（`0x08008000`）"。升级用本仓库
+自带的 CAN 工具 [`tools/blcan.py`](../tools/blcan.py)（`pip install python-can pyserial`，
+CANable/PCAN 都行；bootloader 固定 500 kbit/s Classic，和 App 的 CAN 配置无关）：
+
+```bash
+python tools/mc_ep.py --usb call action.enter_bootloader_mode    # 或串口菜单按 b
+python tools/blcan.py --channel COM7 sync
+python tools/blcan.py --channel COM7 upgrade --firmware build/mit_h473.bin \
+        --erase auto --addr 0x08008000 --chunk-size 256 --verify --go-addr 0x08008000
+```
+
+只要不用 `--erase mass`，配置、零点、标定 LUT 全部保留。工具用法/诊断命令/变砖恢复见
+[`tools/blcan_使用说明.md`](../tools/blcan_使用说明.md)，Flash 分区与升级契约见
+[DEV.md](DEV.md)，面向使用者的步骤见 [USER.md](USER.md) 第 7 节。
 
 ## 一页纸数据流
 
