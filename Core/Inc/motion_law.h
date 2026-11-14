@@ -101,6 +101,73 @@ static inline float ml_trap_vel(float cfg, float loop_lim)
 	return (cfg < loop_lim) ? cfg : loop_lim;
 }
 
+/* 位置指令的允许区间（输出轴 rad）：
+ *   界内      -> [p_min, p_max]
+ *   已在界外  -> 放宽到"当前实测位置"这一侧，即允许给一个**仍在界外、但朝界内**
+ *                方向的目标（例：限位 0..10、当前 15，可以命令 12），但目标不能
+ *                比当前位置更外（当前 12 时不能再命令 13）。
+ * p_max <= p_min（软限位关闭）时返回 ±FLT_MAX，调用方原样通过。
+ *
+ * 通信层写 p_des 时用同一套界（foc.c 的 pos_cmd_lo/hi/limit）；控制层每拍用
+ * ml_pos_cmd_clamp() 重算 —— 位置在动，写入口那一刻的界可能已经变了。 */
+static inline void ml_pos_cmd_range(float p_meas, float p_min, float p_max,
+                                    float *lo, float *hi)
+{
+	*lo = -3.40282347e+38f;
+	*hi =  3.40282347e+38f;
+	if (!(p_max > p_min)) { return; }
+	*lo = p_min;
+	*hi = p_max;
+	if (p_meas > p_max) { *hi = p_meas; }			// 正限位外：目标不得比现在更外
+	else if (p_meas < p_min) { *lo = p_meas; }		// 负限位外同理
+}
+
+static inline float ml_pos_cmd_clamp(float p, float p_meas, float p_min, float p_max)
+{
+	float lo, hi;
+	ml_pos_cmd_range(p_meas, p_min, p_max, &lo, &hi);
+	if (p < lo) { return lo; }
+	if (p > hi) { return hi; }
+	return p;
+}
+
+/* 实测位置是否已经在软限位之外。p_max <= p_min 表示软限位关闭（与
+ * ml_pos_cmd_range() 同一判据），永远返回 0。切到 CSP 时用它决定要不要
+ * 冻结位置参考（界外冻结 -> 不强制回限位，见 motion.c 的 pos_hold）。 */
+static inline int ml_pos_outside(float p, float p_min, float p_max)
+{
+	if (!(p_max > p_min)) { return 0; }
+	return (p > p_max) || (p < p_min);
+}
+
+/* 位置软限位的**单向门**：已经越过限位时只放行"往回收"的方向，不允许继续
+ * 往外推；界内原样通过（两个方向都不限制）。
+ *
+ * 它作用在"正号 = 使位置增大"的任何指令上，所以速度环喂 `v_setpoint`
+ * （rad/s）、阻抗/力矩环喂 `i_q_des`（A）都是同一个函数 —— 两处只用各自的
+ * 单位，判据完全一样。用**实测位置**判方向（不是设定值），只丢越界方向的那
+ * 一拍，指令本身（`v_des` / `t_ff`）不动：主站随时可以命令回转，回转方向
+ * 永远放行。
+ *
+ * 为什么 CSV / 纯力矩需要它：CSV 没有位置目标，`p_des` 的钳位管不到速度指令；
+ * 纯力矩（CST，kp = kd = 0）同样只看 `t_ff`，一个持续的值会把关节一路推出
+ * `config.p_min/p_max`。MIT 有 kp，`p_des` 被钳在限位内，正常工作时这道门
+ * 不动作（越过限位时弹簧本来就给反向力矩）。
+ *
+ * 判据与 ml_pos_cmd_range() 一致：p_max <= p_min 表示软限位
+ * 关闭，原样通过。NaN 位置同样原样通过（交给下游的 NaN 保护）。 */
+static inline float ml_pos_dir_gate(float cmd, float p_meas, float p_min, float p_max)
+{
+	if (!(p_max > p_min)) { return cmd; }		// 软限位关闭
+	if (p_meas >= p_max) {						// 已到/越过正限位：只许回转（cmd <= 0）
+		return (cmd > 0.0f) ? 0.0f : cmd;
+	}
+	if (p_meas <= p_min) {						// 已到/越过负限位：只许回转（cmd >= 0）
+		return (cmd < 0.0f) ? 0.0f : cmd;
+	}
+	return cmd;
+}
+
 /* 速度 PI：i_q = clamp(vel_gain*err + integ)。
  * 抗饱和用 ODrive 的做法：输出被限幅的那一拍积分器按 ML_INT_DECAY 衰减而不是
  * 继续累积，未限幅才正常积分。任何 NaN 输入都退化为 0 —— 绝不让 NaN 走进电流环。 */

@@ -413,6 +413,69 @@ PM 59°，再高就是在跟 2 拍延迟赛跑）。离散闭环的阶跃响应�
 纯数学部分在 `Core/Inc/motion_law.h`（零固件依赖），host 测试
 `tools/test_motion_law.c` 直接包含它，见“测试”一节。
 
+### 位置软限位（允许区间 + 方向闸 + CSP 界外冻结）
+
+`config.p_min`/`p_max` 是**设定值**的软限位，但允许的目标区间不是固定的
+`[P_MIN,P_MAX]`，而是"界内 + 一条通向当前位置的走廊"：
+
+| 实测位置 | 允许的目标区间 | 例子（限位 0..10） |
+|---|---|---|
+| 界内 | `[P_MIN, P_MAX]` | 当前 5 → 只能给 0..10 |
+| 正限位外 | `[P_MIN, p_meas]` | 当前 15 → 可以给 12（仍在界外但朝界内），不能给 16；退到 12 之后就只能给 ≤12 |
+| 负限位外 | `[p_meas, P_MAX]` | 当前 −5 → 可以给 −2，不能给 −6 |
+
+判据在纯函数 `ml_pos_cmd_range()` / `ml_pos_cmd_clamp()`（`motion_law.h`，host 可测），
+两个使用点：
+
+- **通信层**（写 `p_des` 时）：旧协议 `SET_PV`、CYBERBEAST CSP、endpoint `command.p_des`
+  都走 `foc.c` 的 `pos_cmd_limit()`（endpoint 生成代码的 min/max 用 `pos_cmd_lo()` /
+  `pos_cmd_hi()`），所以 `command.p_des` 存的就是**这一刻可达到**的目标；
+- **控制层**：CSP 每拍用 `ml_pos_cmd_clamp()` 重算 —— 位置在动，写入口那一刻的界
+  可能已经变了，这也正是"退到 12 之后再写 13 不会往外走"的原因。
+
+`P_MAX <= P_MIN`（实际只有 `p_max = 0`，因为 endpoint 与 `config_apply_limits()` 保证
+`P_MAX >= 0 >= P_MIN`）时区间是 ±FLT_MAX，**完全不限制**。
+
+CSP 有位置目标，钳 `p_des` 就够了；CSV 和纯力矩没有位置目标，`p_des` 钳不到它们，
+所以另外有一道**方向闸** `ml_pos_dir_gate()`（`motion_law.h`，host 可测）。它作用在
+"正号 = 使位置增大"的任何指令上，两个调用点只是单位不同：
+
+| 控制律 | 闸的对象 | 位置 | 说明 |
+|---|---|---|---|
+| CSV / CSP | `v_setpoint`（rad/s） | 斜坡之后、速度 PI 之前，**就地写回** | 它同时是斜率限制器的状态，不回写的话限位解除时会从旧的正向设定值突然冲出去 |
+| 阻抗 / MIT / TORQUE / CURRENT | `i_q_des`（A，电机端） | `torque_control()` 之后、镜像到 `i_q_ref` 之前 | 覆盖 **CST 纯力矩**（`kp = kd = 0`，0x03/0x04/`command.t_ff`）；MIT 有 kp，`p_des` 已被钳在限位内，通常不触发 |
+
+判据：
+
+- 用**实测位置**（`encoder.angle_multiturn × 1/GR`，输出轴），不是设定值；
+- `p_meas >= p_max` 时只放行负方向（回转），`p_meas <= p_min` 时只放行正方向 ——
+  即**允许回转、不允许继续超限**；界内两个方向都原样通过；
+- 无滞环：停在边界上时越界方向每拍压成 0，回转立刻放行；
+- 指令本身（`v_des` / `t_ff`）**不改**，只丢越界方向的那一拍。
+
+**CSP 的界外冻结**（`controller.pos_hold`）：切到 `CTRL_POSITION` 时如果实测位置已经
+在 `[P_MIN,P_MAX]` 外，`p_des` 很可能是个陈旧值（进电机模式时被 `zero_commands()` 清成
+0，或上一次的目标在另一侧），追它就等于"强制把关节拉回界内"（表现为一进 CSP 就自己往
+回冲）。所以 `motion_seed()` 在切换那一拍置 `pos_hold`，位置环改为：
+
+- 不追 `p_des`、不跑输入整形，`v_target = 0` —— 零速保持原地，两个方向都不主动驱动；
+- 不参与 `FAULT_POS`（冻结不是跟随失败）；
+- 解除条件二选一：主站写入**不同**的 `p_des`（与冻结快照 `pos_hold_des` 比较），或
+  关节自己回到界内。解除时清掉轨迹/滤波状态，从当前位置重新起步；
+- `zero_commands()` 一并清 `pos_hold`（超时/离开电机模式后不会带着旧冻结回来）。
+
+⚠ 触发冻结有个例外：切换时 `p_des` **本身也在界外**（例如当前 15、目标 12）——这只可能
+是在界外时写下的"往回收"目标，属于明确指令，直接跟踪、不冻结。所以界外两种顺序都能用：
+先写 12 再切模式 = 直接退到 12；先切模式（冻结）再写 12 = 同样退到 12。
+
+⚠ 冻结的解除靠"目标变化"：界外**同一个值重复写不算新目标**（比较的是快照值）。主站持续
+发流式 CSP 帧时，切换后第一帧不同目标就会解除冻结 —— 那是主站自己下的命令。
+
+⚠ 闸只改本拍采用的指令：`telemetry.v_setpoint` / `telemetry.i_q_des` 才是被闸过的
+值（`command.v_des` / `command.t_ff` 仍是主站写的）。限位关闭（`p_max = 0`）时闸
+也不生效。`cogging_apply()` 在闸之后叠加前馈（默认关闭、幅值受 `config.cogging_max`
+限制），弱磁只会减小 `|i_q|`，两者都不会把越界方向的力矩重新放大。
+
 ### 为什么这样不损失电流环带宽
 
 - 外环**只产生 `i_q_des` 这个参考**。`commutate()` 的增益、采样相位、`svm()`
@@ -462,7 +525,7 @@ PM 59°，再高就是在跟 2 拍延迟赛跑）。离散闭环的阶跃响应�
 
 | 帧字段 | 线上单位 | 环内 |
 |---|---|---|
-| CSP 目标位置 | deg（输出端） | `× π/180` → `p_des`，再钳到 `[P_MIN,P_MAX]` |
+| CSP 目标位置 | deg（输出端） | `× π/180` → `p_des`，再经 `pos_cmd_limit()` 钳到允许区间（界内 `[P_MIN,P_MAX]`，界外放宽到当前位置，见上一节） |
 | CSP `vel_limit` | RPM（输出端） | `× 2π/60` → `controller.v_limit`；0/NaN 退回 `V_MAX` |
 | CSP/CSV `cur_limit` | A（**电机端**） | → `controller.i_cmd_max`，钳到 `[0, I_MAX]` |
 | CSV 目标速度 | RPM（输出端） | `× 2π/60` → `v_des`，再钳到 `[V_MIN,V_MAX]` |
@@ -782,7 +845,8 @@ ISR 内，不 printf、不写 flash：
 ⇒ 新板/新电机的结论与旧板一致（`tune_margin ≈ 2.2`、`ω_i ≈ 18 rad/s`），
 但 `pos_gain` 的甜点从 `ω_c/20` 下移到 **`ω_c/30`**（两块板上 22.5 都会过冲）。
 ⚠ 两个坑：① `config.p_max`（默认 ±12.5 rad）会把 `p_des` **钳位而不是拒绝**，
-反复跑 CSV 后位置会漂到边界，之后 CSP 看起来"完全不动"；② `accel_limit` 200
+反复跑 CSV 后位置会漂到边界，之后 CSP 看起来"完全不动"（`set config.p_max 0`
+可临时关掉这个软限位，见 `motion_law.h` 的 `ml_pos_cmd_range()`）；② `accel_limit` 200
 做 0→65 rad/s 的猛冲会偶发 `FAULT_OC` 锁存（`accel_limit 100` 正常），
 而 `i_max` 已按新电机降到 3 A（OC 门限 = 1.5×`i_max` = 4.5 A）。
 

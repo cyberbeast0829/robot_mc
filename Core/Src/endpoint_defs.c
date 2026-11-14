@@ -1047,7 +1047,7 @@ ep_status_t endpoint_handler(uint16_t id, ep_op_t op, ep_cbuf_t *in, ep_buf_t *o
 				float v;
 				if(!ep_get_f32(in, &v)){return EP_ERR_BAD_LEN;}
 				if(!isfinite(v)){return EP_ERR_BAD_VALUE;}
-				v = ep_clampf(v, P_MIN, P_MAX);
+				v = ep_clampf(v, pos_cmd_lo(), pos_cmd_hi());
 				controller.p_des = v; controller.timeout = 0;
 			}
 			if(in->begin != in->end){return EP_ERR_BAD_LEN;}

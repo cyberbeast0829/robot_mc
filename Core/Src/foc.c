@@ -17,6 +17,8 @@
 #include <math.h>
 
 extern uint16_t adc_measurements_[3];
+/* 位置指令的允许区间要读实测位置（见文件末尾的 pos_cmd_*） */
+extern EncoderStruct comm_encoder;
 
 void set_dtc(ControllerStruct *controller){
 
@@ -683,6 +685,10 @@ void zero_commands(ControllerStruct * controller){
 	controller->pos_trap.t = 0;
 	controller->pos_filter.seeded = 0;
 	controller->t_ff_slew = 0;
+	/* 位置软限位的“界外冻结”状态同样丢弃：下次切到 CSP 时按当时的实测位置
+	 * 重新判断（见 motion_seed） */
+	controller->pos_hold = 0;
+	controller->pos_hold_des = 0;
 
 	/* 正在跑的惯量标定必须中止：离开 MOTOR_MODE 后 motion_control() 不再被调用，
 	 * 状态会停在半路，下次进电机模式时从半个台阶"续跑"，测出来的 J 是错的 */
@@ -699,4 +705,43 @@ void zero_commands(ControllerStruct * controller){
 	 * （齿槽标定会清空自己的结果，见 cogging_abort） */
 	cogging_abort(controller);
 	controller->cog_ff = 0;
+}
+
+/* ---- 位置指令的允许区间（通信层写 p_des 用）----------------------------
+ * 判据在纯函数 ml_pos_cmd_range()（motion_law.h，host 可测），这里只把当前
+ * 实测位置换算成输出轴角度。
+ *
+ * 界内：钳 [P_MIN, P_MAX]；界外：放宽到当前实测位置这一侧 —— 限位 0..10、
+ * 当前位置 15 时，目标 12 是合法的"往界内"指令，不能被钳成 10；而比 15 更外
+ * 的目标要挡掉。控制层每拍还会用 ml_pos_cmd_clamp() 再算一次，因为位置在动，
+ * 写入口那一刻的界可能已经变了。 */
+static void pos_cmd_range(float *lo, float *hi)
+{
+	float gr = GR;
+	float p = comm_encoder.angle_multiturn / ((gr > 0.0f) ? gr : 1.0f);
+
+	ml_pos_cmd_range(p, P_MIN, P_MAX, lo, hi);
+}
+
+float pos_cmd_lo(void)
+{
+	float lo, hi;
+	pos_cmd_range(&lo, &hi);
+	return lo;
+}
+
+float pos_cmd_hi(void)
+{
+	float lo, hi;
+	pos_cmd_range(&lo, &hi);
+	return hi;
+}
+
+float pos_cmd_limit(float p)
+{
+	float lo, hi;
+	pos_cmd_range(&lo, &hi);
+	if (p < lo) { return lo; }
+	if (p > hi) { return hi; }
+	return p;
 }

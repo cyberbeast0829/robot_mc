@@ -391,8 +391,10 @@ static void cb_pos_control(const can_frame_t *f)
     }
     if (pos_deg != pos_deg) { return; }
 
+    /* 软限位规则见 foc.h/foc.c 的 pos_cmd_limit()：界内钳到限位，
+     * 界外放宽到当前位置（只能往界内给目标） */
     float p_des = pos_deg * (PI_F / 180.0f);
-    controller.p_des = fast_fmaxf(fast_fminf(p_des, P_MAX), P_MIN);
+    controller.p_des = pos_cmd_limit(p_des);
     controller.v_limit = cb_vel_limit(vel_rpm);
     controller.i_cmd_max = cb_cur_limit(cur_a);
     controller.ctrl_mode = CTRL_POSITION;
