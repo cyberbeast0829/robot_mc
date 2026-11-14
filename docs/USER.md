@@ -151,7 +151,7 @@ python tools/mc_ep.py --port COM7 call action.reset_config  # 恢复出厂默认
 
 | 名称 | 含义 |
 |---|---|
-| `command.t_ff` | 前馈力矩（输出轴 N·m），固件限幅到 ±`I_MAX*KT*GR` |
+| `command.t_ff` | 前馈力矩（输出轴 N·m），固件限幅到 ±`config.mit_tau_max`（0 = 沿用 `I_MAX*KT*GR`） |
 | `command.p_des` / `command.v_des` | 位置/速度设定值（输出轴） |
 | `command.kp` / `command.kd` | 位置/速度增益 |
 
@@ -234,6 +234,7 @@ python tools/mc_ep.py --port COM7 call action.idle_mode
 | `config.input_mode` | — | 2 | 输入整形：0 忽略、1 直通、**2 速度斜率（默认）**、3 位置跟踪滤波、5 梯形位置规划、6 转矩斜坡、9 MIT；4/7/8 不支持（按直通） |
 | `config.input_bw` | 1/s | 10 | 只对 `input_mode=3` 有效；4 kHz 位置环上实际可用上限约 45，超了固件会自动压低增益 |
 | `config.torque_ramp_rate` | N·m/s | 1.0 | 只对 `input_mode=6` 有效：前馈转矩的斜率；0 = 不限 |
+| `config.mit_tau_max` | N·m | 5.0 | **力矩满量程**（输出轴）：MIT(`0x00/0x80`) 12 位力矩位域的定标，也是 `command.t_ff` / `TORQUE` / `CURRENT` / 旧协议 `SET_TFF` 的钳位上限；0 = 沿用 `I_MAX*KT*GR`。⚠ 这是**线上量程**，上位机必须用同一个值编解码；实际能出的力矩仍受 `I_MAX*KT*GR` 限制（4 A 时约 1.2 N·m，出厂上限 12 A 时约 3.6 N·m），超出的部分只是让电流环饱和 |
 | `config.enable_vel_limit` | — | true | 关掉后 CSV/CSP 不再受 `config.v_max` 约束（`command.v_des` 的物理范围变成 ±200 rad/s） |
 | `config.enable_torque_vel_lim` | — | false | 打开后在 MIT/力矩/电流模式也按 `v_max` 限速（`i_q ≤ (v_max−v)·vel_gain`） |
 | `config.pos_error_fault` | rad | 0 | 跟随误差故障阈值，0 = 关 |

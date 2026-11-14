@@ -61,6 +61,16 @@ extern "C" {
 #define INPUT_BW				__float_reg[43]									// POS_FILTER 的跟踪带宽 rad/s
 #define TORQUE_RAMP_RATE		__float_reg[44]									// TORQUE_RAMP 的转矩斜率 N·m/s
 #define DECEL_LIMIT				__float_reg[45]									// 速度设定值减速度 rad/s²（与 ACCEL_LIMIT 配对）
+/* 输出端力矩满量程（N·m）：MIT(0x00/0x80) 12 位力矩位域的定标，也是所有输出端
+ * 力矩命令（command.t_ff / legacy SET_TFF / TORQUE / CURRENT）的钳位上限。
+ * 0 = 沿用旧行为 I_MAX*KT*GR（随 i_max 变化的物理可达值）。
+ * ⚠ 这是**线上量程**：上位机必须用同一个值编解码（读 config.mit_tau_max），
+ * 改它等于改协议。它只决定分辨率/可表达范围，实际能输出的力矩仍受
+ * I_MAX*KT*GR（以及温度降流 / config.torque_lim）限制，超出部分只会让电流环饱和。
+ * 旧值 I_MAX*KT*GR 在 i_max=4 A / KT=0.0334 / GR=9 时只有 1.2 N·m，12 位分辨率
+ * 只有 0.6 mN·m 却表达不了 3.5 N·m 级的峰值力矩，所以独立出来。 */
+#define MIT_TAU_MAX				__float_reg[46]									// 力矩满量程 N·m（输出端，0 = I_MAX*KT*GR）
+#define TORQUE_FS				((MIT_TAU_MAX > 0.0f) ? MIT_TAU_MAX : (I_MAX * KT * GR))
 /* ---- 斜坡/轨迹的专用限值（0 = 沿用上面那组通用值，保持老配置行为不变）----
  * 为什么要分开：轨迹模式想慢慢爬、同时保留手动高速点动时，共用一个 v_max /
  * accel_limit 就做不到。默认全 0，等价于"没有这两组参数"。 */

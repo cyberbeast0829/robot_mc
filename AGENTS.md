@@ -126,7 +126,8 @@ range), so gains tuned against it were tuned on a 2x-low current reading; the
 pre-fork `0.050354...` assumed 0.5 mOhm and over-reported current by 10x.
 Changing the gain means editing `pga.c` **and** `PGA_GAIN_CODE` together — `pga.c`
 has a `_Static_assert` on it so they cannot drift apart. The board current limit
-is conservatively capped (default 4 A → 6 A software OC trip); keep
+is conservatively capped (`I_MAX_LIMIT` = 12 A → 18 A software OC trip,
+~65 % of the 2048-count span); keep
 `I_OC_FAULT_FACTOR * I_MAX_LIMIT` below the ±27.5 A saturation point or a
 saturated reading silently masks the overcurrent fault. Do not restore the old
 40 A limit or alter the PGA gain without verifying the analogue range and actual
@@ -379,6 +380,13 @@ CYBERBEAST (`can_cyberbeast.c`) gotchas verified on the bench:
   falls back to 1), not a broadcast; don't filter heartbeats by `dest == my_host_id`.
 - The bench tool's own frame rate matters: a slow serial read once pushed the harness to
   ~20 Hz, below the 25 ms timeout, which looked like "the firmware ignores commands".
+- **The MIT torque full scale is the parameter `config.mit_tau_max`** (output side N·m,
+  default 5.0, `0` = the old `I_MAX*KT*GR`). It is used for the MIT 12-bit torque field
+  *and* as the clamp for `command.t_ff`, `TORQUE`/`CURRENT` and legacy `SET_TFF` (single
+  `TORQUE_FS` expression in `user_config.h`). It is a **wire** constant — a master must
+  read the endpoint and encode/decode with the same value. It is not the achievable
+  torque: `I_MAX*KT*GR` still caps the current loop (12 A × 0.0334 × 9 ≈ 3.6 N·m, 4 A
+  ≈ 1.2 N·m), so a command above that just saturates `i_q` at `i_max`.
 
 ## USB 身份
 
@@ -412,7 +420,7 @@ Zadig 装 WinUSB（CDC 不受影响）。
   却忘了重新生成，描述符和固件就会静默错配，提交前必须跑。
 - **endpoint ID 由 `tools/endpoint_ids.json` 锁定，只增不改**。改名等于新增
   （旧 ID 保留但不响应）；不要手工重排 ID。
-- 设备把一份紧凑 JSON 描述符烧进 flash（当前约 17.9 KB），通过 **endpoint 0**
+- 设备把一份紧凑 JSON 描述符烧进 flash（当前约 20.1 KB），通过 **endpoint 0**
   分块下载；描述符的 CRC16 同时是“接口版本”（每次增删参数都会变），除
   endpoint 0 外的每个请求都必须在 payload 末尾带这个 CRC，否则返回
   `EP_ERR_VERSION`，避免新旧固件静默错配。

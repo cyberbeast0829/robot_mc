@@ -1,5 +1,5 @@
 {
-  "next_id": 243,
+  "next_id": 244,
   "map": {
     "config.i_bw": 1,
     "config.i_max": 2,
@@ -241,6 +241,7 @@
     "config.cogging_sweep_ms": 239,
     "telemetry.cogging_pass1": 240,
     "telemetry.cogging_pass2": 241,
-    "action.enter_bootloader_mode": 242
+    "action.enter_bootloader_mode": 242,
+    "config.mit_tau_max": 243
   }
 }

@@ -91,7 +91,7 @@ static void can_mit_rx(const can_frame_t *f)
         if (dlc == 4) {
             memcpy(&f_a, &f->data[0], sizeof(float));
             if (!isnan(f_a)) {
-                controller.t_ff = fast_fmaxf(fast_fminf(f_a, I_MAX * KT * GR), -I_MAX * KT * GR);
+                controller.t_ff = fast_fmaxf(fast_fminf(f_a, TORQUE_FS), -TORQUE_FS);
                 controller.timeout = 0;
                 send_telemetry_reply = 1;
             }

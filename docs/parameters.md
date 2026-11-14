@@ -12,7 +12,7 @@ ID 由 `tools/endpoint_ids.json` 锁定，固件升级不会改变；`access` �
 | 名称 | ID | 类型 | 访问 | 单位 | 范围 | 默认 | 持久化 | 说明 |
 |---|---|---|---|---|---|---|---|---|
 | `config.i_bw` | 1 | float | rw | Hz | 100.0 .. 2000.0 | 1000.0 | 是 | 电流环目标穿越频率（Hz）：P/I 增益由标定的 config.r_phase / config.l_d / config.l_q 与 V_PER_CMD 推导（极点对消），与电机无关，写入后立即重算、无需重启（未标定 r_phase=0 时退回编译期常量）。实际穿越约 0.76×（2 拍 ADC→占空比延迟）：1000→762 Hz/PM 78°，2000→1650 Hz/PM 59° |
-| `config.i_max` | 2 | float | rw | A | 0.0 .. `I_MAX_LIMIT` | I_MAX_LIMIT | 是 | 相电流限幅（硬上限 4A） |
+| `config.i_max` | 2 | float | rw | A | 0.0 .. `I_MAX_LIMIT` | I_MAX_LIMIT | 是 | 相电流限幅（硬上限 12A，即 hw_config.h 的 I_MAX_LIMIT；出厂默认 = 该上限）。过流锁存阈值 = 1.5×该值（18 A），仍低于 ±27.5 A 的采样饱和点 |
 | `config.i_fw_max` | 3 | float | rw | A | 0.0 .. 33.0 | 0.0 | 是 | 弱磁电流上限 |
 | `config.i_max_cont` | 4 | float | rw | A | 0.0 .. 40.0 | 14.0 | 是 | 连续电流上限 |
 | `config.i_cal` | 5 | float | rw | A | 0.0 .. 20.0 | 5.0 | 是 | 标定电流（编码器/R/L/Ld-Lq/磁链共用；测量时限制在 i_max 以内） |
@@ -70,6 +70,7 @@ ID 由 `tools/endpoint_ids.json` 锁定，固件升级不会改变；`access` �
 | `config.vbus_uv_trip` | 164 | float | rw | V | 0.0 .. 100.0 | 0.0 | 是 | 母线欠压故障阈值（0 = 关闭）；只在门极使能时判定，并带 ~10 ms 去抖 |
 | `config.i_dc_max` | 165 | float | rw | A | 0.0 .. 100.0 | 0.0 | 是 | 母线电流软限幅（0 = 关闭）。硬件没有直流分流器，按 P=1.5·V_PER_CMD·(v_d·i_d+v_q·i_q) 估算，只做软限流、不锁故障 |
 | `config.torque_lim` | 166 | float | rw | N-m | 0.0 .. 100.0 | 0.0 | 是 | 输出端转矩上限（0 = 关闭）；与 command.t_ff / telemetry.torque 同一量纲，内部换算 i_q_lim = torque_lim/(KT·GR) |
+| `config.mit_tau_max` | 243 | float | rw | N-m | 0.0 .. 40.0 | 5.0 | 是 | 输出端力矩满量程（N·m）：MIT(0x00/0x80) 12 位力矩位域的定标，也是 command.t_ff / TORQUE / CURRENT / legacy SET_TFF 的钳位上限。0 = 沿用 I_MAX*KT*GR。⚠ 线上量程，上位机必须用同一值编解码；实际可达力矩仍受 I_MAX*KT*GR 与温度降流限制 |
 | `config.fet_temp_en` | 167 | bool | rw |  | — | 0 | 是 | MOS/FET 温度保护开关（默认关，关闭时温度只上报不参与控制） |
 | `config.fet_temp_lo` | 168 | float | rw | C | 0.0 .. 200.0 | 75.0 | 是 | MOS 温度降流起点：达到该温度开始线性压低电流上限 |
 | `config.fet_temp_hi` | 169 | float | rw | C | 0.0 .. 200.0 | 95.0 | 是 | MOS 温度上限：达到该温度电流上限降为 0，再超过 5 °C 锁存 FAULT_FET_OT |
@@ -99,7 +100,7 @@ ID 由 `tools/endpoint_ids.json` 锁定，固件升级不会改变；`access` �
 
 | 名称 | ID | 类型 | 访问 | 单位 | 范围 | 默认 | 持久化 | 说明 |
 |---|---|---|---|---|---|---|---|---|
-| `command.t_ff` | 128 | float | rw | N-m | 运行期：`-I_MAX*KT*GR` .. `I_MAX*KT*GR` | — | 否 | 前馈转矩（输出轴 N·m）；写入会刷新命令租约，进入 MOTOR_MODE 时清零 |
+| `command.t_ff` | 128 | float | rw | N-m | 运行期：`-TORQUE_FS` .. `TORQUE_FS` | — | 否 | 前馈转矩（输出轴 N·m）；写入会刷新命令租约，进入 MOTOR_MODE 时清零。钳位到 ±config.mit_tau_max（0 时 = I_MAX*KT*GR） |
 | `command.p_des` | 129 | float | rw | rad | 运行期：`P_MIN` .. `P_MAX` | — | 否 | 位置设定值（输出轴 rad）；范围由 config.p_max 决定，进入 MOTOR_MODE 时清零 |
 | `command.v_des` | 130 | float | rw | rad/s | -200.0 .. 200.0 | — | 否 | 速度设定值（输出轴 rad/s），进入 MOTOR_MODE 时清零。运行期限幅：config.enable_vel_limit=true 时压到 ±config.v_max，false 时只受 ±200 rad/s 的物理范围约束 |
 | `command.kp` | 131 | float | rw |  | 运行期：0.0 .. `KP_MAX` | — | 否 | 位置增益；上限由 config.kp_max 决定，进入 MOTOR_MODE 时清零 |

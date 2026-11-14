@@ -176,7 +176,9 @@ static uint8_t cb_temp_u8(float c)
 
 static void cb_mit_range(cb_mit_range_t *r)
 {
-    float tau = I_MAX * KT * GR;        /* 输出端 N·m，与 legacy unpack_cmd 同量程 */
+    float tau = TORQUE_FS;              /* 输出端 N·m：MIT 12 位力矩位域满量程
+                                         * （config.mit_tau_max，0 = I_MAX*KT*GR），
+                                         * 与 legacy SET_TFF / TORQUE 同一量程 */
     float cur = I_MAX * GR;             /* 电机端 A：mit_max_torque / KT */
     r->pos_max = (P_MAX > 0.0f) ? P_MAX : 1.0f;
     r->vel_max = (V_MAX > 0.0f) ? V_MAX : 1.0f;
@@ -432,7 +434,7 @@ static void cb_vel_control(const can_frame_t *f)
  * respond：0x03 单播要回 MIT 响应，0x04 按协议不回。 */
 static void cb_torque_like(const can_frame_t *f, float tau_out, bool respond)
 {
-    float lim = I_MAX * KT * GR;
+    float lim = TORQUE_FS;              /* 输出端满量程：超过可达力矩只是电流环饱和 */
     if (lim <= 0.0f) { lim = 1.0f; }
     if (tau_out > lim) { tau_out = lim; }
     if (tau_out < -lim) { tau_out = -lim; }

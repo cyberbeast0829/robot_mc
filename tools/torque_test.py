@@ -44,13 +44,19 @@ def main():
     i_max = dev.read("config.i_max")
     kt = dev.read("config.kt")
     gr = dev.read("config.gr")
-    t_max = i_max * kt * gr
-    print("I_MAX=%.2f A  KT=%.4f  GR=%.3f  →  最大输出力矩约 %.2f N·m"
-          % (i_max, kt, gr, t_max))
+    fs = dev.read("config.mit_tau_max") or 0.0
+    t_phys = i_max * kt * gr                       # 电流限幅决定的物理可达力矩
+    t_max = fs if fs > 0 else t_phys               # 命令量程（固件钳位用）
+    print("I_MAX=%.2f A  KT=%.4f  GR=%.3f  →  可达力矩约 %.2f N·m，命令量程 ±%.2f N·m"
+          % (i_max, kt, gr, t_phys, t_max))
     over = [t for t in torques if abs(t) > t_max + 1e-3]
     if over:
-        print("警告: %s 超过上限，会被固件限幅到 ±%.2f N·m"
+        print("警告: %s 超过命令量程，会被固件限幅到 ±%.2f N·m"
               % (", ".join("%g" % t for t in over), t_max))
+    beyond = [t for t in torques if abs(t) > t_phys + 1e-3]
+    if beyond:
+        print("注意: %s 超过可达力矩 %.2f N·m，电流环会饱和（i_q 钳在 i_max），"
+              "实测力矩不会更大" % (", ".join("%g" % t for t in beyond), t_phys))
 
     can_timeout = int(dev.read("config.can_timeout"))
     if can_timeout > 0:

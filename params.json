@@ -20,10 +20,10 @@
       "access": "rw",
       "ref": "I_MAX",
       "min": 0.0,
-      "max": 4.0,
+      "max": 12.0,
       "max_expr": "I_MAX_LIMIT",
       "unit": "A",
-      "brief": "相电流限幅（硬上限 4A）",
+      "brief": "相电流限幅（硬上限 12A，即 hw_config.h 的 I_MAX_LIMIT；出厂默认 = 该上限）。过流锁存阈值 = 1.5×该值（18 A），仍低于 ±27.5 A 的采样饱和点",
       "persist": true,
       "default": "I_MAX_LIMIT"
     },
@@ -683,6 +683,18 @@
       "default": 0.0
     },
     {
+      "name": "config.mit_tau_max",
+      "type": "float",
+      "access": "rw",
+      "ref": "MIT_TAU_MAX",
+      "min": 0.0,
+      "max": 40.0,
+      "unit": "N-m",
+      "brief": "输出端力矩满量程（N·m）：MIT(0x00/0x80) 12 位力矩位域的定标，也是 command.t_ff / TORQUE / CURRENT / legacy SET_TFF 的钳位上限。0 = 沿用 I_MAX*KT*GR。⚠ 线上量程，上位机必须用同一值编解码；实际可达力矩仍受 I_MAX*KT*GR 与温度降流限制",
+      "persist": true,
+      "default": 5.0
+    },
+    {
       "name": "config.fet_temp_en",
       "type": "bool",
       "access": "rw",
@@ -955,11 +967,11 @@
       "unit": "N-m",
       "min": -40.0,
       "max": 40.0,
-      "min_expr": "-I_MAX*KT*GR",
-      "max_expr": "I_MAX*KT*GR",
+      "min_expr": "-TORQUE_FS",
+      "max_expr": "TORQUE_FS",
       "range_dynamic": true,
       "set": "controller.t_ff = v; controller.timeout = 0;",
-      "brief": "前馈转矩（输出轴 N·m）；写入会刷新命令租约，进入 MOTOR_MODE 时清零"
+      "brief": "前馈转矩（输出轴 N·m）；写入会刷新命令租约，进入 MOTOR_MODE 时清零。钳位到 ±config.mit_tau_max（0 时 = I_MAX*KT*GR）"
     },
     {
       "name": "command.p_des",

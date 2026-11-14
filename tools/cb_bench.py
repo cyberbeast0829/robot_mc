@@ -62,6 +62,7 @@ EP_CMD_KD = 132
 EP_CMD_MODE = 145
 EP_I_Q_DES = 54
 EP_SAVE_STATUS = 119
+EP_MIT_TAU_MAX = 243         # config.mit_tau_max：MIT 力矩位域满量程（输出端 N·m）
 
 # ---- CyberBeast message types ------------------------------------------
 MT_MIT = 0x00
@@ -613,17 +614,21 @@ def stage_b(bus, tau_cmd, pulse_ms):
 
 
 def read_ranges(bus):
-    """MIT 位域的满量程：tau_max = I_MAX*KT*GR（输出端 N·m），cur_max = I_MAX*GR（电机端 A）。
+    """MIT 位域的满量程：tau_max = config.mit_tau_max（输出端 N·m，0 = I_MAX*KT*GR），
+    cur_max = I_MAX*GR（电机端 A）。
 
     ⚠ KT 是标定出来的（本机约 0.031），**不能假设 1**：以前按 KT=1 编码会把力矩缩小
-    30 倍，看起来像"固件不接受力矩命令"。"""
+    30 倍，看起来像"固件不接受力矩命令"。
+    ⚠ tau_max 与可达力矩是两件事：I_MAX*KT*GR（本机 4 A × 0.0334 × 9 ≈ 1.2 N·m）是
+    电流限幅决定的**物理上限**，mit_tau_max 只是位域量程 —— 超出的部分电流环会饱和。"""
     rng = {}
     for key, ep in (("p", EP_P_MAX), ("v", EP_V_MAX), ("kp", EP_KP_MAX),
                     ("kd", EP_KD_MAX), ("gr", EP_GR), ("i_max", EP_I_MAX),
-                    ("kt", EP_KT)):
+                    ("kt", EP_KT), ("mit_tau", EP_MIT_TAU_MAX)):
         raw, _ = sdo_read(bus, ep)
         rng[key] = le_f32(raw) if raw else 0.0
-    rng["tau"] = rng["i_max"] * rng["kt"] * rng["gr"]
+    rng["tau"] = rng["mit_tau"] if rng["mit_tau"] > 0.0 \
+        else rng["i_max"] * rng["kt"] * rng["gr"]
     rng["cur"] = rng["i_max"] * rng["gr"]
     rng["abort_vel"] = 0.25 * rng["v"]      # 台架中止闸（空载轴 1/4 满速）
     return rng
@@ -705,7 +710,7 @@ def stage_c_static(bus, gr):
     if mode != 0:
         bus.send_cb(cb_id(3, MT_CLEAR, NODE), b"")
         time.sleep(0.2)
-    raw, _ = sdo_read(bus, EP_GATE_DRIVE, 1)
+    raw, _ = sdo_read(bus, EP_GATE_DRIVE, 1)config.mit_tau_max
     check("MENU (gates off)", raw is not None and raw[0] == 0)
 
     slot = NODE
@@ -731,10 +736,10 @@ def stage_c_static(bus, gr):
     check("broadcast slot applied to t_ff", got["t_ff"] is not None and
           abs(got["t_ff"] - tau_t) < tol_tau, str(got["t_ff"]))
 
-    # 0.5 电机端 N·m × GR 常常超过 tau_max（本机只有 0.72），固件会钳位 —— 期望值也要钳
+    # 0.5 电机端 N·m × GR 可能超过 tau_max（config.mit_tau_max），固件会钳位 —— 期望值也要钳
     want_tau = min(0.5 * gr, rng["tau"])
     print("[C2] TORQUE broadcast 0x83: motor-side 0.5 N.m -> expect t_ff=%.4f%s"
-          % (want_tau, "（被 I_MAX*KT*GR 钳位）" if want_tau < 0.5 * gr else ""))
+          % (want_tau, "（被 config.mit_tau_max 钳位）" if want_tau < 0.5 * gr else ""))
     bus.send(cb_id(3, MT_TORQUE + 0x80, 1 << slot), struct.pack(">f", 0.5),
              fd=True, brs=False)
     time.sleep(0.05)
@@ -883,11 +888,11 @@ def stage_d(bus):
 
     print("[D6] TORQUE clamp + NaN (gates off, MENU)")
     rng = read_ranges(bus)
-    lim = rng["tau"]          # I_MAX*KT*GR
+    lim = rng["tau"]          # config.mit_tau_max（0 时 = I_MAX*KT*GR）
     bus.send_cb(cb_id(3, MT_TORQUE, NODE), struct.pack(">f", 1e6))
     time.sleep(0.05)
     tau_hi = read_float_ep(bus, EP_T_FF)
-    check("TORQUE clamped to I_MAX*KT*GR",
+    check("TORQUE clamped to config.mit_tau_max",
           tau_hi is not None and abs(tau_hi - lim) < 0.02,
           "%.3f (limit %.3f)" % (tau_hi or 0.0, lim))
     bus.send_cb(cb_id(3, MT_TORQUE, NODE), struct.pack(">f", float("nan")))

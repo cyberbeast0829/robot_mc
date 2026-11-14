@@ -199,11 +199,11 @@
 /* Conservative limit for the 5 mOhm board.  The PGA output range (+-VREF/2)
  * saturates 2048 counts from zero, i.e. at +-27.5 A with the gain above, and a
  * saturated reading can never exceed the OC threshold - so
- * I_OC_FAULT_FACTOR * I_MAX_LIMIT must stay below that (4 A -> 6 A trip =
- * ~447 counts, 10 A -> 15 A trip = ~1117 counts, both well inside).  Raising
- * this requires checking both the analogue sense range and the power-stage /
- * shunt ratings. */
-#define I_MAX_LIMIT			10.0f			// Hard upper bound for I_MAX (A)
+ * I_OC_FAULT_FACTOR * I_MAX_LIMIT must stay below that (12 A -> 18 A trip =
+ * ~1341 counts, ~65 % of the 2048-count span; the old 10 A -> 15 A was ~1117).
+ * Raising this further requires checking both the analogue sense range and the
+ * power-stage / shunt ratings. */
+#define I_MAX_LIMIT			12.0f			// Hard upper bound for I_MAX (A)
 #define I_OC_FAULT_FACTOR	1.5f			// Overcurrent latch threshold = factor * I_MAX
 
 /* Current controller

@@ -103,7 +103,7 @@ typedef struct{
  *                               [CAN_LEGACY_READ_VAR, a, b]     pair float read, reply [f32, f32] to CAN_MASTER
  * 0x1 SET_PV            M->S    [p_des f32][v_des f32]          clamped to P/V limits; resets timeout; telemetry reply
  * 0x2 SET_GAINS         M->S    [kp f32][kd f32]                clamped to 0..KP_MAX/KD_MAX; resets timeout; telemetry reply
- * 0x3 SET_TFF           M->S    [t_ff f32]                      clamped to +/-I_MAX*KT*GR; resets timeout; telemetry reply
+ * 0x3 SET_TFF           M->S    [t_ff f32]                      clamped to +/-TORQUE_FS (config.mit_tau_max); resets timeout; telemetry reply
  * 0x4 SET_REPLY_FORMAT  M->S    [var_id_a][var_id_b]            sets telemetry reply content (RAM, not saved); telemetry reply
  * 0x5 READ_VARS         M->S    [var_id_a][var_id_b] or [var_id] one-shot read; telemetry reply; does NOT reset timeout
  * 0x6 CONTROL           M->S    [CAN_CTRL_x]                    enter motor mode / menu mode / zero

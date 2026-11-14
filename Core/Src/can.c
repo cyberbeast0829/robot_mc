@@ -333,7 +333,8 @@ void pack_reply(CANTxMessage *msg, uint8_t id, float p, float v, float t, float 
 /// 12 bit velocity command, between -30 and + 30 rad/s
 /// 12 bit kp, between 0 and 500 N-m/rad
 /// 12 bit kd, between 0 and 100 N-m*s/rad
-/// 12 bit feed forward torque, between -18 and 18 N-m
+/// 12 bit feed forward torque, between -TORQUE_FS and +TORQUE_FS
+/// （config.mit_tau_max，默认 5 N·m；0 时退回 I_MAX*KT*GR）
 /// CAN Packet is 8 8-bit words
 /// Formatted as follows.  For each quantity, bit 0 is LSB
 /// 0: [position[15-8]]
@@ -355,7 +356,7 @@ void unpack_cmd(const can_frame_t *f, float *commands){// ControllerStruct * con
         commands[1] = uint_to_float(v_int, V_MIN, V_MAX, 12);
         commands[2] = uint_to_float(kp_int, KP_MIN, KP_MAX, 12);
         commands[3] = uint_to_float(kd_int, KD_MIN, KD_MAX, 12);
-        commands[4] = uint_to_float(t_int, -I_MAX*KT*GR, I_MAX*KT*GR, 12);
+        commands[4] = uint_to_float(t_int, -TORQUE_FS, TORQUE_FS, 12);
     //myprintf("Received   ");
     //myprintf("%.3f  %.3f  %.3f  %.3f  %.3f   %.3f", controller->p_des, controller->v_des, controller->kp, controller->kd, controller->t_ff, controller->i_q_ref);
     //myprintf("\n\r");

@@ -1207,7 +1207,7 @@ python tools/mc_ep.py --usb get telemetry.i_q
 - 类型名用 `bool/uint8/int8/uint16/int16/uint32/int32/uint64/int64/float/double/
   object/endpoint_ref/json/function`；
 - 动作端点写 `"type":"function"` + 空 `inputs`/`outputs`，**不能写 `void`**；
-- 总长 ≤ 65535（当前约 17.9 KB）。
+- 总长 ≤ 65535（当前约 20.1 KB）。
 
 例子（读 `config.i_max`，ID 2）：
 
@@ -1611,8 +1611,17 @@ CubeMX 的 SysInit 段移到了配置加载之后
 | 心跳 pos/vel | 电机端 turns（×100 / ×10000） | `angle_multiturn/(2π)` |
 | QUERY_POS_VEL | 电机端 turns | 同上 |
 
-量程沿用 `P_MAX/V_MAX/KP_MAX/KD_MAX/I_MAX`：MIT 力矩满量程 `I_MAX·KT·GR`，
-响应电流满量程 `I_MAX·GR`（= `mit_max_torque / KT`），与 ODrive 的动态算法一致。
+量程沿用 `P_MAX/V_MAX/KP_MAX/KD_MAX`；**MIT 力矩满量程是独立参数
+`config.mit_tau_max`**（默认 5 N·m，0 = 退回老行为 `I_MAX·KT·GR`），
+响应电流满量程 `I_MAX·GR`（= `mit_max_torque / KT`）。
+`command.t_ff` / `TORQUE` / `CURRENT` / 旧协议 `SET_TFF` 用同一个上限
+（`user_config.h` 的 `TORQUE_FS` 表达式）。
+⚠ **位域量程 ≠ 可达力矩**：`I_MAX·KT·GR` 仍是电流环的物理上限（本机 KT = 0.0334 /
+GR = 9：i_max = 4 A 只有 1.2 N·m，出厂上限 12 A 是 3.6 N·m），量程内的超限命令只是让
+`i_q` 停在 `i_max`。
+早先满量程直接绑在 `I_MAX·KT·GR` 上，12 位字段的分辨率（0.6 mN·m）远高于需要，
+却表达不了 3.5 N·m 级峰值，所以拆成独立参数。上位机必须读 `config.mit_tau_max`
+（描述符里的 float 端点）后按同一值编解码，否则收到/发出的力矩整体按比例错。
 
 ### 与 JointSDK 的现状
 
@@ -1620,7 +1629,8 @@ CubeMX 的 SysInit 段移到了配置加载之后
 7 个 ODrive 路径。**本工程刻意不加这些别名**（客户将改 JointSDK 适配），
 所以现阶段用 `jsdk_context_desc_fetch()` + `jsdk_joint_param_get/set()` 访问参数，
 控制用 `0x00/0x03/0x04`。描述符仍是纯 ASCII、动作端点为 `function` 类型，
-可直接被 SDK 的 `cb_jsondesc_parse` 解析（当前 212 个可见端点、约 17.9 KB；
+可直接被 SDK 的 `cb_jsondesc_parse` 解析（当前 239 个端点、描述符 20608 B ≈ 20.1 KB，
+其中 2 条 hidden blob 不进描述符；
 改 `params.json` 后需在 SDK 环境重跑一次确认）。
 
 ### 台架注意
@@ -1672,7 +1682,7 @@ schema 1 → 2 迁移已实机验证（同一块配置，不动 flash）：旧�
   但**会执行动作**（ODrive 兼容，见“动作端点例外”；2026-11-09 起 D3 用例就是这样测的，
   只有 `require` 不满足时才回 `EP_ERR_STATE`）；越界写钳到 min/max（`config.i_bw` 1e9→2000、-1e9→100）；
   NaN 被丢弃（值不变）；宽度不符（`config.gr` 用 int16）被丢弃；`0x03` TORQUE 超大值
-  钳到 `I_MAX·KT·GR`，NaN 帧被忽略。
+  钳到 `config.mit_tau_max`（`TORQUE_FS`，0 时 = `I_MAX·KT·GR`），NaN 帧被忽略。
 - 台架脚本：`python tools/cb_bench.py --port COMx --stage-a|--stage-b|--stage-c|--stage-c-static|--stage-d|--reset-test|--timeout-test [--fd]`。
   ⚠ 脚本自身的收发周期很关键：早期版本用 `ser.read(4096)`（串口 timeout 50 ms）导致
   实际只有 ~20 Hz、比 25 ms 的超时还慢，量出来的力矩/位置变化偏小 —— **别用"命令没反应"
@@ -1731,7 +1741,7 @@ python tools/flash_jlink.py --bin build/motorcontrol.bin   # GNU 构建产物也
 |---|---|---|
 | 1 | 上电，`tree` | 列出参数树 |
 | 2 | `set config.i_max 3.5` | 返回 3.5；再 `get` 一致 |
-| 3 | `set config.i_max 99` | 返回 4.0（`I_MAX_LIMIT`） |
+| 3 | `set config.i_max 99` | 返回 12.0（`I_MAX_LIMIT`） |
 | 4 | `set telemetry.i_q 0` | 状态 4 |
 | 5 | `get action.save` | **状态 5，电机不能动** |
 | 6 | `call action.save` | `save_status = 1`，`prefs_sequence` +1 |

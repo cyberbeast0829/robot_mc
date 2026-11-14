@@ -99,6 +99,7 @@ const prefs_entry_t prefs_entries[] = {
 	{237, PREFS_T_I32, 4, (void *)&(COG_DETREND)},
 	{238, PREFS_T_I32, 4, (void *)&(COG_METHOD)},
 	{239, PREFS_T_I32, 4, (void *)&(COG_SWEEP_MS)},
+	{243, PREFS_T_F32, 4, (void *)&(MIT_TAU_MAX)},
 };
 const unsigned prefs_entry_count = sizeof(prefs_entries) / sizeof(prefs_entries[0]);
 
@@ -192,6 +193,7 @@ void config_apply_defaults(void){
 	COG_DETREND = 3;
 	COG_METHOD = 1;
 	COG_SWEEP_MS = 8000;
+	MIT_TAU_MAX = 5.0f;
 }
 
 void config_apply_limits(void){
@@ -376,4 +378,7 @@ void config_apply_limits(void){
 	if(COG_METHOD > 1){COG_METHOD = 1;}
 	if(COG_SWEEP_MS < 500){COG_SWEEP_MS = 500;}
 	if(COG_SWEEP_MS > 20000){COG_SWEEP_MS = 20000;}
+	if(!isfinite(MIT_TAU_MAX)){MIT_TAU_MAX = 5.0f;}
+	if(MIT_TAU_MAX < 0.0f){MIT_TAU_MAX = 0.0f;}
+	if(MIT_TAU_MAX > 40.0f){MIT_TAU_MAX = 40.0f;}
 }
