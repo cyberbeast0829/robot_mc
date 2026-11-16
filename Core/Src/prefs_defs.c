@@ -116,8 +116,8 @@ void config_apply_defaults(void){
 	I_CAL = 5.0f;
 	THETA_MIN = 0.0f;
 	THETA_MAX = 0.0f;
-	P_MAX = 12.5f;
-	P_MIN = -12.5f;
+	P_MAX = 0.0f;
+	P_MIN = 0.0f;
 	V_MAX = 65.0f;
 	V_MIN = -65.0f;
 	KP_MAX = 500.0f;
@@ -214,9 +214,9 @@ void config_apply_limits(void){
 	if(I_CAL > 20.0f){I_CAL = 20.0f;}
 	if(!isfinite(THETA_MIN)){THETA_MIN = 0.0f;}
 	if(!isfinite(THETA_MAX)){THETA_MAX = 0.0f;}
-	if(!isfinite(P_MAX)){P_MAX = 12.5f;}
+	if(!isfinite(P_MAX)){P_MAX = 0.0f;}
 	if(P_MAX < 0.0f){P_MAX = 0.0f;}
-	if(!isfinite(P_MIN)){P_MIN = -12.5f;}
+	if(!isfinite(P_MIN)){P_MIN = 0.0f;}
 	if(P_MIN > 0.0f){P_MIN = 0.0f;}
 	if(!isfinite(V_MAX)){V_MAX = 65.0f;}
 	if(V_MAX < 0.0f){V_MAX = 0.0f;}
