@@ -69,7 +69,7 @@ ID 由 `tools/endpoint_ids.json` 锁定，固件升级不会改变；`access` �
 | `config.vbus_ov_trip` | 163 | float | rw | V | 10.0 .. 100.0 | 67.0 | 是 | 母线过压硬故障阈值；超过即锁存 FAULT_OV 并关闭门极（原编译期常量 V_BUS_FAULT） |
 | `config.vbus_uv_trip` | 164 | float | rw | V | 0.0 .. 100.0 | 0.0 | 是 | 母线欠压故障阈值（0 = 关闭）；只在门极使能时判定，并带 ~10 ms 去抖 |
 | `config.i_dc_max` | 165 | float | rw | A | 0.0 .. 100.0 | 0.0 | 是 | 母线电流软限幅（0 = 关闭）。硬件没有直流分流器，按 P=1.5·V_PER_CMD·(v_d·i_d+v_q·i_q) 估算，只做软限流、不锁故障 |
-| `config.torque_lim` | 166 | float | rw | N-m | 0.0 .. 100.0 | 0.0 | 是 | 输出端转矩上限（0 = 关闭）；与 command.t_ff / telemetry.torque 同一量纲，内部换算 i_q_lim = torque_lim/(KT·GR) |
+| `config.torque_lim` | 166 | float | rw | N-m | 0.0 .. 100.0 | 3.0 | 是 | 输出端转矩上限（0 = 关闭）；与 command.t_ff / telemetry.torque 同一量纲，内部换算 i_q_lim = torque_lim/(KT·GR) |
 | `config.mit_tau_max` | 243 | float | rw | N-m | 0.0 .. 40.0 | 5.0 | 是 | 输出端力矩满量程（N·m）：MIT(0x00/0x80) 12 位力矩位域的定标，也是 command.t_ff / TORQUE / CURRENT / legacy SET_TFF 的钳位上限。0 = 沿用 I_MAX*KT*GR。⚠ 线上量程，上位机必须用同一值编解码；实际可达力矩仍受 I_MAX*KT*GR 与温度降流限制 |
 | `config.fet_temp_en` | 167 | bool | rw |  | — | 0 | 是 | MOS/FET 温度保护开关（默认关，关闭时温度只上报不参与控制） |
 | `config.fet_temp_lo` | 168 | float | rw | C | 0.0 .. 200.0 | 75.0 | 是 | MOS 温度降流起点：达到该温度开始线性压低电流上限 |

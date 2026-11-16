@@ -680,7 +680,7 @@
       "unit": "N-m",
       "brief": "输出端转矩上限（0 = 关闭）；与 command.t_ff / telemetry.torque 同一量纲，内部换算 i_q_lim = torque_lim/(KT·GR)",
       "persist": true,
-      "default": 0.0
+      "default": 3.0
     },
     {
       "name": "config.mit_tau_max",

@@ -158,7 +158,7 @@ void config_apply_defaults(void){
 	VBUS_OV_TRIP = 67.0f;
 	VBUS_UV_TRIP = 0.0f;
 	I_DC_MAX = 0.0f;
-	TORQUE_LIM = 0.0f;
+	TORQUE_LIM = 3.0f;
 	FET_TEMP_EN = 0;
 	FET_TEMP_LO = 75.0f;
 	FET_TEMP_HI = 95.0f;
@@ -305,7 +305,7 @@ void config_apply_limits(void){
 	if(!isfinite(I_DC_MAX)){I_DC_MAX = 0.0f;}
 	if(I_DC_MAX < 0.0f){I_DC_MAX = 0.0f;}
 	if(I_DC_MAX > 100.0f){I_DC_MAX = 100.0f;}
-	if(!isfinite(TORQUE_LIM)){TORQUE_LIM = 0.0f;}
+	if(!isfinite(TORQUE_LIM)){TORQUE_LIM = 3.0f;}
 	if(TORQUE_LIM < 0.0f){TORQUE_LIM = 0.0f;}
 	if(TORQUE_LIM > 100.0f){TORQUE_LIM = 100.0f;}
 	if(FET_TEMP_EN > 1){FET_TEMP_EN = 1;}
