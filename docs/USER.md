@@ -228,12 +228,12 @@ python tools/mc_ep.py --port COM7 call action.idle_mode
 
 | 参数 | 单位 | 出厂值 | 说明 |
 |---|---|---|---|
-| `config.pos_gain` | (rad/s)/rad | 15 | 位置误差 × 它 = 速度指令 |
-| `config.vel_gain` | A/(rad/s) | 2.158 | 速度误差 × 它 = 电流指令 |
-| `config.vel_integrator_gain` | A/(rad/s)/s | 38.85 | 消掉重力/摩擦下的稳态误差 |
+| `config.pos_gain` | (rad/s)/rad | 20 | 位置误差 × 它 = 速度指令（配方值 `ω_c/30`=15，配 `accel_limit 200` 时 20 更合适） |
+| `config.vel_gain` | A/(rad/s) | 1.397 | 速度误差 × 它 = 电流指令 |
+| `config.vel_integrator_gain` | A/(rad/s)/s | 25.15 | 消掉重力/摩擦下的稳态误差 |
 | `config.pos_ff_gain` | — | 1.0 | CSP 帧间速度前馈；1 = 全前馈，0 = 关 |
-| `config.accel_limit` | rad/s² | 50 | 速度设定值的**加速**斜率（`input_mode=2` 时生效）；0 = 关。**CSP 想快就先放开它**（30~100），比加 `pos_gain` 安全 |
-| `config.decel_limit` | rad/s² | 50 | 速度设定值的**减速**斜率（`input_mode=2` 时生效）；0 = 与 `accel_limit` 相同 |
+| `config.accel_limit` | rad/s² | 200 | 速度设定值的**加速**斜率（`input_mode=2` 时生效）；0 = 关。**CSP 想快就先放开它**，比加 `pos_gain` 安全：50 时 2 rad 阶跃过冲 22.9%，200 时 1.5% |
+| `config.decel_limit` | rad/s² | 200 | 速度设定值的**减速**斜率（`input_mode=2` 时生效）；0 = 与 `accel_limit` 相同 |
 | `config.vel_ramp_rate` | rad/s² | 0 | `input_mode=2` 的对称斜率（ODrive 的 `vel_ramp_rate`）：>0 时加速与减速都用它；0 = 用上面两个 |
 | `config.trap_vel_limit` | rad/s | 0 | `input_mode=5` 的巡航速度上限（与帧内/`v_max` 限速取较小值）；0 = 用运行期限速 |
 | `config.trap_accel_limit` | rad/s² | 0 | `input_mode=5` 的加速度；0 = 用 `accel_limit` |
@@ -339,26 +339,29 @@ python tools/mc_ep.py --port COM6 set command.p_des 5       # 继续往界内，
 `p_des` 本身已经是一个界外的"往回收"目标（比如先写了 12 再切模式），会直接跟踪它、
 不冻结；冻结只针对"目标落在界内、很可能是陈旧值"的情况。
 
-- **增益要按关节整定**：出厂值（`vel_gain 2.158`、`vel_integrator_gain 38.85`、
-  `pos_gain 15`、`accel_limit 50`）是本台架（`KT 0.0334`、`J 0.00096`、`GR 9`、
-  电流环 `i_bw 1000` 按标定 R/L 推导）整定的结果，**换电机/换关节必须重做**。
+- **增益要按关节整定**：出厂值（`vel_gain 1.397`、`vel_integrator_gain 25.15`、
+  `pos_gain 20`、`accel_limit 200`、`pll_bandwidth 3000`、`tune_margin 0.94`）是
+  2026-11-16 在本台架（`KT 0.0335`、`J 0.000996`、`GR 9`、电流环 `i_bw 1000` 按标定
+  R/L 推导）整定的结果，**换电机/换关节必须重做**。
   方法见 [DEV.md](DEV.md) 的“台架整定步骤”，工具是 `tools/csv_csp_test.py`。
-  ⚠ 更早那批“`vel_gain 2.469` / J 0.0006”的数据是在 **GR 被误配成 7.75** 时测的，
-  2026-11-06 已按实测 GR=9 重测惯量并重算增益（见下一节的配方）。
+  ⚠ 更早那批“`vel_gain 2.469` / J 0.0006”的数据是在 **GR 被误配成 7.75** 时测的；
+  2026-11-06 按 GR=9 重算的那组（`2.158 / 38.85 / 15 / 50`）已被 11-16 这组取代
+  —— 后者把速度反馈 PLL 带宽提到 3000，并把 `accel_limit` 放到 200，速度环取更
+  保守的 1.397 换取阻尼（P-only 5 rad/s 阶跃过冲从 38% 降到 15%）。
 - **两条路可选**：① 一条命令 `action.tune_gains`（先做 `action.measure_inertia`），
-  配方 = 惯量 + `config.omega_c`(450) + `config.tune_margin`；② 手工扫
-  `csv_csp_test.py sweep`。台架（`KT 0.031`、`J 0.0006`，当时的 `config.gr` 被误配成 7.75，
-  实际是 9）实测工作点：
+  配方 = 惯量 + `config.omega_c`(450) + `config.tune_margin`(0.94)；② 手工扫
+  `csv_csp_test.py sweep`。当前出厂值实测工作点：
 
   | 模式 | 参数 | 值 | 效果 |
   |---|---|---|---|
-  | MIT | `command.kp` / `kd` | **10 / 0.155**（`kd = 2√(kp·J)`） | 0.2 rad 阶跃 43 ms 上升、0.1 mrad 稳态、0.96 A 峰值 |
-  | CSV | `vel_gain` / `vel_integrator_gain` | **2.158 / 38.85**（= 当前出厂值，`tune_margin 1.5` 的配方值） | 1 rad/s 阶跃超调 3~7%、稳态误差 <3%、峰值 0.4~0.5 A（2026-11-06 实测，i_bw 1000） |
-  | CSP | `pos_gain` / `accel_limit` | **15 / 50** | 0.2 rad 阶跃最终 `pos_err` ≤ 0.4 mrad（2026-11-06 实测） |
+  | MIT | `command.kp` / `kd` | **20 / 0.20**（阻尼准则 `kd = 1.4·√(kp·J)`，ζ≈0.7） | 0.2 rad 阶跃过冲 0.5%、56 ms 稳定；kp 10~100 都适用（kp 100 → kd 0.44） |
+  | CSV | `vel_gain` / `vel_integrator_gain` | **1.397 / 25.15** | 1 rad/s 阶跃过冲 4~9%、稳态误差 0.1%、t90 55 ms；5 rad/s 过冲 0.9% |
+  | CSP | `pos_gain` / `accel_limit` | **20 / 200** | 0.2/0.5/1/2 rad 阶跃过冲 0.4/0.1/0.1/1.5%，0.2 rad ≈ 0.27 s |
 
-  `accel_limit` 从 10 提到 50 是 CSP 变快的关键：位置环是纯 P，它给出的速度设定值
-  被斜率限制拖慢时会出现"追上了速度还没降下来"的过冲（1 rad 阶跃：`accel_limit 10`
-  过冲 49%，50 时 4%）。**想要更快的 CSP 请先放开 `accel_limit`，不要只加 `pos_gain`。**
+  `accel_limit` 是 CSP 变快的关键：位置环是纯 P，它给出的速度设定值被斜率限制拖慢时
+  会出现“追上了速度还没降下来”的过冲（1 rad 阶跃：`accel_limit 10` 过冲 49%、
+  50 时 4.8%、200 时 0.1%）。**想要更快的 CSP 请先放开 `accel_limit`，不要只加
+  `pos_gain`**——`pos_gain` 超过 20~25 后大阶跃反而会过冲（30 时 1 rad 6.4%、2 rad 27%）。
 - ⚠ **`command.p_des` 会被 `config.p_max` 钳位，不是拒绝**：反复跑速度测试后
   绝对位置会漂移，一旦漂到 `p_max`（默认 ±12.5 rad）之外，CSP 的每个目标都被钳在
   边界上，看起来像“位置环完全不动”。处理：放大 `config.p_max`，或 `action.zero`
@@ -483,8 +486,11 @@ python tools/mc_ep.py --port COM7 call action.calibrate
 
 标定分四个阶段，全部自动完成（14 极对时约 30 s，串口会打印每一步的结果）：
 
-1. **相序/极对数**：对齐后正转一个电周期，**保持末相位等转子停稳**（否则转子滞后
-   会让行程偏短，14 极对经常被算成 15），再按 `2π / 机械行程` 求极对数；
+1. **相序/极对数**：对齐后正转 **3 个电周期**，行程用**匀速段**上两个采样点
+   （斜坡的 20% 与 90%）的差来算、再乘 0.7 外推全程（转子同步旋转时负载角恒定，
+   差分里抵消；不能用静止点——静摩擦死区会让 11 极对随机算成 12），再按
+   `3 × 2π / 机械行程` 求极对数。串口打印的 travel 是**外推后的 3 周期行程**
+   （11 极对约 1.71 rad），不是单周期那 0.57 rad；
 2. **编码器**：正反转各一圈采样，得到电角度零位 `E_ZERO` 和 128 点 LUT；
 3. **R / L / Ld / Lq**：先用两段直流（`i_cal/2` 和 `i_cal`）外推相电阻，
    再用 ±2 V 电压翻转测电感；然后在 alpha、beta 两个方向分别锁住转子，

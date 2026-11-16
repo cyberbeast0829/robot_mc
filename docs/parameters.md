@@ -24,12 +24,12 @@ ID 由 `tools/endpoint_ids.json` 锁定，固件升级不会改变；`access` �
 | `config.v_min` | 11 | float | rw | rad/s | ≤ 0.0 | -65.0 | 是 | 速度设定值下限（通常由 v_max 联动，也可单独写入以便备份恢复） |
 | `config.kp_max` | 12 | float | rw |  | ≥ 0.0 | 500.0 | 是 | 位置增益上限 |
 | `config.kd_max` | 13 | float | rw |  | ≥ 0.0 | 5.0 | 是 | 速度增益上限 |
-| `config.pos_gain` | 136 | float | rw | (rad/s)/rad | 0.0 .. 1000.0 | 15.0 | 是 | CSP 位置环 P 增益（输出轴）。位置误差 × 该值 = 速度指令；0 表示位置环只剩帧间前馈（要完全关闭请把 pos_ff_gain 也设 0） |
-| `config.vel_gain` | 137 | float | rw | A/(rad/s) | 0.0 .. 2000.0 | 2.158127 | 是 | CSV/CSP 速度环 P 增益（电机端安培 / 输出轴角速度）；0 时速度环只剩积分器（要完全关闭请把 vel_integrator_gain 也设 0） |
-| `config.vel_integrator_gain` | 138 | float | rw | A/(rad/s)/s | 0.0 .. 200000.0 | 38.846287 | 是 | 速度环 I 增益；消掉重力/摩擦下的稳态速度误差（抗饱和：输出限幅时积分按 0.99 衰减） |
+| `config.pos_gain` | 136 | float | rw | (rad/s)/rad | 0.0 .. 1000.0 | 20.0 | 是 | CSP 位置环 P 增益（输出轴）。位置误差 × 该值 = 速度指令；0 表示位置环只剩帧间前馈（要完全关闭请把 pos_ff_gain 也设 0）。默认 20 配 accel_limit 200（2026-11-16 台架：0.2/0.5/1 rad 阶跃过冲 0.4/0.1/0.1%）；按 ω_c/30 的解析值是 15，只在 accel_limit 很小时才合适 |
+| `config.vel_gain` | 137 | float | rw | A/(rad/s) | 0.0 .. 2000.0 | 1.397 | 是 | CSV/CSP 速度环 P 增益（电机端安培 / 输出轴角速度）；0 时速度环只剩积分器（要完全关闭请把 vel_integrator_gain 也设 0）。2026-11-16 台架按 pll_bandwidth 3000 定：P-only 5 rad/s 阶跃过冲 1.0→2.4%、1.4→15%、2.23→38% |
+| `config.vel_integrator_gain` | 138 | float | rw | A/(rad/s)/s | 0.0 .. 200000.0 | 25.152 | 是 | 速度环 I 增益；消掉重力/摩擦下的稳态速度误差（抗饱和：输出限幅时积分按 0.99 衰减）。默认 = vel_gain×18（ω_i ≈ 18 rad/s，再大低速会 stick-slip） |
 | `config.pos_ff_gain` | 139 | float | rw |  | 0.0 .. 2.0 | 1.0 | 是 | CSP 帧间速度前馈系数（指令差分的比例）；1.0 = 全前馈，0 = 关闭 |
-| `config.accel_limit` | 140 | float | rw | rad/s^2 | 0.0 .. 100000.0 | 50.0 | 是 | 速度设定值的**加速**斜率限制（输出轴），input_mode=2 时生效；TRAP_TRAJ（5）优先用自己的 config.trap_accel_limit。0 = 关闭。非零默认值能在指令阶跃时压住电流冲击，对稳态无影响 |
-| `config.decel_limit` | 181 | float | rw | rad/s^2 | 0.0 .. 100000.0 | 50.0 | 是 | 速度设定值的**减速**斜率限制（输出轴）；0 = 与 accel_limit 相同（不单独限制）。input_mode=2 时生效 |
+| `config.accel_limit` | 140 | float | rw | rad/s^2 | 0.0 .. 100000.0 | 200.0 | 是 | 速度设定值的**加速**斜率限制（输出轴），input_mode=2 时生效；TRAP_TRAJ（5）优先用自己的 config.trap_accel_limit。0 = 关闭。非零默认值能在指令阶跃时压住电流冲击，对稳态无影响。⚠ 它同时也是 CSP 不过冲的前提：50 时 1 rad 阶跃过冲 4.8%、2 rad 22.9%，200 时降到 0.1% / 1.5%（2026-11-16 台架） |
+| `config.decel_limit` | 181 | float | rw | rad/s^2 | 0.0 .. 100000.0 | 200.0 | 是 | 速度设定值的**减速**斜率限制（输出轴）；0 = 与 accel_limit 相同（不单独限制）。input_mode=2 时生效 |
 | `config.vel_ramp_rate` | 210 | float | rw | rad/s^2 | 0.0 .. 100000.0 | 0.0 | 是 | input_mode=2（速度斜坡）的对称斜率（对应 ODrive 的 controller.config.vel_ramp_rate）：>0 时加速与减速都用它；0 = 沿用 accel_limit / decel_limit |
 | `config.trap_vel_limit` | 211 | float | rw | rad/s | 0.0 .. 200.0 | 0.0 | 是 | input_mode=5（梯形规划）的巡航速度上限（输出轴），与运行期限速取较小值；0 = 用 config.v_max / 帧内 vel_limit |
 | `config.trap_accel_limit` | 212 | float | rw | rad/s^2 | 0.0 .. 100000.0 | 0.0 | 是 | input_mode=5 的加速度；0 = 用 config.accel_limit |
@@ -40,10 +40,10 @@ ID 由 `tools/endpoint_ids.json` 锁定，固件升级不会改变；`access` �
 | `config.enable_vel_limit` | 185 | bool | rw |  | — | 1 | 是 | 速度设定值限幅总开关：false 时 CSV/CSP/帧内 vel_limit 都不再受 config.v_max 约束（此时 command.v_des 的物理范围是 ±200 rad/s）。默认 true |
 | `config.enable_torque_vel_lim` | 186 | bool | rw |  | — | 0 | 是 | 阻抗/力矩/电流模式下的速度限制开关：打开后按 i_q <= (v_max - v)·vel_gain 限制推力，防止超过 v_max（默认关，与改动前行为一致） |
 | `config.pos_error_fault` | 141 | float | rw | rad | 0.0 .. 1000.0 | 0.0 | 是 | 位置跟随误差故障阈值（输出轴）；0 = 关闭。只在位置环未被速度限幅饱和时判定，需持续 100 ms；必须小于 v_max/pos_gain 才会触发 |
-| `config.pll_bandwidth` | 142 | float | rw | rad/s | 20.0 .. 5000.0 | 2000.0 | 是 | 编码器速度 PLL 带宽（速度环/位置环的反馈来源）；越大相位滞后越小、噪声越大。默认 2000（约 318 Hz），200 Hz 穿越点只吃 -13° 相位 |
-| `config.inertia` | 151 | float | rw | kg·m^2 | 0.0 .. 100.0 | 0.00096 | 是 | 输出端惯量（关节折算值）。可由 action.measure_inertia 测得（只写 RAM，不自动保存）；用于推荐增益与 pos_error_fault。0 = 未知。默认 0.00096 来自 2026-11-06 台架（GR 9、KT 0.0334）：5 次 action 各自的中位数落在 0.000865~0.000967（极差 11%、σ 3.7%），取 0.00096 |
+| `config.pll_bandwidth` | 142 | float | rw | rad/s | 20.0 .. 5000.0 | 3000.0 | 是 | 编码器速度 PLL 带宽（速度环/位置环的反馈来源）；越大相位滞后越小、噪声越大。这是速度环真正的瓶颈：P-only 自激频率随它走（1k/2k/4k/5k → 109/157/206/224 Hz）。默认 3000（约 477 Hz）：2000 时 vel_gain 2.23 的 5 rad/s 阶跃过冲 52%，3000 降到 38% 而静止电流噪声只从 0.088 涨到 0.103 A |
+| `config.inertia` | 151 | float | rw | kg·m^2 | 0.0 .. 100.0 | 0.000996 | 是 | 输出端惯量（关节折算值）。可由 action.measure_inertia 测得（只写 RAM，不自动保存）；用于推荐增益与 pos_error_fault。0 = 未知。默认 0.000996 来自 2026-11-16 台架（GR 9、KT 0.0335）；2026-11-06 同一台架测得 0.000865~0.000967（极差 11%、σ 3.7%） |
 | `config.omega_c` | 159 | float | rw | rad/s | 50.0 .. 1200.0 | 450.0 | 是 | action.tune_gains 的目标穿越频率：决定算出来的 vel_gain / pos_gain 有多激进。受延迟限制，超过约 1000 rad/s 实际是在跟延迟赛跑，建议 300~600 起步 |
-| `config.tune_margin` | 160 | float | rw | x | 0.2 .. 5.0 | 1.5 | 是 | action.tune_gains 对速度环增益的放大系数。线性公式给的是惯性主导时的值，摩擦/齿隙大的关节要放大（旧电机/旧电流环约 2.6）；只放大速度环，pos_gain 不受影响。1 = 纯公式。2026-11-06 台架（GR 9、电流环按标定 R/L 推导后）：1.5 给出 vel_gain 2.16，0.2 rad 位置阶跃与 1 rad/s 速度阶跃均干净（速度超调 3~7%、位置残差 <0.5 mrad），1.7 起速度超调 >25%，2.2 失稳 |
+| `config.tune_margin` | 160 | float | rw | x | 0.2 .. 5.0 | 0.94 | 是 | action.tune_gains 对速度环增益的放大系数。线性公式给的是惯性主导时的值，摩擦/齿隙大的关节要放大；只放大速度环，pos_gain 不受影响。1 = 纯公式。2026-11-16 台架（GR 9、pll_bandwidth 3000、P-only 5 rad/s 阶跃）：0.94 给出 vel_gain 1.40（过冲 15%）、1 rad/s 带输入整形过冲 5%、稳态误差 0.05%；P-only 扫描：vel_gain 1.0→2.4%、1.3→7.3%、1.6→20%、2.23→38%（= margin 1.5 那档），再高就是把速度反馈噪声直接放大成电流噪声 |
 | `config.vel_loop_prescaler` | 143 | int32 | rw |  | 1 .. 100 | 5 | 是 | 速度环分频：控制环 40 kHz / 该值 = 速度环频率（默认 5 → 8 kHz）；1 = 全速 40 kHz |
 | `config.pos_loop_prescaler` | 144 | int32 | rw |  | 1 .. 100 | 2 | 是 | 位置环分频：速度环 / 该值 = 位置环频率（默认 2 → 4 kHz）；位置环只在速度环执行的拍里执行 |
 | `config.gr` | 14 | float | rw |  | ≥ 0.001 | 9.0 | 是 | 减速比：转子圈 / 输出圈（门极关闭时才允许写）。CBL89 + MZW55 实测 9.0 |

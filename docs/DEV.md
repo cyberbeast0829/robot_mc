@@ -67,11 +67,18 @@ ADC，采样点在 PWM 峰值、低侧采样窗口内。
 `run_fsm_slow()` 只在 `done_ordering && done_cal && done_rl` 都置位后退出到菜单
 并保存。
 
-`order_phases()` 用"电压矢量转一个电周期 ÷ 机械行程"求极对数。斜坡结束后必须
-**保持末相位（`CAL_ORDER_HOLD_S`，与起始同相位）等转子停稳再取角度**：转子加速
-时滞后，14 极对的理想行程只有 0.449 rad，滞后 0.95°（机械）就会舍入成 15；保持
-后静态负载角在 `theta_end − theta_start` 中相消。两端各用 `CAL_ORDER_AVG_S`
-（0.1 s）平均抑制抖动。
+`order_phases()` 用"电压矢量转 `CAL_ORDER_CYCLES`（3）个电周期 ÷ 机械行程"求极对数。
+行程**不在斜坡两端取**，而是在匀速段取两个采样点（斜坡的 20% 与 90%）相减、再按
+0.7 外推：转子同步旋转时负载角恒定，在差分里抵消。前两版的做法与失败原因：
+
+| 做法 | 结果 |
+|---|---|
+| 斜坡结束瞬间取角度 | 读到"动态负载角"偏短；14 极对理想行程 0.449 rad，滞后 0.95° 机械就舍入成 15 |
+| 保持末相位 0.75 s 后比较两个**静止**点（各平均 0.1 s） | 静摩擦让转子停在离平衡点 `T_fric/k_spring` 处（本机 0.075 N·m / 1.82 N·m/rad ≈ ±0.04 rad，占单周期 0.571 rad 的 7%），11 极对随机算成 **12**，`e_zero` 与 LUT 随之全错，现象是"标定完电机不出力矩" |
+
+⇒ 最终方案：`CAL_ORDER_CYCLES`=3 个电周期 + 匀速段两点采样；`CAL_ORDER_HOLD_S`
+只用于让转子在 `calibrate_encoder()` 之前停稳，不再参与测量。改这里必须连跑几轮
+标定确认极对数稳定、LUT 幅值回到 ±100 counts 量级（错极对数时 LUT 会变成 ±2800 的锯齿）。
 
 `measure_lr()` 是 ODrive `Motor::measure_phase_resistance` /
 `measure_phase_inductance` / `measure_ld_lq` / `measure_flux_linkage` 及其
@@ -195,7 +202,7 @@ ADC，采样点在 PWM 峰值、低侧采样窗口内。
   - ✅ **GR 修正后增益已重算（2026-11-06）**：上面提到的 `vel_gain 2.469` / `pos_gain 15`
     是在 GR = 7.75 的配置下整定的，而实际 GR = 9 —— 同一条 MIT 律里
     `i_q = torque_des/(KT·GR)`，所以同样的增益会少 7.75/9 ≈ 14% 的电流、环路变软。
-    现在已按 GR = 9 重测惯量、重算增益（见"出厂值"与"`tune_margin`"两节），
+    现在已按 GR = 9 重测惯量、重算增益（见"单位"一节的增益记录与"`tune_margin`"一节），
     以后再改 GR 仍要走同一条路：`action.measure_inertia` → `action.tune_gains`。
 - **上电恢复**（`ps_dual_gear_restore()`，`main()` 里、`TIM_ConfigInt(...ENABLE)`
   之前调用）：读副编码器 → 按参考解出整圈数 → 置 `abs_turns_valid`，由**下一帧**
@@ -503,19 +510,45 @@ CSP 有位置目标，钳 `p_des` 就够了；CSV 和纯力矩没有位置目标
 | `config.pos_error_fault` | rad | 跟随误差故障阈值，0 = 关闭 |
 | `config.pll_bandwidth` | rad/s | 编码器速度 PLL 带宽 |
 
-出厂值（2026-11-06 台架按 GR 9、`i_bw 1000` 的推导电流环重测重算）：`pos_gain 15` /
+2026-11-06 那组（**历史记录，已不是默认值**；GR 9、`i_bw 1000` 的推导电流环）：`pos_gain 15` /
 `vel_gain 2.158` / `vel_integrator_gain 38.85` / `accel_limit 50` / `inertia 0.00096` /
 `tune_margin 1.5` / `omega_c 450` / `pos_error_fault 0` / `pll_bandwidth 2000`。
-这一组正是 `tune_gains(ω_c 450, margin 1.5)` 的输出 —— 默认值自洽，重新标定后照公式
-就能复现。实测（同一台架、`csv_csp_test.py`）：1 rad/s 速度阶跃超调 3~7%、峰值
-0.4~0.5 A；0.2 rad 位置阶跃最终 `|pos_err| ≤ 0.4 mrad`。`accel_limit 50` 是 CSP
-不过冲的前提（10 时 1 rad 阶跃过冲 49%）。⚠ 它们仍是**起点**：换电机/换关节必须重新
+这一组正是 `tune_gains(ω_c 450, margin 1.5)` 的输出，当时自洽；实测（同一台架、`csv_csp_test.py`）：
+1 rad/s 速度阶跃超调 3~7%、峰值 0.4~0.5 A；0.2 rad 位置阶跃最终 `|pos_err| ≤ 0.4 mrad`。
+其中 `accel_limit 50` 曾是 CSP 不过冲的前提（10 时 1 rad 阶跃过冲 49%），但后来发现
+`accel_limit 50` 在 2 rad 这类大阶跃上自身就会带来 22.9% 过冲，**现在的默认值是 200**
+（见下面的 2026-11-16 整定）。⚠ 任何一组都只是**起点**：换电机/换关节必须重新
 `action.measure_inertia` + `tune_gains`，尤其是 `config.inertia` 的默认值只是本台架的
 实测值，**不代表任何其他机构**。
 
 历史（2026-11-02，旧电流环、GR 被误配成 7.75）：`vel_gain 2.469` / `vel_integrator_gain 44.44` /
 `inertia 0.0006` / `tune_margin 2.2`。那组数字仍保留在下面的实测表里作为**记录**，
 不要再当作默认值。
+
+### 2026-11-16 出货前整定（MZW55 + Keil 镜像，J 0.000996，KT 0.0335，GR 9）
+
+同一台架重测后**偏离了上面那组 11-06 的记录**，原因是速度环的瓶颈找到了：反馈 PLL。
+把 `vel_gain` 推高到 6~20（P only、`v_des` 阶跃）会自激，振荡频率随
+`config.pll_bandwidth` 走（1000/2000/4000/5000 → 109/157/206/224 Hz），说明限制
+相位裕度的是速度估计的滤波，不是机械或延迟。据此定的一组（存进 flash，`action.save`）：
+
+| 参数 | 值 | 依据 |
+|---|---|---|
+| `i_bw` | 1000 Hz | 500~2000 Hz 静止电流噪声都在 std ≈ 0.012 A，无差别；1000 是文档已验证的穿越点（762 Hz / PM 78°） |
+| `pll_bandwidth` | 3000 | 2000 时 P-only 环路在 `vel_gain 2.23` 下过冲 51%；3000 降到 38%，噪声只涨 20% |
+| `vel_gain` | 1.397（`tune_margin 0.94`） | P-only 5 rad/s 阶跃过冲：1.0 → 2.4%、1.3 → 7.3%、1.6 → 20%、2.23 → 38%。取 1.4 兼顾阻尼与 ~65 Hz 穿越 |
+| `vel_integrator_gain` | 25.15（= vel_gain·18） | `tune_gains` 的 `clamp(ω_c/25,5,30)`；再大低速 stick-slip |
+| `pos_gain` | 20（高于 `tune_gains` 的 ω_c/30=15） | `accel_limit 200` 下 0.05/0.2/0.5/1/2 rad 阶跃过冲 3.2/0.4/0.1/0.1/1.5% |
+| `accel_limit` = `decel_limit` | 200 | 50 时 1 rad 阶跃 4.8%、2 rad 22.9%；200 时分别 0.1% / 1.5% |
+| `mit_tau_max` | 5.0 | 见上（`__float_reg[54]`） |
+| MIT kp/kd | `kd = 0.044·√kp`（ζ≈0.7） | kp 10/20/40/100 配 kd 0.14/0.2/0.28/0.44：过冲 0.2~0.8%、稳定 39~68 ms |
+
+复测（同一套脚本）：CSV 1 rad/s 过冲 5.4%、稳态误差 0.05%、t90 55 ms；5 rad/s 过冲
+0.9%；CSP 0.5 rad 过冲 0.1%、304 ms；MIT kp 20 / kd 0.2 过冲 0.5%、57 ms。
+⚠ 这一组**就是现在的编译期默认值**（`params.json` + `Core/Src/prefs_defs.c`），
+`action.reset_config` 也回到它；`action.tune_gains` 在 ω_c 450 / margin 0.94 下算出的
+`vel_gain` 1.40、`vel_integrator_gain` 25.2 与表一致，但 `pos_gain` 会给 15（`ω_c/30`），
+所以**直接把 pos_gain 设成 20**——它和 `accel_limit 200` 是一对，见上表。
 
 为什么在安培域而不在 N·m 域：CSP/CSV 帧的限幅本来就是电流（A），
 `limit_norm()`、`field_weaken()`、过流阈值也都在安培域。省掉每拍 2 次乘法 +
@@ -677,6 +710,14 @@ PLL（`kp = 2·bw`、`ki = 0.25·kp²`，与 ODrive `Encoder::update()` 一致�
 滤波/分辨率寄存器（需查手册）；或上**模型化观测器**（用 `i_q` 与 `KT/J` 预测加速度，
 `update_observer()` 目前整段被注释掉，`telemetry.observer_*` 端点还在）。
 
+⚠ 上面这张表是 2026-11-06 在 `vel_gain 2.158`、**带输入整形**的 1 rad/s 阶跃下测的，
+所以 2000 与 3000 都"够用"。2026-11-16 用**裸阶跃**（`input_mode=1`，P only）复测，
+结论变了：相位裕度的限制就来自这个 PLL —— 同一 `vel_gain 6~20` 推到自激，振荡频率
+随 `pll_bandwidth` 走（1k/2k/4k/5k → 109/157/206/224 Hz），而 `vel_gain 2.23` 的
+5 rad/s 阶跃过冲 2000 时 52%、3000 时 38%。因此**默认改成 3000 + `vel_gain 1.397`**：
+噪声按 σ ∝ `vel_gain` 折算只剩 11-06 那组的约 65%（静止 |i_q| ≈ 0.07 A），阻尼却实打实
+变好了。如果客户只用带整形的 CSV/MIT，2000 也仍然是安全的。
+
 对照：19 点整数差分（`comm_encoder.velocity`，475 µs 窗口）在同条件下是
 **0.15 rad/s（输出轴）**、200 Hz 处还吃掉 -34° 相位 —— PLL 在噪声和相位上都更好。
 
@@ -733,7 +774,7 @@ pos_gain            = ω_c/30                             [(rad/s)/rad]
 | `tune_margin` | `vel_gain` | 1 rad/s 速度阶跃超调 | 备注 |
 |---|---|---|---|
 | 1.4 | 2.014 | 6~11% | 偏软 |
-| **1.5** | **2.158** | **3~7%** | **出厂值** |
+| 1.5 | 2.158 | 3~7% | 2026-11-06 的出厂值（**现已被 0.94 / 1.397 取代**，见上） |
 | 1.6 | 2.302 | 5~12% | |
 | 1.7 | 2.803 | 26~33% | |
 | 2.2 | 3.627 | 失稳（两次都 abort） | |

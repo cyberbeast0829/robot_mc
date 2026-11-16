@@ -627,6 +627,12 @@ def read_ranges(bus):
                     ("kt", EP_KT), ("mit_tau", EP_MIT_TAU_MAX)):
         raw, _ = sdo_read(bus, ep)
         rng[key] = le_f32(raw) if raw else 0.0
+    # 与固件 cb_mit_range() 用同一套兜底：限位关闭（p_max<=p_min，常见做法是把
+    # p_min/p_max 都写 0）时固件按 ±1 rad 编码，上位机也必须按同一个值编解码，
+    # 否则位置字段整体错位（看起来像"固件不接受位置命令"）
+    for key in ("p", "v", "kp", "kd"):
+        if not (rng[key] > 0.0):
+            rng[key] = 1.0
     rng["tau"] = rng["mit_tau"] if rng["mit_tau"] > 0.0 \
         else rng["i_max"] * rng["kt"] * rng["gr"]
     rng["cur"] = rng["i_max"] * rng["gr"]
@@ -710,7 +716,7 @@ def stage_c_static(bus, gr):
     if mode != 0:
         bus.send_cb(cb_id(3, MT_CLEAR, NODE), b"")
         time.sleep(0.2)
-    raw, _ = sdo_read(bus, EP_GATE_DRIVE, 1)config.mit_tau_max
+    raw, _ = sdo_read(bus, EP_GATE_DRIVE, 1)
     check("MENU (gates off)", raw is not None and raw[0] == 0)
 
     slot = NODE

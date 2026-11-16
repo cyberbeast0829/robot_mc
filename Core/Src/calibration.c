@@ -76,16 +76,23 @@ void cal_print_flush(CalStruct *cal){
 void order_phases(EncoderStruct *encoder, ControllerStruct *controller, CalStruct * cal, int loop_count){
 	/* Checks phase order, to ensure that positive Q current produces
 	   torque in the positive direction wrt the position sensor, and measures
-	   the pole pairs: rotate the voltage vector through exactly one electrical
-	   cycle and divide by the mechanical angle travelled.
+	   the pole pairs: rotate the voltage vector through CAL_ORDER_CYCLES
+	   electrical cycles and divide the field travel by the mechanical angle
+	   the rotor covered.
 
-	   The rotor lags the rotating field while it accelerates, and sampling the
-	   end angle at the instant the ramp ends made the travel too short: with 14
-	   pole pairs the ideal travel is only 0.449 rad, so a lag of just 0.95 deg
-	   mechanical already rounds to 15.  Hold the final electrical phase for
-	   CAL_ORDER_HOLD_S and average the encoder at both ends - the rotor then
-	   stops at the same electrical phase it started from, so the static load
-	   angle cancels in theta_end - theta_start. */
+	   History, because both variants were on the bench:
+	   - sampling the end angle at the instant the ramp ends reads too short
+	     (the rotor still lags the field by the dynamic load angle), so the
+	     final phase is held for CAL_ORDER_HOLD_S to let it settle;
+	   - comparing two *settled* positions is still not accurate enough: static
+	     friction parks the rotor up to T_fric/k_spring short of the equilibrium
+	     at each end (this machine 0.075 N.m / 1.82 N.m/rad = 0.04 rad = 7% of
+	     the 0.57 rad one-cycle travel), which rounded 11 pole pairs to 12 on
+	     the bench and then poisoned e_zero and the linearization LUT.
+	   The measurement now uses two samples taken *while the rotor is turning at
+	   the ramp's constant speed* (CAL_ORDER_FRAC_LO/_HI of the ramp): the load
+	   angle is the same at both instants, so it cancels in the difference, and
+	   no static friction is involved. */
 	PHASE_ORDER = 0;
 
 	if(!cal->started){
@@ -99,7 +106,7 @@ void order_phases(EncoderStruct *encoder, ControllerStruct *controller, CalStruc
 	cal->time = (float)(loop_count - cal->start_count)*DT;
 
 	{
-		float t_ramp_end = T1 + 2.0f*PI_F/W_CAL;
+		float t_ramp_end = T1 + CAL_ORDER_CYCLES*TWO_PI_F/W_CAL;
 		float t_hold_end = t_ramp_end + CAL_ORDER_HOLD_S;
 
 		switch(cal->order_stage){
@@ -124,34 +131,42 @@ void order_phases(EncoderStruct *encoder, ControllerStruct *controller, CalStruc
 				return;
 
 			case 1:
-				/* Rotate the voltage vector through one electrical cycle */
+				/* Rotate the voltage vector through CAL_ORDER_CYCLES electrical
+				 * cycles, sampling the rotor at two points on the constant-speed
+				 * part of the ramp.  While the rotor is synchronised the load
+				 * angle is constant, so the two samples differ by exactly the
+				 * field travel between them - no static-friction dead band. */
 				cal->theta_ref = W_CAL*(cal->time - T1);
 				cal->cal_position.elec_angle = cal->theta_ref;
 				cal->cal_position.elec_velocity = 0.0f;
 				controller->i_d_des = I_CAL;
 				controller->i_q_des = 0.0f;
 				commutate_open_loop(controller, &cal->cal_position);
+				{
+					float frac = (cal->time - T1)/(t_ramp_end - T1);
+					if((cal->angle_count == 0) && (frac >= CAL_ORDER_FRAC_LO)){
+						cal->theta_start = encoder->angle_multiturn;
+						cal->angle_count = 1;
+					}
+					if((cal->angle_count == 1) && (frac >= CAL_ORDER_FRAC_HI)){
+						cal->theta_end = encoder->angle_multiturn;
+						cal->angle_count = 2;
+					}
+				}
 				if(cal->time >= t_ramp_end){
-					cal->angle_sum = 0.0f;
-					cal->angle_count = 0;
 					cal->order_stage = 2;
 				}
 				return;
 
 			case 2:
-				/* Hold the final electrical phase (same phase as the start,
-				 * one mechanical pole pitch further on) until the rotor stops */
-				cal->theta_ref = TWO_PI_F;
-				cal->cal_position.elec_angle = TWO_PI_F;
+				/* Hold the final electrical phase so the rotor comes to rest
+				 * before calibrate_encoder() starts (not used for the travel) */
+				cal->theta_ref = CAL_ORDER_CYCLES*TWO_PI_F;
+				cal->cal_position.elec_angle = CAL_ORDER_CYCLES*TWO_PI_F;
 				cal->cal_position.elec_velocity = 0.0f;
 				controller->i_d_des = I_CAL;
 				controller->i_q_des = 0.0f;
 				commutate_open_loop(controller, &cal->cal_position);
-				if(cal->time >= t_hold_end - CAL_ORDER_AVG_S){
-					cal->angle_sum += encoder->angle_multiturn;
-					cal->angle_count++;
-					cal->theta_end = cal->angle_sum/(float)cal->angle_count;
-				}
 				if(cal->time < t_hold_end){return;}
 				break;
 
@@ -162,9 +177,19 @@ void order_phases(EncoderStruct *encoder, ControllerStruct *controller, CalStruc
 
 	reset_foc(controller);
 
-	if(cal->angle_count == 0){cal->theta_end = encoder->angle_multiturn;}
+	/* theta_start/theta_end were taken on the ramp at CAL_ORDER_FRAC_LO and
+	 * _HI, so they span that fraction of CAL_ORDER_CYCLES field cycles */
+	if(cal->angle_count < 2){
+		cal_msg_push(cal, CAL_MSG_FAILED, 0, PPAIRS_MAX, controller->v_bus, 0.0f);
+		cal->failed = 1;
+		return;
+	}
+	const float frac_span = CAL_ORDER_FRAC_HI - CAL_ORDER_FRAC_LO;
 	float theta_range = fabsf(cal->theta_end - cal->theta_start);
-	int ppairs = theta_range > 0.001f ? (int)roundf(2.0f*PI_F/theta_range) : 0;
+	int ppairs = theta_range > 0.001f
+	             ? (int)roundf(CAL_ORDER_CYCLES*frac_span*TWO_PI_F/theta_range) : 0;
+	/* report the extrapolated full-travel distance (what the old code measured) */
+	theta_range = (frac_span > 0.0f) ? theta_range/frac_span : theta_range;
 	if((ppairs < 1) || (ppairs > PPAIRS_MAX)){
 		/* Rotor barely moved, or moved a non-physical amount - stalled rotor,
 		 * a bad encoder, or I_CAL too low.  Bail out before the pole-pair count

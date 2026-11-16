@@ -20,8 +20,19 @@
 #define N_CAL SAMPLES_PER_PPAIR*PPAIRS_MAX		// Calibration lookup table maximum length, so I don't have to deal with dynamic allocation based on number of pole pairs
 
 /* Pole-pair measurement (order_phases) */
-#define CAL_ORDER_HOLD_S	0.75f		// [s] hold the final electrical phase until the rotor stops
-#define CAL_ORDER_AVG_S		0.1f		// [s] encoder averaging window at both ends
+#define CAL_ORDER_HOLD_S	0.75f		// [s] hold the final electrical phase before the next stage
+#define CAL_ORDER_AVG_S		0.1f		// [s] (retained for the settle average in stage 0)
+/* 斜坡转多少个电周期。原来是 1，太短：静止时库仑摩擦让转子停在“离平衡点还差
+ * T_fric/k_spring”的地方（本机 0.075 N·m / 1.82 N·m/rad ≈ ±0.04 rad），两端各偏
+ * 一次就是 ±0.08 rad，占 1 电周期行程（0.57 rad）的 14% —— 台架实测 11 极对会随机
+ * 算成 12，随后 e_zero/LUT 全错，表现为“标定完电机不出力矩”。3 个电周期把同一个
+ * 绝对误差摊到 2.3%（见 docs/DEV.md 的“极对数”）。 */
+#define CAL_ORDER_CYCLES	3.0f
+/* 行程在两个“匀速段”采样点之间测量，而不是在两端静止点：转子同步旋转时负载角
+ * 恒定，库仑摩擦的偏置在差里抵消；静止点则各自带 ±T_fric/k_spring 的死区，正是
+ * 上面那个随机错的来源。 */
+#define CAL_ORDER_FRAC_LO	0.20f		// [斜坡比例] 第一个采样点（避开起步加速）
+#define CAL_ORDER_FRAC_HI	0.90f		// [斜坡比例] 第二个采样点（避开末段减速）
 
 /* ---- R / L / Ld-Lq / flux-linkage measurement ----------------------------
  *

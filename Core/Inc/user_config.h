@@ -71,7 +71,9 @@ extern "C" {
  * I_MAX*KT*GR（以及温度降流 / config.torque_lim）限制，超出部分只会让电流环饱和。
  * 旧值 I_MAX*KT*GR 在 i_max=4 A / KT=0.0334 / GR=9 时只有 1.2 N·m，12 位分辨率
  * 只有 0.6 mN·m 却表达不了 3.5 N·m 级的峰值力矩，所以独立出来。 */
-#define MIT_TAU_MAX				__float_reg[46]									// 力矩满量程 N·m（输出端，0 = I_MAX*KT*GR）
+/* ⚠ 索引必须唯一：曾经误用 __float_reg[46]（与 GEAR_ZERO_PHASE 撞车），
+ * config_apply_limits() 的 gear_zero_phase ≤ 1.0 钳位会把它压成 1.0 N·m。 */
+#define MIT_TAU_MAX				__float_reg[54]									// 力矩满量程 N·m（输出端，0 = I_MAX*KT*GR）
 #define TORQUE_FS				((MIT_TAU_MAX > 0.0f) ? MIT_TAU_MAX : (I_MAX * KT * GR))
 /* ---- 斜坡/轨迹的专用限值（0 = 沿用上面那组通用值，保持老配置行为不变）----
  * 为什么要分开：轨迹模式想慢慢爬、同时保留手动高速点动时，共用一个 v_max /
