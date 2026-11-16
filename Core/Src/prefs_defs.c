@@ -159,10 +159,10 @@ void config_apply_defaults(void){
 	VBUS_UV_TRIP = 0.0f;
 	I_DC_MAX = 0.0f;
 	TORQUE_LIM = 3.0f;
-	FET_TEMP_EN = 0;
+	FET_TEMP_EN = 1;
 	FET_TEMP_LO = 75.0f;
 	FET_TEMP_HI = 95.0f;
-	MOT_TEMP_EN = 0;
+	MOT_TEMP_EN = 1;
 	MOT_TEMP_LO = 75.0f;
 	MOT_TEMP_HI = 95.0f;
 	PRE_CALIBRATED = 0;

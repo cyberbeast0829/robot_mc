@@ -699,9 +699,9 @@
       "type": "bool",
       "access": "rw",
       "ref": "FET_TEMP_EN",
-      "brief": "MOS/FET 温度保护开关（默认关，关闭时温度只上报不参与控制）",
+      "brief": "MOS/FET 温度保护开关（默认开，关闭时温度只上报不参与控制）",
       "persist": true,
-      "default": 0
+      "default": 1
     },
     {
       "name": "config.fet_temp_lo",
@@ -732,9 +732,9 @@
       "type": "bool",
       "access": "rw",
       "ref": "MOT_TEMP_EN",
-      "brief": "电机温度保护开关（默认关，关闭时温度只上报不参与控制）",
+      "brief": "电机温度保护开关（默认开，关闭时温度只上报不参与控制）",
       "persist": true,
-      "default": 0
+      "default": 1
     },
     {
       "name": "config.mot_temp_lo",

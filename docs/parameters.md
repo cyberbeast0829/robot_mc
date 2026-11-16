@@ -71,10 +71,10 @@ ID 由 `tools/endpoint_ids.json` 锁定，固件升级不会改变；`access` �
 | `config.i_dc_max` | 165 | float | rw | A | 0.0 .. 100.0 | 0.0 | 是 | 母线电流软限幅（0 = 关闭）。硬件没有直流分流器，按 P=1.5·V_PER_CMD·(v_d·i_d+v_q·i_q) 估算，只做软限流、不锁故障 |
 | `config.torque_lim` | 166 | float | rw | N-m | 0.0 .. 100.0 | 3.0 | 是 | 输出端转矩上限（0 = 关闭）；与 command.t_ff / telemetry.torque 同一量纲，内部换算 i_q_lim = torque_lim/(KT·GR) |
 | `config.mit_tau_max` | 243 | float | rw | N-m | 0.0 .. 40.0 | 5.0 | 是 | 输出端力矩满量程（N·m）：MIT(0x00/0x80) 12 位力矩位域的定标，也是 command.t_ff / TORQUE / CURRENT / legacy SET_TFF 的钳位上限。0 = 沿用 I_MAX*KT*GR。⚠ 线上量程，上位机必须用同一值编解码；实际可达力矩仍受 I_MAX*KT*GR 与温度降流限制 |
-| `config.fet_temp_en` | 167 | bool | rw |  | — | 0 | 是 | MOS/FET 温度保护开关（默认关，关闭时温度只上报不参与控制） |
+| `config.fet_temp_en` | 167 | bool | rw |  | — | 1 | 是 | MOS/FET 温度保护开关（默认开，关闭时温度只上报不参与控制） |
 | `config.fet_temp_lo` | 168 | float | rw | C | 0.0 .. 200.0 | 75.0 | 是 | MOS 温度降流起点：达到该温度开始线性压低电流上限 |
 | `config.fet_temp_hi` | 169 | float | rw | C | 0.0 .. 200.0 | 95.0 | 是 | MOS 温度上限：达到该温度电流上限降为 0，再超过 5 °C 锁存 FAULT_FET_OT |
-| `config.mot_temp_en` | 170 | bool | rw |  | — | 0 | 是 | 电机温度保护开关（默认关，关闭时温度只上报不参与控制） |
+| `config.mot_temp_en` | 170 | bool | rw |  | — | 1 | 是 | 电机温度保护开关（默认开，关闭时温度只上报不参与控制） |
 | `config.mot_temp_lo` | 171 | float | rw | C | 0.0 .. 200.0 | 75.0 | 是 | 电机温度降流起点 |
 | `config.mot_temp_hi` | 172 | float | rw | C | 0.0 .. 200.0 | 95.0 | 是 | 电机温度上限：达到该温度电流上限降为 0，再超过 5 °C 锁存 FAULT_MOT_OT |
 | `config.pre_calibrated` | 173 | bool | rw |  | — | 0 | 是 | 电机/编码器是否已标定：false 时拒绝进入电机模式（action.calibrate 成功后自动置 1，进入标定或恢复默认时清 0；门极使能时不可写） |
