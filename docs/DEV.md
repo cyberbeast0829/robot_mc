@@ -1193,13 +1193,21 @@ python tools/cogging_test.py --port COM10 on           # 打开补偿（RAM）
 
 ## endpoint 协议
 
-与 ODrive fibre v0.1 同构，有两条 USB 传输，共用同一份 payload 编解码
-（`endpoint_process()`）：
+与 ODrive fibre v0.1 同构，三条传输共用同一份参数表，但外层不同
+（USB 的两条共用 `endpoint_process()` 的 payload 编解码）：
 
 | 传输 | 端点 | 外层 | 实现 |
 |---|---|---|---|
+| CAN（CYBERBEAST SDO） | 29-bit 扩展帧 | `PARAM_READ(0x20)` / `PARAM_WRITE(0x21)` + 描述符 `0x24/0x25`，**没有 status 字节**（见 "CAN：协议选择与 CYBERBEAST"） | `can_cyberbeast.c` |
 | CDC 虚拟串口 | EP1 IN / EP3 OUT | `AA` + `LEN` + `CRC8` + payload + `CRC16`（和 ASCII 菜单共用数据流） | `endpoint_serial.c` |
 | vendor interface 2（fibre） | EP3 IN / EP1 OUT | 一个 USB bulk 包 = 一个 PAYLOAD（无外层、无 CRC） | `endpoint_usb.c` |
+
+**出货的板子没有 USB 座，客户只有 CAN 这一条路**（`mc_ep.py --can`），
+USB 的两条是开发/台架用的。
+
+CAN 那条直接调 `endpoint_handler()`，不经过 `endpoint_process()`：因此没有
+描述符 CRC 的版本校验（描述符要自己用 `0x24/0x25` 拉一遍），也**没有状态码** ——
+只写端点/`require` 不满足/被限幅，写 ACK 一律照常返回，主站必须读回校验。
 
 USB 描述符是复合设备：interface 0/1 是 CDC（`bDeviceClass=0xEF` + IAD），
 interface 2 是 vendor specific（EP1 OUT / EP3 IN），见
@@ -1210,7 +1218,7 @@ interface 2 是 vendor specific（EP1 OUT / EP3 IN），见
 > 端点严格区分读写；动作端点（线上 `"type":"function"`）**读和写都会执行**——
 > ODrive 的协议没有读写位，function 端点被“读”也会执行，这里跟随它，好让
 > 按 ODrive 语义调用动作的上位机（JointSDK）直接可用。
-> 上位机请用 `tools/mc_ep.py`（`--port` 或 `--usb`）。
+> 上位机请用 `tools/mc_ep.py`（`--can`，或开发板上的 `--port`/`--usb`）。
 
 ### CDC 帧
 
@@ -1694,9 +1702,9 @@ CubeMX 的 SysInit 段移到了配置加载之后
 | `0x04` CURRENT | `t_ff = I × KT × GR`，不回应答；**刷新超时**（比 ODrive 的 F19 更安全） |
 | `0x01/0x81` CSP | 目标位置 deg(输出端) + `vel_limit` RPM(输出端) + `cur_limit` A(电机端)；Classic 8 B 用 float32 位置 + int16 RPM + int16 0.1A，FD 12 B 全 float32；进 `CTRL_POSITION`，单播回 MIT 响应 |
 | `0x02/0x82` CSV | 目标速度 RPM(输出端) + `cur_limit` A(电机端)；进 `CTRL_VELOCITY`，单播回 MIT 响应 |
-| `0x20/0x21` SDO | 直接 `endpoint_handler()`；值小端；Classic 下 ReqLen 钳到 4；`>4` 字节走分段写；批量读回 ERR |
+| `0x20/0x21` SDO | 直接 `endpoint_handler()`；值小端；Classic 下 ReqLen 钳到 4；`>4` 字节走分段写；批量读回 ERR。`mc_ep.py --can` 用这两个消息（8 字节的值在 Classic 下按 offset 分两次读，响应 bit7 = More） |
 | `0x22` SAVE | 置 `state.save_pending`（门极关闭时由主循环写 flash） |
-| `0x24/0x25` 描述符 | 元数据 + 定长分片（8/64 B，末尾补 0），2 帧/ms |
+| `0x24/0x25` 描述符 | 元数据 + 定长分片（8/64 B，末尾补 0），2 帧/ms。`mc_ep.py --can` 用它在 CAN 上拉整套参数树（Classic 1M 约 1~2 s） |
 | `0x40..0x49` 查询 | 状态/位置速度/电流/温度/母线/错误/版本；`0x44` 母线电流与 `0x47` 电/机械功率是**估算值**（无直流分流器，见"母线电流 / 功率估算"） |
 | `0x48` 心跳 | Classic 8 B / FD 19 B；pos/vel 按**原始计数域**钳位（F32 教训）；字节 18 是映射后的 ODrive AxisState |
 | `0x60..0x65` | SET_NODE_ID（RAM，需 save 持久化）/ SET_ZERO / START（仅 MENU）/ STOP / RESET / CLEAR |
@@ -1754,6 +1762,14 @@ GR = 9：i_max = 4 A 只有 1.2 N·m，出厂上限 12 A 是 3.6 N·m），量�
 - 改 `can_prot` / `can_baud` / `can_id` 后必须断电重启，`system.can_prot_active`
   可核对；`can_id` 的滤波器和 CyberBeast 的 Dest 都按新值生效。
 - `action.save` 写入的是新参数值，但运行中的物理层不变（下次上电才切换）。
+- ⚠ **上位机用错波特率会把设备打进 bus-off**（2026-11-17 台架）：适配器按 500k 打开、
+  设备在 1M 发心跳，这些帧没人 ACK，`can_tec` 十几帧就涨到 ~248，之后设备既不发也不答
+  （TX 队列卡在一帧永远等 ACK 的报文），**换回正确波特率也不会自己恢复**，
+  只能 `action.reboot`（USB 或菜单）。所以排查“`--can` 一帧都收不到”时：
+  `mc_ep.py --port COMx get telemetry.can_tec`（>128 = 中招）→ 重启再试；
+  `mc_ep.py --can probe` 只监听不发帧，就不会把设备打挂。
+- 上位机侧：`tools/mc_ep.py --can`（`--interface slcan|pcan|socketcan|…`）与
+  `--port`/`--usb` 用同一套命令和参数名，传输层的差异见 "endpoint 协议" 的表格。
 
 ### 台架实测（2026-10-26，Keil 构建 + CANable 2.0）
 
@@ -1799,6 +1815,10 @@ schema 1 → 2 迁移已实机验证（同一块配置，不动 flash）：旧�
 `make hosttest`（`prefs_codec` + `test_can_cyberbeast` + `test_motion_law` +
 `test_dual_gear` + `test_endpoint_proto`）、
 `make`（链接）。
+上位机侧的 CAN 传输有 `python tools/test_mc_ep_can.py`（或 `make hosttest-py`；
+需要 `pip install python-can`，不需要硬件：用 python-can 的 virtual 总线模拟一台
+CYBERBEAST 从机，覆盖描述符流、分段读写、动作端点、`n=0` 的只写端点、
+Classic/FD 两种帧长）。
 Windows 用 MSYS2 bash 构建（Chocolatey 的 make 用 cmd，
 `mkdir -p` 会失败）：
 

@@ -181,6 +181,11 @@ hosttest: $(BUILD_DIR)
 	$(HOSTCC) -std=gnu11 -O1 -Wall -Wextra -ICore/Inc tools/test_endpoint_proto.c Core/Src/endpoint.c -lm -o $(HOSTTEST_EP)
 	./$(HOSTTEST_EP)
 
+# 上位机侧的 CAN 传输（tools/mc_ep.py）：用 python-can 的 virtual 总线模拟设备，
+# 不需要硬件/适配器，但要 `pip install python-can`（所以不并进 hosttest）。
+hosttest-py:
+	$(PYTHON) tools/test_mc_ep_can.py
+
 ######################################
 # flash
 #
@@ -227,4 +232,4 @@ clean:
 
 -include $(OBJECTS:.o=.d)
 
-.PHONY: all clean flash flash-pyocd flash-openocd size endpoints endpoints-check check hosttest
+.PHONY: all clean flash flash-pyocd flash-openocd size endpoints endpoints-check check hosttest hosttest-py

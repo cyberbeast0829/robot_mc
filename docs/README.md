@@ -30,20 +30,29 @@ N32H473CE 三相 FOC 固件。只有三份要读的文档，按"你是谁"选一
 
 ## 五分钟上手
 
-```bash
-pip install pyserial
-python tools/mc_ep.py --port COM7 tree            # 参数树（CDC）
-python tools/mc_ep.py --port COM7 get config.i_max
-python tools/mc_ep.py --port COM7 set config.i_max 3.5
-python tools/mc_ep.py --port COM7 call action.save
-python tools/mc_ep.py --port COM7 get system.save_status    # 1 = 保存成功
+出货版本默认只有 CAN 接口（没有 USB 座），所以先装 `pyserial` + `python-can`，
+用 CANable 之类的适配器走 `--can`：
 
-# 或者走 vendor interface（fibre，需要 pyusb；Windows 用 Zadig 给 interface 2 装 WinUSB）
-python tools/mc_ep.py --usb tree
+```bash
+pip install pyserial python-can
+python tools/mc_ep.py --can tree                            # 参数树（CANable/slcan，自动找适配器）
+python tools/mc_ep.py --can get config.i_max
+python tools/mc_ep.py --can set config.i_max 3.5
+python tools/mc_ep.py --can call action.save
+python tools/mc_ep.py --can get system.save_status           # 1 = 保存成功
+python tools/mc_ep.py --can probe                            # 一帧都看不到时先跑这个
+
+# 其它后端：pcan / socketcan / gs_usb …（python-can 的名字）
+python tools/mc_ep.py --can --interface pcan get config.i_max
+python tools/mc_ep.py --can --interface socketcan --channel can0 tree
 ```
 
+开发/台架板子上还有 USB 复合设备，命令和参数名完全一样：
+`--port COM7`（CDC 虚拟串口）或 `--usb`（vendor interface，需要 pyusb；
+Windows 用 Zadig 给 interface 2 装 WinUSB）。
+
 改完参数要 `action.save` 才写 flash；门极使能时保存会被拒绝（先
-`call action.idle_mode`）。细节见 [USER.md](USER.md)。
+`call action.idle_mode`）。细节见 [USER.md](USER.md) 第 1~2 节。
 
 ## 升级固件（CAN OTA）
 
@@ -52,9 +61,9 @@ python tools/mc_ep.py --usb tree
 CANable/PCAN 都行；bootloader 固定 500 kbit/s Classic，和 App 的 CAN 配置无关）：
 
 ```bash
-python tools/mc_ep.py --usb call action.enter_bootloader_mode    # 或串口菜单按 b
-python tools/blcan.py --channel COM7 sync
-python tools/blcan.py --channel COM7 upgrade --firmware build/mit_h473.bin \
+python tools/mc_ep.py --can call action.enter_bootloader_mode    # 带 USB 的板子也可按串口菜单 b
+python tools/blcan.py --channel COM3 sync
+python tools/blcan.py --channel COM3 upgrade --firmware build/mit_h473.bin \
         --erase auto --addr 0x08008000 --chunk-size 256 --verify --go-addr 0x08008000
 ```
 
@@ -65,6 +74,7 @@ python tools/blcan.py --channel COM7 upgrade --firmware build/mit_h473.bin \
 ## 一页纸数据流
 
 ```
+上位机 ──CAN (CYBERBEAST)─> can_cyberbeast.c ─> endpoint_handler            [出货默认]
 上位机 ──USB CDC──────> endpoint_serial.c ┐
 上位机 ──USB vendor i/f─> endpoint_usb.c  ┴─> endpoint_process() → endpoint_handler [生成]
                                               └─ 直接读写 params.json 里的变量

@@ -47,7 +47,9 @@ Two equivalent builds produce the same firmware:
   `make DEBUG=1` (-Og/-g3), `make size`, `make clean`, and `make flash` (J-Link; override
   with `JLINK_DEVICE`/`JLINK_IF`/`JLINK_SPEED`; `flash-pyocd` / `flash-openocd` also exist).
   `make check` 校验生成表/文档是否最新；`make hosttest` 在主机上跑 `prefs_codec`、
-  CAN codec、`motion_law`、`dual_gear`、`cogging_law` 和 `endpoint_process()` 单测。
+  CAN codec、`motion_law`、`dual_gear`、`cogging_law` 和 `endpoint_process()` 单测；
+  `make hosttest-py` 跑 `tools/test_mc_ep_can.py`（上位机 CAN 传输，python-can 的
+  virtual 总线，不需要硬件；需要 `pip install python-can`）。
   ⚠ The startup vector table must match the device IRQ numbering — a mismatch silently
   misroutes every ISR (keep it in sync if you ever edit it).
 - **Keil MDK (uVision)**: project `Keil/mit_h473.uvprojx`, target `mit_h473`, device
@@ -67,7 +69,9 @@ Two equivalent builds produce the same firmware:
   don't conclude "the firmware is broken" from a `make` image symptom.
 - Testing: `make check` (generated tables/docs are current) and `make hosttest`
   (`tools/test_{prefs_codec,can_cyberbeast,motion_law,dual_gear,cogging,endpoint_proto}.c`,
-  no target hardware) are the only automated checks.
+  no target hardware) are the only automated checks; `make hosttest-py`
+  (`tools/test_mc_ep_can.py`, needs `python-can`, fake device on a virtual bus)
+  covers the host tool's CAN transport.
   Everything else is verified by a clean build + bench testing by the maintainer
   (`tools/cb_bench.py` drives the CYBERBEAST platform over slcan: `--stage-a/-b/-c/-c-static/-d`,
   `--reset-test`, `--timeout-test`; `tools/csv_csp_test.py` drives the velocity/position
@@ -445,6 +449,9 @@ Zadig 装 WinUSB（CDC 不受影响）。
   `0xAA` 帧头之外的字节交给 `update_fsm()`）；**vendor interface 2** 上一个
   USB bulk 包就是一帧（`endpoint_usb.c`，响应 ≤63 B 短包）。帧格式和状态码见
   `Core/Inc/endpoint.h`。
+  第三条是 **CAN**（CYBERBEAST，`can_cyberbeast.c` 直接调 `endpoint_handler()`，
+  不经过 `endpoint_process()`，因此没有 status 字节、写 ACK 不带成败位）；
+  上位机 `tools/mc_ep.py --can`（`--interface slcan|pcan|socketcan|…`）用的就是它。
 - **实时性**：USB 中断里的 `endpoint_serial_feed()` 只做帧累积（含一次
   最多 64 字节的 CRC）；`endpoint_usb_rx_isr()` 只做 64 B PMA 拷贝并保持端点
   NAK（主循环处理完再 arm，用 USB 流控代替队列）。解析、调用 handler、应答都在主循环的
@@ -480,8 +487,13 @@ Zadig 装 WinUSB（CDC 不受影响）。
   `can_timeout` 置 0 来绕过）；**进入 MOTOR_MODE 必须先 `zero_commands()`**
   （`fsm_enter_state`），否则空闲态写入的 `t_ff` 会在门极打开的第一拍生效。
   它们的范围是运行期决定的（`range_dynamic: true`），描述符里不发 `min`/`max`。
-- 上位机：`python tools/mc_ep.py --port COMx tree|get|set|call|dump|monitor`
-  （需要 `pip install pyserial`）。工具会先下载描述符，再按名字收发。
+- 上位机：`python tools/mc_ep.py --can tree|get|set|call|dump|monitor|probe`
+  （`--interface slcan|pcan|socketcan|…`；**出货板没有 USB 座，客户只走这条**）。
+  同一套命令也支持开发板上的 `--port COMx`（CDC）和 `--usb`（vendor interface）。
+  工具会先下载描述符，再按名字收发。CAN 侧走 CYBERBEAST 的
+  `PARAM_READ/WRITE` + 描述符 `0x24/0x25`，**没有 status 字节、写 ACK 不带成败**，
+  所以 `set` 一律读回。CAN 传输的硬件无关回归测试是
+  `python tools/test_mc_ep_can.py`（`make hosttest-py`），见 `docs/DEV.md` "测试"。
 - **线上描述符必须是纯 ASCII，且类型名必须是 ODrive/Fibre 认得的**：
   `params.json` 里的中文 `brief` 只用于文档，**不进**设备描述符（OM/MS 端的
   JointSDK 轻量解析器不支持 `\uXXXX`，会整体解析失败）；动作端点在

@@ -5,46 +5,116 @@
 
 ## 1. 连接
 
-板子的 USB 现在是一个复合设备，同一根线上有两个入口：
+**出货版本默认只有 CAN 接口（没有 USB 座）**，所以日常使用就是 `mc_ep.py --can`。
+开发/台架板子上还有一个 USB 复合设备（CDC 串口 + vendor interface），命令行完全
+一样，只是把 `--can …` 换成 `--port COM7` 或 `--usb`。
 
 | 入口 | 用途 | 需要 |
 |---|---|---|
-| CDC 虚拟串口 | ASCII 菜单 + `mc_ep.py --port`（和以前一样） | `pip install pyserial` |
-| vendor interface 2（fibre） | `mc_ep.py --usb`，一个 USB 包一帧，更快 | `pip install pyusb libusb-package`；Windows 用 Zadig 给 interface 2 装 WinUSB |
+| **CAN（CYBERBEAST SDO）** | `mc_ep.py --can`：**出货版本的唯一入口**，设备已经在总线上就不用再接线 | slcan(CANable)：`pip install pyserial`；其它后端：`pip install python-can` |
+| CDC 虚拟串口（开发板） | ASCII 菜单 + `mc_ep.py --port`（和以前一样） | `pip install pyserial` |
+| vendor interface 2（开发板） | `mc_ep.py --usb`，一个 USB 包一帧，更快 | `pip install pyusb libusb-package`；Windows 用 Zadig 给 interface 2 装 WinUSB |
 
-- Windows 记下 COM 号（如 `COM7`），Linux 是 `/dev/ttyACM0`。
 - 工具：`tools/mc_ep.py`
-- Windows 装驱动：Zadig → Options → List All Devices → 选 `0x1209/0x4342`
-  的 **interface 2**（不是整个设备）→ 驱动选 WinUSB 或 libusb-win32
-  （两者都验证可用）→ Replace Driver。CDC 那两个 interface 保持 `usbser`
-  不动，COM 口照常可用。
 
 ```bash
-python tools/mc_ep.py --port COM7 tree   # CDC
+python tools/mc_ep.py --can tree                          # CAN（默认 slcan/CANable，自动找适配器）
+python tools/mc_ep.py --can --interface pcan get config.i_max
+python tools/mc_ep.py --can --interface socketcan --channel can0 tree
+
+# 开发/台架板子还可以走 USB（参数名和输出完全一样）
+python tools/mc_ep.py --port COM7 tree   # CDC 虚拟串口
 python tools/mc_ep.py --usb tree         # vendor interface（fibre）
 ```
 
 设备会先回送一份 JSON 描述符（名字/ID/类型/权限），工具据此把名字映射到 ID，
-所以**固件升级后脚本不用改**。`--baud` 对 CDC 无实际作用。
+所以**固件升级后脚本不用改**。
 
+> 带 USB 的开发板：Windows 上记下 COM 号（如 `COM7`），Linux 是 `/dev/ttyACM0`，
+> `--baud` 对 CDC 无实际作用。要用 `--usb` 的话，Windows 用 Zadig → Options →
+> List All Devices → 选 `0x1209/0x4342` 的 **interface 2**（不是整个设备）→ 驱动选
+> WinUSB 或 libusb-win32（两者都验证可用）→ Replace Driver；CDC 那两个 interface
+> 保持 `usbser` 不动，COM 口照常可用。
+>
 > 同一个串口只能有一个使用者：`mc_ep.py` 运行时不要再开串口终端。原来的
 > ASCII 菜单仍然可用（115200 8N1：`m` 电机、`c` 标定、`s` 设置、`e` 编码器、
 > `z` 零点、`b` 进 OpenBootloader（CAN 升级）、`d` 进 ROM DFU）。
 >
 > `--usb` 只占用 vendor interface，**不会**和 CDC 串口互相干扰；但请只在
 > 一个进程里同时使用（不要两个 `--usb` 进程抢同一组端点）。
+> CAN 侧同理：一个适配器同时只能被一个进程打开。
+>
+> **出货版本没有 USB 座**，所以也没有 ASCII 菜单和 `myprintf` 的调试输出：
+> 本文里提到“串口打印 / 串口菜单”的地方只在带 USB 的开发/台架板子上可见，
+> 出货机上等价的信息用 `--can get telemetry.*` / `system.*` 读。
+>
+> `tools/` 里除 `mc_ep.py` 之外的台架脚本（`csv_csp_test.py`、`gear_test.py`、
+> `cogging_test.py`、`torque_test.py`、`cb_bench.py`）目前只走 USB
+> （`--port`/`--usb`），需要带 USB 的开发板；出货机上用 `mc_ep.py --can`
+> 做同样的读写即可（`set command.*` + `monitor`）。
+
+### 通过 CAN 访问参数（`--can`，出货默认用法）
+
+`--can` 走 CYBERBEAST 协议的 SDO（`PARAM_READ`/`PARAM_WRITE`）和描述符流
+（`0x24/0x25`），命令和参数名与 `--port`/`--usb` 完全一样。前提：
+
+- `config.can_prot = 1`（CYBERBEAST，出厂默认；旧 11-bit 协议**没有** endpoint 访问）；
+- 速率：
+  - **Classic**（出厂默认）：`--bitrate` = `config.can_baud`（1 Mbit/s）；
+  - **CAN FD**（`config.can_baud` 为 2M/4M/5M）：固件把**仲裁域固定成 1 Mbit/s**，
+    所以 `--bitrate` 保持默认 `1000000` 并加 `--fd`，把 `config.can_baud` 填到
+    `--data-bitrate`（固件只接受 2M/4M/5M）；
+- `--can-id` 等于 `config.can_id`（出厂 1）；`--master-id` 是本机主站 ID（默认 `0xFE`）。
+
+```bash
+# CANable（slcan）：只多要 pyserial；不给 --channel 时自动找 16D0:117E 的串口
+python tools/mc_ep.py --can --interface slcan --channel COM3 tree
+# PCAN-USB（需要 PEAK 驱动 + pip install python-can）；--channel 默认 PCAN_USBBUS1
+python tools/mc_ep.py --can --interface pcan --bitrate 1000000 get config.i_max
+# Linux SocketCAN（接口要先配好：sudo ip link set can0 up type can bitrate 1000000）
+python tools/mc_ep.py --can --interface socketcan --channel can0 tree
+# CAN FD（config.can_baud = 5000000）：仲裁域 1M + 数据域 5M
+python tools/mc_ep.py --can --interface slcan --channel COM3 --fd --data-bitrate 5000000 tree
+```
+
+| 后端 | 依赖 | 备注 |
+|---|---|---|
+| `slcan`（CANable/CandleLight，默认） | pyserial | 工具自带实现，含 CAN FD（数据域只支持 2M/5M） |
+| `pcan`（PCAN-USB） | python-can + PEAK 驱动 | 速率由 `--bitrate`/`--data-bitrate` 设定 |
+| `socketcan`（Linux） | python-can | 速率与是否 FD 由 `ip link` 决定 |
+| `gs_usb` / `kvaser` / `vector` / … | python-can | `--interface` 填 python-can 的后端名 |
+
+规则与坑：
+
+- **写没有状态码**：CAN 的写 ACK 不带成败位（只读端点、`require` 不满足、被限幅
+  都照样 ACK），所以 `set` 会立刻把值读回来打印；要确认就 `get` 一次。
+- `call` 用 `PARAM_READ` 触发（ODrive/JointSDK 的语义），`--read` 对它没有区别。
+- 固件的“主站 ID”是从收到的帧里学的，**同一条总线上只能有一个主站在发命令**
+  （否则应答/心跳会被发到另一个主站去）。
+- 速度：Classic 1M 下 `dump`（220 个参数）约 3 s，`monitor` 的刷新率受往返时间限制
+  （1M 时大约 100~200 Hz 上限）；FD 5M 更快。
+- **诊断**：`python tools/mc_ep.py --can <连接参数> probe` 先只听 2 s —— 打印总线上
+  每个 `src`/消息类型的帧数（心跳能立刻告诉你节点 ID 对不对），再试读一次描述符。
+- ⚠ **用错波特率会把设备打进 bus-off**：适配器速率不对时设备的帧没人应答，
+  `can_tec` 十几帧就涨到 ~248，之后 CAN 完全“死”掉（换回正确速率也不会自己恢复）。
+  恢复（用 USB）：
+  `python tools/mc_ep.py --port COMx get telemetry.can_tec`（>128 就是中招了）→
+  `python tools/mc_ep.py --port COMx call action.reboot`。
 
 ## 2. 读写参数
 
 ```bash
-python tools/mc_ep.py --port COM7 tree                 # 参数树
-python tools/mc_ep.py --port COM7 descriptor           # 原始 JSON 描述符
-python tools/mc_ep.py --port COM7 get  <name>          # 读
-python tools/mc_ep.py --port COM7 set  <name> <value>  # 写（打印实际值）
-python tools/mc_ep.py --port COM7 call <action>        # 执行 action.*
-python tools/mc_ep.py --port COM7 dump                 # 读所有可读参数
-python tools/mc_ep.py --port COM7 monitor <name>... --rate 20
+python tools/mc_ep.py --can tree                 # 参数树
+python tools/mc_ep.py --can descriptor           # 原始 JSON 描述符
+python tools/mc_ep.py --can get  <name>          # 读
+python tools/mc_ep.py --can set  <name> <value>  # 写（打印实际值）
+python tools/mc_ep.py --can call <action>        # 执行 action.*
+python tools/mc_ep.py --can dump                 # 读所有可读参数
+python tools/mc_ep.py --can monitor <name>... --rate 20
 ```
+
+上面所有命令就是出货版本的正常用法。带 USB 的开发/台架板子把 `--can` 换成
+`--port COM7`（CDC）或 `--usb` 即可，参数名和输出完全一样。
 
 | 前缀 | 内容 | 权限 |
 |---|---|---|
@@ -75,12 +145,12 @@ python tools/mc_ep.py --port COM7 monitor <name>... --rate 20
 ### 设备身份
 
 ```bash
-python tools/mc_ep.py --port COM7 get system.fw_version_major      # 2
-python tools/mc_ep.py --port COM7 get system.fw_version_minor      # 3
-python tools/mc_ep.py --port COM7 get system.fw_version_revision   # 0
-python tools/mc_ep.py --port COM7 get system.fw_version_unreleased # 0 = 正式版
-python tools/mc_ep.py --port COM7 get system.hw_version_major      # 1 (CBL89)
-python tools/mc_ep.py --port COM7 get system.serial_number         # 十进制
+python tools/mc_ep.py --can get system.fw_version_major      # 2
+python tools/mc_ep.py --can get system.fw_version_minor      # 3
+python tools/mc_ep.py --can get system.fw_version_revision   # 0
+python tools/mc_ep.py --can get system.fw_version_unreleased # 0 = 正式版
+python tools/mc_ep.py --can get system.hw_version_major      # 1 (CBL89)
+python tools/mc_ep.py --can get system.serial_number         # 十进制
 ```
 
 - 版本号只有**整数三元组**这一个来源：`fw_version_major.minor.revision`
@@ -105,8 +175,11 @@ import sys
 sys.path.insert(0, "tools")
 from mc_ep import Device
 
-dev = Device("COM7", 115200, 1.0)      # CDC
-# dev = Device(use_usb=True)            # vendor interface（需要 pyusb/WinUSB）
+dev = Device(can_interface="slcan")     # CAN（出货默认；不填 channel 会自动找 CANable）
+# dev = Device(can_interface="pcan", can_bitrate=1_000_000)
+# dev = Device(can_interface="socketcan", can_channel="can0")
+# dev = Device("COM7", 115200, 1.0)     # 开发板 CDC
+# dev = Device(use_usb=True)            # 开发板 vendor interface（需要 pyusb/WinUSB）
 dev.fetch_descriptor()
 print(dev.read("config.gr"))
 dev.write("config.gr", 9.0)
@@ -120,10 +193,10 @@ dev.close()
 改参数只改 RAM，**断电会丢**：
 
 ```bash
-python tools/mc_ep.py --port COM7 call action.save
-python tools/mc_ep.py --port COM7 get system.save_status
+python tools/mc_ep.py --can call action.save
+python tools/mc_ep.py --can get system.save_status
 # 0 还没执行 / 1 成功 / 2 因门极使能跳过 / 3 写失败
-python tools/mc_ep.py --port COM7 get system.prefs_sequence   # 成功时 +1
+python tools/mc_ep.py --can get system.prefs_sequence   # 成功时 +1
 ```
 
 `call action.save` 返回 OK 只表示**已受理**，真正的擦写在主循环里做；用
@@ -134,13 +207,13 @@ python tools/mc_ep.py --port COM7 get system.prefs_sequence   # 成功时 +1
 ## 4. 动作与模式
 
 ```bash
-python tools/mc_ep.py --port COM7 call action.idle_mode    # 空闲/停机：关门极、清锁存故障
-python tools/mc_ep.py --port COM7 call action.motor_mode    # 进入电机模式
-python tools/mc_ep.py --port COM7 call action.calibrate     # 标定（相序/编码器/R/L/磁链）
-python tools/mc_ep.py --port COM7 call action.zero          # 当前位置设为零点并保存
-python tools/mc_ep.py --port COM7 call action.clear_fault   # 等价于 action.idle_mode
-python tools/mc_ep.py --port COM7 call action.reboot        # 重启（应答发出后 ~0.5 s 复位）
-python tools/mc_ep.py --port COM7 call action.reset_config  # 恢复出厂默认值并保存
+python tools/mc_ep.py --can call action.idle_mode    # 空闲/停机：关门极、清锁存故障
+python tools/mc_ep.py --can call action.motor_mode    # 进入电机模式
+python tools/mc_ep.py --can call action.calibrate     # 标定（相序/编码器/R/L/磁链）
+python tools/mc_ep.py --can call action.zero          # 当前位置设为零点并保存
+python tools/mc_ep.py --can call action.clear_fault   # 等价于 action.idle_mode
+python tools/mc_ep.py --can call action.reboot        # 重启（应答发出后 ~0.5 s 复位）
+python tools/mc_ep.py --can call action.reset_config  # 恢复出厂默认值并保存
 ```
 
 `action.idle_mode` 会停机并清故障，是正常的"急停"用法。
@@ -186,15 +259,15 @@ python tools/torque_test.py --port COM7 --torques 0,2,4,6 --dwell 5
 单档手动操作就是：
 
 ```bash
-python tools/mc_ep.py --port COM7 call action.idle_mode
-python tools/mc_ep.py --port COM7 call action.motor_mode
-python tools/mc_ep.py --port COM7 get telemetry.gate_drive     # 应为 true
-python tools/mc_ep.py --port COM7 set command.kp 0
-python tools/mc_ep.py --port COM7 set command.kd 0
-python tools/mc_ep.py --port COM7 set command.t_ff 3
-python tools/mc_ep.py --port COM7 get telemetry.torque
-python tools/mc_ep.py --port COM7 set command.t_ff 0
-python tools/mc_ep.py --port COM7 call action.idle_mode
+python tools/mc_ep.py --can call action.idle_mode
+python tools/mc_ep.py --can call action.motor_mode
+python tools/mc_ep.py --can get telemetry.gate_drive     # 应为 true
+python tools/mc_ep.py --can set command.kp 0
+python tools/mc_ep.py --can set command.kd 0
+python tools/mc_ep.py --can set command.t_ff 3
+python tools/mc_ep.py --can get telemetry.torque
+python tools/mc_ep.py --can set command.t_ff 0
+python tools/mc_ep.py --can call action.idle_mode
 ```
 
 （手动分批敲命令时，两条之间可能超过 `can_timeout`，固件会先把命令清零——这是
@@ -251,13 +324,13 @@ python tools/mc_ep.py --port COM7 call action.idle_mode
 | `config.tune_margin` | × | 1.5 | `action.tune_gains` 对速度环的放大系数：摩擦/齿隙大的关节要调大；1 = 纯公式（只适合纯惯性负载）。本台架 GR 9 + 电流环按标定 R/L 推导后实测 1.5（1.7 起超调 >25%，2.2 失稳） |
 
 ```bash
-python tools/mc_ep.py --port COM7 set config.pos_gain 20
-python tools/mc_ep.py --port COM7 call action.motor_mode
-python tools/mc_ep.py --port COM7 set command.mode 1
-python tools/mc_ep.py --port COM7 set command.v_des 1.0
-python tools/mc_ep.py --port COM7 monitor telemetry.vel_err telemetry.vel_integral
-python tools/mc_ep.py --port COM7 set command.mode 0      # 回阻抗/MIT
-python tools/mc_ep.py --port COM7 call action.idle_mode
+python tools/mc_ep.py --can set config.pos_gain 20
+python tools/mc_ep.py --can call action.motor_mode
+python tools/mc_ep.py --can set command.mode 1
+python tools/mc_ep.py --can set command.v_des 1.0
+python tools/mc_ep.py --can monitor telemetry.vel_err telemetry.vel_integral
+python tools/mc_ep.py --can set command.mode 0      # 回阻抗/MIT
+python tools/mc_ep.py --can call action.idle_mode
 ```
 
 #### 不用脚本，手工发 CSV / CSP
@@ -269,7 +342,7 @@ python tools/mc_ep.py --port COM7 call action.idle_mode
    （MIT）** —— 于是关节卸力、你再写 `v_des` 也没反应（因为已经不是 CSV 模式了）。
    手动测试先放大租约，测完改回去：
    ```bash
-   python tools/mc_ep.py --port COM6 set config.can_timeout 60000    # 60 s
+   python tools/mc_ep.py --can set config.can_timeout 60000    # 60 s
    ```
 2. **CSP 要先把 `p_des` 写成当前位置，再切模式**。先 `set command.mode 2` 的话，
    `p_des` 还是 0（或上一次的值），位置环会立刻按 `pos_gain·err` 冲过去。
@@ -282,20 +355,20 @@ python tools/mc_ep.py --port COM7 call action.idle_mode
    `set config.p_max 0`（会同时把 `p_min` 置 0）等于**关掉软限位**：通信层与位置环
    都不再钳 `p_des`，只适合调试/行程未知的机构，**别留在整机上**。
 4. **`action.motor_mode` 只能在菜单态调用**，否则返回状态 6；`action.idle_mode`
-   回菜单并关栅。`monitor` 会独占串口，Ctrl+C 退出后才能发下一条命令。
+   回菜单并关栅。`monitor` 会独占连接（串口或 CAN 适配器），Ctrl+C 退出后才能发下一条命令。
 
 **CSV**（速度环）：
 
 ```bash
-python tools/mc_ep.py --port COM6 set config.can_timeout 60000
-python tools/mc_ep.py --port COM6 call action.motor_mode          # 开门极（需菜单态）
-python tools/mc_ep.py --port COM6 set command.mode 1              # 0=MIT 1=CSV 2=CSP
-python tools/mc_ep.py --port COM6 set command.v_des 1.0           # 输出轴 rad/s
-python tools/mc_ep.py --port COM6 monitor telemetry.velocity_pll telemetry.vel_err telemetry.i_q --rate 5
-python tools/mc_ep.py --port COM6 set command.v_des -1.0          # 反向
-python tools/mc_ep.py --port COM6 set command.v_des 0
-python tools/mc_ep.py --port COM6 call action.idle_mode
-python tools/mc_ep.py --port COM6 set config.can_timeout 100
+python tools/mc_ep.py --can set config.can_timeout 60000
+python tools/mc_ep.py --can call action.motor_mode          # 开门极（需菜单态）
+python tools/mc_ep.py --can set command.mode 1              # 0=MIT 1=CSV 2=CSP
+python tools/mc_ep.py --can set command.v_des 1.0           # 输出轴 rad/s
+python tools/mc_ep.py --can monitor telemetry.velocity_pll telemetry.vel_err telemetry.i_q --rate 5
+python tools/mc_ep.py --can set command.v_des -1.0          # 反向
+python tools/mc_ep.py --can set command.v_des 0
+python tools/mc_ep.py --can call action.idle_mode
+python tools/mc_ep.py --can set config.can_timeout 100
 ```
 
 判读：`velocity_pll` 应跟住 `v_des`；低速时 ±0.2~0.4 rad/s 的抖动是干摩擦 + 齿隙，
@@ -310,14 +383,14 @@ python tools/mc_ep.py --port COM6 set config.can_timeout 100
 **CSP**（位置环）：
 
 ```bash
-python tools/mc_ep.py --port COM6 set config.can_timeout 60000
-python tools/mc_ep.py --port COM6 call action.motor_mode
-python tools/mc_ep.py --port COM6 get telemetry.position          # 记下 P0（rad）
-python tools/mc_ep.py --port COM6 set command.p_des <P0+0.3>      # ← 先给目标
-python tools/mc_ep.py --port COM6 set command.mode 2              # ← 再切模式
-python tools/mc_ep.py --port COM6 monitor telemetry.position telemetry.pos_err --rate 5
-python tools/mc_ep.py --port COM6 call action.idle_mode
-python tools/mc_ep.py --port COM6 set config.can_timeout 100
+python tools/mc_ep.py --can set config.can_timeout 60000
+python tools/mc_ep.py --can call action.motor_mode
+python tools/mc_ep.py --can get telemetry.position          # 记下 P0（rad）
+python tools/mc_ep.py --can set command.p_des <P0+0.3>      # ← 先给目标
+python tools/mc_ep.py --can set command.mode 2              # ← 再切模式
+python tools/mc_ep.py --can monitor telemetry.position telemetry.pos_err --rate 5
+python tools/mc_ep.py --can call action.idle_mode
+python tools/mc_ep.py --can set config.can_timeout 100
 ```
 
 判读：`pos_err` 收敛到 0.0x mrad，`position` 最后精确等于 `p_des`
@@ -329,10 +402,10 @@ python tools/mc_ep.py --port COM6 set config.can_timeout 100
 
 ```bash
 # 例：限位 0~10 rad，关节当前在 15 rad
-python tools/mc_ep.py --port COM6 set command.mode 2        # 冻结：不动
-python tools/mc_ep.py --port COM6 set command.p_des 12      # 解除冻结，退到 12（仍在界外）
-python tools/mc_ep.py --port COM6 set command.p_des 13      # 无效：被压回 12，无法远离限位
-python tools/mc_ep.py --port COM6 set command.p_des 5       # 继续往界内，正常跟踪
+python tools/mc_ep.py --can set command.mode 2        # 冻结：不动
+python tools/mc_ep.py --can set command.p_des 12      # 解除冻结，退到 12（仍在界外）
+python tools/mc_ep.py --can set command.p_des 13      # 无效：被压回 12，无法远离限位
+python tools/mc_ep.py --can set command.p_des 5       # 继续往界内，正常跟踪
 ```
 
 界内则两种顺序都可以（上面的「先给目标再切模式」仍然是最稳的写法）。如果界外时
@@ -380,12 +453,12 @@ python tools/mc_ep.py --port COM6 set command.p_des 5       # 继续往界内，
 （先加速、匀速、再减速），用梯形规划：
 
 ```bash
-python tools/mc_ep.py --port COM6 set config.input_mode 5       # 5 = TRAP_TRAJ
-python tools/mc_ep.py --port COM6 set config.trap_vel_limit 2.0  # 轨迹巡航速度（输出轴 rad/s）
-python tools/mc_ep.py --port COM6 set config.trap_accel_limit 10 # rad/s²
-python tools/mc_ep.py --port COM6 set config.trap_decel_limit 5  # 减速更缓
-python tools/mc_ep.py --port COM6 set command.mode 2             # CSP
-python tools/mc_ep.py --port COM6 set command.p_des 1.0
+python tools/mc_ep.py --can set config.input_mode 5       # 5 = TRAP_TRAJ
+python tools/mc_ep.py --can set config.trap_vel_limit 2.0  # 轨迹巡航速度（输出轴 rad/s）
+python tools/mc_ep.py --can set config.trap_accel_limit 10 # rad/s²
+python tools/mc_ep.py --can set config.trap_decel_limit 5  # 减速更缓
+python tools/mc_ep.py --can set command.mode 2             # CSP
+python tools/mc_ep.py --can set command.p_des 1.0
 ```
 
 - **轨迹有自己的一组限值**（对应 ODrive 的 `trap_traj.config.*`）：
@@ -421,23 +494,23 @@ python tools/mc_ep.py --port COM6 set command.p_des 1.0
   有了它就能用公式算推荐增益，`telemetry.pos_error_fault_suggest` 也会给出跟随误差
   故障的推荐阈值。
   ```bash
-  python tools/mc_ep.py --port COM6 call action.measure_inertia
-  python tools/mc_ep.py --port COM6 get system.inertia_status
-  python tools/mc_ep.py --port COM6 get config.inertia
-  python tools/mc_ep.py --port COM6 call action.save      # 确认可用后再保存
+  python tools/mc_ep.py --can call action.measure_inertia
+  python tools/mc_ep.py --can get system.inertia_status
+  python tools/mc_ep.py --can get config.inertia
+  python tools/mc_ep.py --can call action.save      # 确认可用后再保存
   ```
   然后 `vel_gain = inertia·ω_c/(KT·GR)`、`pos_gain ≈ ω_c/5`（`ω_c` 300–600 rad/s 起步，
   见 [DEV.md](DEV.md) 的“惯量标定与增益推荐值”）。
 - **自动算增益**：`action.tune_gains` 用上面的惯量一步算出三个外环增益并**直接写进
   RAM**（不自动保存）：
   ```bash
-  python tools/mc_ep.py --port COM6 set config.omega_c 450       # 目标穿越频率
-  python tools/mc_ep.py --port COM6 set config.tune_margin 2.6   # 摩擦大的关节放大速度环；1 = 纯公式
-  python tools/mc_ep.py --port COM6 call action.tune_gains
-  python tools/mc_ep.py --port COM6 get config.vel_gain          # 已经写进去了
+  python tools/mc_ep.py --can set config.omega_c 450       # 目标穿越频率
+  python tools/mc_ep.py --can set config.tune_margin 2.6   # 摩擦大的关节放大速度环；1 = 纯公式
+  python tools/mc_ep.py --can call action.tune_gains
+  python tools/mc_ep.py --can get config.vel_gain          # 已经写进去了
   python tools/csv_csp_test.py --port COM6 csv --vel 1.0         # 验证
   python tools/csv_csp_test.py --port COM6 csp --step 0.2
-  python tools/mc_ep.py --port COM6 call action.save             # 满意后再保存
+  python tools/mc_ep.py --can call action.save             # 满意后再保存
   ```
   写入关系：`vel_gain = tune_margin·J·ω_c/(KT·GR)`、
   `vel_integrator_gain = vel_gain·clamp(ω_c/25, 5, 30)`、`pos_gain = ω_c/20`。
@@ -479,9 +552,9 @@ python tools/mc_ep.py --port COM6 set command.p_des 1.0
 可降到 1–2 A，R/L/磁链测量时会自动限制在 `config.i_max` 以内）；门极关闭（菜单）。
 
 ```bash
-python tools/mc_ep.py --port COM7 call action.idle_mode
-python tools/mc_ep.py --port COM7 set config.i_cal 2.0
-python tools/mc_ep.py --port COM7 call action.calibrate
+python tools/mc_ep.py --can call action.idle_mode
+python tools/mc_ep.py --can set config.i_cal 2.0
+python tools/mc_ep.py --can call action.calibrate
 ```
 
 标定分四个阶段，全部自动完成（14 极对时约 30 s，串口会打印每一步的结果）：
@@ -501,13 +574,13 @@ python tools/mc_ep.py --port COM7 call action.calibrate
 完成后自动回菜单、应用结果并保存（LUT 写入隐藏记录 `internal.encoder_lut`）。核对：
 
 ```bash
-python tools/mc_ep.py --port COM7 get system.save_status      # 1
-python tools/mc_ep.py --port COM7 get system.prefs_sequence   # 比标定前 +1
-python tools/mc_ep.py --port COM7 get config.r_phase          # 欧姆
-python tools/mc_ep.py --port COM7 get config.l_d              # 亨利
-python tools/mc_ep.py --port COM7 get config.l_q
-python tools/mc_ep.py --port COM7 get config.kt               # N-m/A
-python tools/mc_ep.py --port COM7 get telemetry.ld_lq_diff    # Ld-Lq
+python tools/mc_ep.py --can get system.save_status      # 1
+python tools/mc_ep.py --can get system.prefs_sequence   # 比标定前 +1
+python tools/mc_ep.py --can get config.r_phase          # 欧姆
+python tools/mc_ep.py --can get config.l_d              # 亨利
+python tools/mc_ep.py --can get config.l_q
+python tools/mc_ep.py --can get config.kt               # N-m/A
+python tools/mc_ep.py --can get telemetry.ld_lq_diff    # Ld-Lq
 ```
 
 串口会在 R 阶段两步之间打印 `R step 1: <V> @ <A>`。相电阻大时第二步电压会被
@@ -559,18 +632,18 @@ GEAR: second encoder found, but gear config is invalid (T1=30 T2=27) - memory of
 
 ```bash
 # 1) 填齿数与减速比（出厂默认 30/27、GR=9、副轴反向；换电机/换减速机时才要改）
-python tools/mc_ep.py --port COM7 set config.gear_teeth_first 30
-python tools/mc_ep.py --port COM7 set config.gear_teeth_sec 27
-python tools/mc_ep.py --port COM7 set config.gear_sec_reversed true
-python tools/mc_ep.py --port COM7 set config.gr 9.0
+python tools/mc_ep.py --can set config.gear_teeth_first 30
+python tools/mc_ep.py --can set config.gear_teeth_sec 27
+python tools/mc_ep.py --can set config.gear_sec_reversed true
+python tools/mc_ep.py --can set config.gr 9.0
 
 # 2) 把"现在这个位置"定为输出轴的绝对参考（不转电机，门极关闭时）
-python tools/mc_ep.py --port COM7 call action.gear_capture
-python tools/mc_ep.py --port COM7 get system.gear_status     # 1 = 成功
-python tools/mc_ep.py --port COM7 get telemetry.sec_enc_raw  # 第二颗编码器的原始读数
+python tools/mc_ep.py --can call action.gear_capture
+python tools/mc_ep.py --can get system.gear_status     # 1 = 成功
+python tools/mc_ep.py --can get telemetry.sec_enc_raw  # 第二颗编码器的原始读数
 
 # 3) 存盘（capture 只改 RAM）
-python tools/mc_ep.py --port COM7 call action.save
+python tools/mc_ep.py --can call action.save
 ```
 
 之后每次上电，开机横幅会打印 `Gear encoder: restored multiturn position ... turns`，
@@ -723,20 +796,20 @@ dev.call("action.save")
 升级前（建议）：
 
 ```bash
-python tools/mc_ep.py --port COM7 get system.prefs_sequence
-python tools/mc_ep.py --port COM7 get config.gr
-python tools/mc_ep.py --port COM7 get config.m_zero
+python tools/mc_ep.py --can get system.prefs_sequence
+python tools/mc_ep.py --can get config.gr
+python tools/mc_ep.py --can get config.m_zero
 ```
 
 升级后核对：
 
 ```bash
-python tools/mc_ep.py --port COM7 get system.fw_version_major   # 与发布说明一致
-python tools/mc_ep.py --port COM7 get system.fw_version_minor
-python tools/mc_ep.py --port COM7 get system.fw_version_revision
-python tools/mc_ep.py --port COM7 get system.prefs_loaded       # true
-python tools/mc_ep.py --port COM7 get system.config_schema      # 与发布说明一致
-python tools/mc_ep.py --port COM7 get config.gr                 # 与基线一致
+python tools/mc_ep.py --can get system.fw_version_major   # 与发布说明一致
+python tools/mc_ep.py --can get system.fw_version_minor
+python tools/mc_ep.py --can get system.fw_version_revision
+python tools/mc_ep.py --can get system.prefs_loaded       # true
+python tools/mc_ep.py --can get system.config_schema      # 与发布说明一致
+python tools/mc_ep.py --can get config.gr                 # 与基线一致
 ```
 
 LUT 的验证：把电机停到升级前同一机械角度，比较 `telemetry.encoder_raw`。
@@ -747,6 +820,8 @@ LUT 的验证：把电机停到升级前同一机械角度，比较 `telemetry.e
 | 个别参数变默认 | 该 ID 的类型/长度变了（不应发生） | 查发布说明；备份恢复 |
 | `system.fw_version_*` 没变 | 没烧进去 | 重试 |
 | 工具报状态 7 | 描述符 CRC 变了 | 用新版 `mc_ep.py`，自动重下描述符 |
+| `--can` 一帧都收不到 | 波特率/协议/节点 ID 不匹配，或设备已被打进 bus-off | 先 `--can … probe`（只监听）；`telemetry.can_tec > 128` 就 `call action.reboot`（见 §1） |
+| `--can set` 打印的值没变 | ACK 不带状态：端点只读、`require` 不满足或被限幅 | `get` 确认；只读/状态类错误用 `--port`/`--usb` 看（那边有状态码 4/6） |
 
 **第一次刷入 TLV 配置格式的固件**（本仓库之前的版本用的是裸数组）会忽略旧块，
 参数回默认值，需要重新设置 + 标定一次；之后每次升级都会保留。
@@ -757,13 +832,15 @@ LUT 的验证：把电机停到升级前同一机械角度，比较 `telemetry.e
 CAN 把新的 app 镜像写进去。本固件**没有** USB/串口升级通道，bootloader 只认 CAN。
 
 ```bash
-# 1) 让设备进 bootloader（门极关闭；串口菜单按 'b' 也行）
-python tools/mc_ep.py --port COM7 call action.enter_bootloader_mode
+# 1) 让设备进 bootloader（门极关闭；带 USB 的开发板也可以串口菜单按 'b'）
+python tools/mc_ep.py --can call action.enter_bootloader_mode
 
 # 2) 用本仓库自带的 CAN 工具升级（tools/blcan.py，需要 pip install python-can pyserial；
 #    bootloader 固定 500 kbit/s、Classic 帧，支持 CANable(slcan) / PCAN）
-python tools/blcan.py --channel COM7 sync
-python tools/blcan.py --channel COM7 upgrade --firmware build/mit_h473.bin \
+#    --channel 填 CANable 的串口（上面 mc_ep.py 自动找到的那个），或者用
+#    --interface pcan / socketcan
+python tools/blcan.py --channel COM3 sync
+python tools/blcan.py --channel COM3 upgrade --firmware build/mit_h473.bin \
         --erase auto --addr 0x08008000 --chunk-size 256 --verify --go-addr 0x08008000
 ```
 

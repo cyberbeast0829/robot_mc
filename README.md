@@ -41,12 +41,28 @@ MSYS2 bash：Chocolatey 的 make 用 cmd，`mkdir -p` 会失败。
 
 ## 上位机
 
+出货版本默认**只有 CAN 接口**（没有 USB 座），所以上位机走 CAN：
+
 ```bash
-pip install pyserial
-python tools/mc_ep.py --port COM7 tree
-python tools/mc_ep.py --port COM7 get config.i_max
-python tools/mc_ep.py --port COM7 set config.i_max 3.5
-python tools/mc_ep.py --port COM7 call action.save
+pip install pyserial python-can
+python tools/mc_ep.py --can tree                                # CANable/slcan，自动找适配器
+python tools/mc_ep.py --can get config.i_max
+python tools/mc_ep.py --can set config.i_max 3.5
+python tools/mc_ep.py --can call action.save
+python tools/mc_ep.py --can get system.save_status               # 1 = 保存成功
+python tools/mc_ep.py --can probe                                # 链路诊断：只监听总线
+
+# 其它 CAN 后端（python-can 的名字）
+python tools/mc_ep.py --can --interface pcan get config.i_max              # PCAN-USB
+python tools/mc_ep.py --can --interface socketcan --channel can0 tree      # Linux
+python tools/mc_ep.py --can --fd --data-bitrate 5000000 tree               # CAN FD 5M
+```
+
+开发/台架板子上还有 USB 复合设备，参数名和输出完全一样：
+
+```bash
+python tools/mc_ep.py --port COM7 tree   # CDC 虚拟串口（只需 pyserial）
+python tools/mc_ep.py --usb tree         # vendor interface（还需 pyusb + WinUSB）
 ```
 
 ## 许可证
