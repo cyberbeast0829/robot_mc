@@ -68,7 +68,7 @@ Two equivalent builds produce the same firmware:
   Bench-verify with the **Keil** image (`Keil/Objects/mit_h473.axf`) until this is fixed, and
   don't conclude "the firmware is broken" from a `make` image symptom.
 - Testing: `make check` (generated tables/docs are current) and `make hosttest`
-  (`tools/test_{prefs_codec,can_cyberbeast,motion_law,dual_gear,cogging,endpoint_proto}.c`,
+  (`tools/test_{prefs_codec,can_cyberbeast,motion_law,dual_gear,cogging,scope_law,endpoint_proto}.c`,
   no target hardware) are the only automated checks; `make hosttest-py`
   (`tools/test_mc_ep_can.py`, needs `python-can`, fake device on a virtual bus)
   covers the host tool's CAN transport.
@@ -247,6 +247,36 @@ Same shape as upstream, with these N32 names:
     清零（`vel_integ` 是测量量）。
   - 台架：`python tools/cogging_test.py --port COMx status|calibrate|dump|on|off|reset`。
 
+- **电流环扫频/带宽实测（scope）**：纯数学在 `Core/Inc/scope_law.h`（host 测
+  `tools/test_scope_law.c`），激励/采集/锁相在 `Core/Src/scope.c`。
+  - 为什么在固件里：endpoint 读一次是一个往返（100~300 Hz），测不到 762 Hz 的
+    穿越点。所以 40 kHz 中断里自己注入、自己采样、自己锁相。
+  - `scope_apply()` 在 `field_weaken()` 之后、`commutate()` 之前**改写两个轴的
+    i_d_des/i_q_des**（被测轴 = bias+激励，另一轴 = 0），`scope_capture()` 在
+    `commutate()` 之后取同一拍；`scope_poll()` 在主循环算结果/导波形/看门狗。
+    ⚠ 不要把它挪到 `commutate()` 之后注入 —— 那样量到的是上一拍的参考。
+  - 频点强制落在 `40 kHz/2048 = 19.53125 Hz` 的整数倍上（累积窗 2048 拍 = 整数
+    周期，锁相无泄漏）；一个频点 64 ms（预滚 512 + 累积 2048）。
+  - 判据：闭环 T → 开环 `L = T/(1−T)` → 在 log|L|–log f 上插值读穿越/PM/GM
+    （`sl_margins()`）。**不要**在线性幅值上插值：1/f 在 mag–log f 里不是直线，
+    粗网格会差 5%。⚠ **相位必须先解卷绕**（`atan2` 给 ±180）：不解卷绕时
+    −180° 穿越永远找不到、跨卷绕点插值会把 PM 算成 180~350°（真值可能是负的，
+    也就是已经失稳）。解卷绕要求相邻频点相位变化 < 180°（4 kHz / 20 点约 35°）。
+  - `telemetry.scope_state == 3` 只在 `scope_finish()` 跑完之后由**主循环**置位
+    （中断只置内部 `acc_done`）；别改回"中断直接置 DONE"，主机有概率读到还没算的 0。
+  - **台架实测（2026-11-19，本机 d 轴，36.8 V）：穿越 = 0.76~0.78×`i_bw`，
+    PM 每 1000 Hz 掉约 10°**：500→390 Hz/84°、1000→776 Hz/79°、
+    2000→1544 Hz/68°、3000→2296 Hz/58°、4000→3032 Hz/48°。等效延迟 ~38 µs
+    （1.5 拍），所以 PM=45° 在 `i_bw ≈ 4300`。**生产建议 ≤2000**，
+    `config.i_bw` 上限 4000 只给台架用。
+  - 中断开销（实测）：scope 空闲约 +10 周期；正弦测量期间 `total_max`
+    5739 → ~6100（**偶发丢拍 ~0.04%**，基线中断本来就占 96%，不是 scope 的锅）。
+  - 空载不锁轴也能测：d 轴注入不出转矩，`telemetry.scope_motion` 实测只有
+    1.5~2.3°；q 轴会把转子甩起来，没有夹具不要做。
+  - 安全：只在 `gate_drive_enabled` 时注入，离开电机模式/故障由 `scope_poll()`
+    自动中止，另有 2 s 硬超时（主机掉线不会一直灌电流）。
+  - 台架：`python tools/iloop_bw.py --port COMx bode|sweep|step [--axis d|q]`。
+
 ATIM1 update/TRGO and the control ISR are fixed at the PWM **peak**, inside the
 low-side sampling window. Preserve `tim.c`'s startup sequence: load the internal
 repetition counter with 0 using UG, then write `REPCNT=1` without another UG.
@@ -331,9 +361,10 @@ Ld/Lq、开环升速测磁链并令 `KT = 1.5·PPAIRS·λ`。测试电流 = `min
   **不要退回 `K_SCALE`/`KI_D`/`KI_Q` 那套固定常数**——它们只是"L≈24 µH、R/L≈1800 rad/s"
   那一台电机的值，作为未标定（`r_phase<=0`）时的兜底保留。重算的四个时机：
   `init_controller_params()`（上电）、`reset_foc()`（每次进电机模式）、标定收尾
-  （`run_fsm_slow()`，并打印推导结果）、endpoint 写 `config.i_bw`。`i_bw` 的上限是
-  **2 拍采样延迟**：1000 Hz 实测穿越 762 Hz、相位裕度 78°；2000 Hz 只剩 59°，
-  300~800 是甜点。
+  （`run_fsm_slow()`，并打印推导结果）、endpoint 写 `config.i_bw`（串口菜单 `b`
+  也调一次）。**实测穿越 = 0.76~0.78×`i_bw`**（离散化 + 2 拍延迟，见下面 scope
+  一节）：默认 **2000**（穿越 1544 Hz、PM 68°），生产建议 ≤2000；
+  上限 4000（PM 48°）只给台架测极限用。
 
 ## 齿轮式双编（断电记忆输出轴位置）
 

@@ -109,7 +109,7 @@ _Static_assert(N_LUT * sizeof(int) == 512, "internal.encoder_lut: 尺寸与固�
 _Static_assert(COG_N * sizeof(int16_t) == 2048, "internal.cogging_lut: 尺寸与固件不一致");
 
 void config_apply_defaults(void){
-	I_BW = 1000.0f;
+	I_BW = 2000.0f;
 	I_MAX = I_MAX_LIMIT;
 	I_FW_MAX = 0.0f;
 	I_MAX_CONT = 14.0f;
@@ -197,9 +197,9 @@ void config_apply_defaults(void){
 }
 
 void config_apply_limits(void){
-	if(!isfinite(I_BW)){I_BW = 1000.0f;}
+	if(!isfinite(I_BW)){I_BW = 2000.0f;}
 	if(I_BW < 100.0f){I_BW = 100.0f;}
-	if(I_BW > 2000.0f){I_BW = 2000.0f;}
+	if(I_BW > 4000.0f){I_BW = 4000.0f;}
 	if(!isfinite(I_MAX)){I_MAX = I_MAX_LIMIT;}
 	if(I_MAX < 0.0f){I_MAX = 0.0f;}
 	if(I_MAX > I_MAX_LIMIT){I_MAX = I_MAX_LIMIT;}

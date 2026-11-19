@@ -54,10 +54,10 @@ extern "C" {
  * 发版时只改这里 + docs/README.md 的版本矩阵 + 发布说明。 */
 #define FW_VERSION_MAJOR		1
 #define FW_VERSION_MINOR		0
-#define FW_VERSION_REVISION		5
+#define FW_VERSION_REVISION		6
 /* 1 = 非正式发布（带 -dirty / -pre 后缀的构建）；正式版必须为 0。
  * 对应 ODrive 的 fw_version_unreleased，由 system.fw_version_unreleased 上报。 */
-#define FW_VERSION_UNRELEASED	0
+#define FW_VERSION_UNRELEASED	1
 /* minor 占百分位（minor < 100）：legacy CAN 的版本变量是 float32，编码成
  * major + 0.01*minor（本版 2.3.0 → 2.03，读作"V2.03"）。用 0.1 的话 minor 只占
  * 十分位，minor ≥ 10 就会进位吃掉整数部分（2.10 → 3.0），所以只能用 0.01。

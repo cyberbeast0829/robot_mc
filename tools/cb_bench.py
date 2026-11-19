@@ -863,12 +863,12 @@ def stage_d(bus):
     check("reading an action triggers it", seq1 is not None and seq1 == (seq0 or 0) + 1,
           "seq %s -> %s" % (seq0, seq1))
 
-    print("[D4] clamp both ends + NaN (config.i_bw, 100..2000)")
+    print("[D4] clamp both ends + NaN (config.i_bw, 100..4000)")
     bw0 = read_float_ep(bus, EP_I_BW)
     sdo_write(bus, EP_I_BW, struct.pack("<f", 1e9))
     time.sleep(0.05)
     bw_hi = read_float_ep(bus, EP_I_BW)
-    check("huge value clamped to max", bw_hi is not None and abs(bw_hi - 2000.0) < 1e-3,
+    check("huge value clamped to max", bw_hi is not None and abs(bw_hi - 4000.0) < 1e-3,
           str(bw_hi))
     sdo_write(bus, EP_I_BW, struct.pack("<f", float("nan")))
     time.sleep(0.05)

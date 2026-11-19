@@ -17,7 +17,7 @@ N32H473CE 三相 FOC 固件。只有三份要读的文档，按"你是谁"选一
 
 | 项目 | 当前值 | 设备上怎么读 |
 |---|---|---|
-| 固件 | `2.3.0`（正式版） | `system.fw_version_major/minor/revision` + `system.fw_version_unreleased` |
+| 固件 | `1.0.6`（`UNRELEASED=1`，非正式发布） | `system.fw_version_major/minor/revision` + `system.fw_version_unreleased` |
 | 硬件 | `1.0.0`（CBL89） | `system.hw_version_major/minor/variant` |
 | 序列号 | 每个芯片不同 | `system.serial_number`（64 位，MCU UID） |
 | endpoint 协议 | `2` | endpoint 0 的版本探测（偏移 `0xFFFFFFFF`） |

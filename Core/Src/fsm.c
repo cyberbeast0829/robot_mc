@@ -17,6 +17,7 @@
 #include "math_ops.h"
 #include "position_sensor.h"
 #include "cogging.h"
+#include "scope.h"			// 电流环扫频（scope_apply/scope_capture/scope_poll）
 #include "prefs_defs.h"		// config_apply_defaults() / config_apply_limits()
 
 extern uint32_t _reboot_cookie;
@@ -135,7 +136,13 @@ extern uint32_t _reboot_cookie;
 			  * 这样弱磁仍有最终话语权）。标定期间它自己什么都不做 */
 			 cogging_apply(&controller, &comm_encoder);
 			 field_weaken(&controller);
+			 /* 扫频注入：改写两个轴的 i_*_des（被测轴 = bias+激励，另一轴 = 0）。
+			  * 放在 cogging_apply/field_weaken 之后，避免它们的前馈混进测量。
+			  * scope.state 为 IDLE 时是空调用（一条比较 + 返回）*/
+			 scope_apply(&controller);
 			 commutate(&controller, &comm_encoder);
+			 /* 采样必须在 commutate() 之后：i_d/i_q/v_d/v_q 才是这一拍的 */
+			 scope_capture(&controller);
 
 			 /* Stop counting once past the threshold so the counter can't
 			  * overflow during long sessions with the CAN watchdog disabled */
@@ -395,7 +402,7 @@ extern uint32_t _reboot_cookie;
 	    myprintf(" %-4s %-31s %-5s %-6s %.3f\n\r", "g", "Gear Ratio", "0", "-", GR);
 	    myprintf(" %-4s %-31s %-5s %-6s %.5f\n\r", "k", "Torque Constant (N-m/A)", "0", "-", KT);
 	    myprintf("\r\n Control:\r\n");
-	    myprintf(" %-4s %-31s %-5s %-6s %.3f\n\r", "b", "Current Bandwidth (Hz)", "100", "2000", I_BW);
+	    myprintf(" %-4s %-31s %-5s %-6s %.3f\n\r", "b", "Current Bandwidth (Hz)", "100", "4000", I_BW);
 	    myprintf(" %-4s %-31s %-5s %-6.1f %.3f\n\r", "l", "Current Limit (A)", "0.0", I_MAX_LIMIT, I_MAX);
 	    myprintf(" %-4s %-31s %-5s %-6s %.3f\n\r", "p", "Max Position Setpoint (rad)", "-", "-", P_MAX);
 	    myprintf(" %-4s %-31s %-5s %-6s %.3f\n\r", "v", "Max Velocity Setpoint (rad)/s", "-", "-", V_MAX);
@@ -428,7 +435,8 @@ extern uint32_t _reboot_cookie;
 
 	 switch (fsmstate->cmd_id){
 		 case 'b':
-			 I_BW = fmaxf(fminf(atof(fsmstate->cmd_buff), 2000.0f), 100.0f);
+			 I_BW = fmaxf(fminf(atof(fsmstate->cmd_buff), 4000.0f), 100.0f);
+			 current_loop_retune(&controller);		/* 与 endpoint 写入一致：立即生效 */
 			 myprintf("I_BW set to %f\r\n", I_BW);
 			 break;
 		 case 'i':
@@ -557,6 +565,9 @@ extern uint32_t _reboot_cookie;
 	  * 浮点指令，而温度的时间常数是 0.1 s 量级，1 ms 更新一次绰绰有余。
 	  * dt 由 loop_count 的差算出，与主循环节奏无关（见 update_thermistors） */
 	 update_thermistors(&controller);
+
+	 /* 电流环扫频的结果合并/看门狗/导波形（重活，绝不能放在中断里）*/
+	 scope_poll();
 
 	 /* 未标定被拒绝进入电机模式：打印一次，让串口/菜单用户知道原因 */
 	 if(fsmstate->motor_refused){

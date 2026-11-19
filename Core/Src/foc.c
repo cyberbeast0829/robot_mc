@@ -200,7 +200,7 @@ void current_loop_retune(ControllerStruct *controller){
 	const float ld = L_D;
 	const float lq = L_Q;
 
-	/* config_apply_limits() 已经把 I_BW 钳到 [100,2000]；这里只挡住"增益变成
+	/* config_apply_limits() 已经把 I_BW 钳到 [100,4000]；这里只挡住"增益变成
 	 * 0 或 NaN"这一种致命情况（100 就是 params.json 里的下限） */
 	if (!(bw > 0.0f) || !(bw < 1.0e6f)) { bw = 100.0f; }
 

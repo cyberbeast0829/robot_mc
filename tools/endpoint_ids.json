@@ -1,5 +1,5 @@
 {
-  "next_id": 244,
+  "next_id": 266,
   "map": {
     "config.i_bw": 1,
     "config.i_max": 2,
@@ -242,6 +242,28 @@
     "telemetry.cogging_pass1": 240,
     "telemetry.cogging_pass2": 241,
     "action.enter_bootloader_mode": 242,
-    "config.mit_tau_max": 243
+    "config.mit_tau_max": 243,
+    "scope.wave": 244,
+    "scope.axis": 245,
+    "scope.amp": 246,
+    "scope.bias": 247,
+    "scope.freq": 248,
+    "action.scope_start": 249,
+    "action.scope_stop": 250,
+    "action.scope_dump": 251,
+    "telemetry.scope_state": 252,
+    "telemetry.scope_freq": 253,
+    "telemetry.scope_cmd_amp": 254,
+    "telemetry.scope_fb_amp": 255,
+    "telemetry.scope_gain_db": 256,
+    "telemetry.scope_phase": 257,
+    "telemetry.scope_dc": 258,
+    "telemetry.scope_noise": 259,
+    "telemetry.scope_motion": 260,
+    "telemetry.scope_peak": 261,
+    "telemetry.scope_overshoot": 262,
+    "telemetry.scope_t90": 263,
+    "telemetry.scope_settle": 264,
+    "telemetry.scope_clip": 265
   }
 }

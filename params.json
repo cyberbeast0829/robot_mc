@@ -7,12 +7,12 @@
       "access": "rw",
       "ref": "I_BW",
       "min": 100.0,
-      "max": 2000.0,
+      "max": 4000.0,
       "unit": "Hz",
-      "brief": "电流环目标穿越频率（Hz）：P/I 增益由标定的 config.r_phase / config.l_d / config.l_q 与 V_PER_CMD 推导（极点对消），与电机无关，写入后立即重算、无需重启（未标定 r_phase=0 时退回编译期常量）。实际穿越约 0.76×（2 拍 ADC→占空比延迟）：1000→762 Hz/PM 78°，2000→1650 Hz/PM 59°",
+      "brief": "电流环目标穿越频率（Hz）：P/I 增益由标定的 config.r_phase / config.l_d / config.l_q 与 V_PER_CMD 推导（极点对消），与电机无关，写入后立即重算、无需重启（未标定 r_phase=0 时退回编译期常量）。实际穿越约 0.78×（2 拍 ADC→占空比延迟）；台架实测（d 轴，36.8 V）：1000→776 Hz/PM 79°，2000→1544 Hz/PM 68°，4000→3032 Hz/PM 48°",
       "set": "I_BW = v; current_loop_retune(&controller);",
       "persist": true,
-      "default": 1000.0
+      "default": 2000.0
     },
     {
       "name": "config.i_max",
@@ -2145,6 +2145,186 @@
       "size": 2048,
       "assert": "COG_N * sizeof(int16_t) == 2048",
       "brief": "齿槽补偿表（1024 × int16，一个转子机械周期的 i_q 电流，1 A = 4096），标定后写入，持久化但不对外暴露"
+    },
+    {
+      "name": "scope.wave",
+      "type": "uint8",
+      "access": "rw",
+      "ref": "scope.wave",
+      "min": 0,
+      "max": 2,
+      "brief": "电流环扫频模式：0 关闭 / 1 阶跃 / 2 正弦。不持久化（上电为 0），只用于台架测带宽"
+    },
+    {
+      "name": "scope.axis",
+      "type": "uint8",
+      "access": "rw",
+      "ref": "scope.axis",
+      "min": 0,
+      "max": 1,
+      "brief": "被测轴：0 = q 轴（有电磁转矩，需锁住转子）/ 1 = d 轴（表贴机不出转矩，机械扰动最小）。另一轴由 scope 强制为 0"
+    },
+    {
+      "name": "scope.amp",
+      "type": "float",
+      "access": "rw",
+      "ref": "scope.amp",
+      "min": 0.0,
+      "max": 5.0,
+      "unit": "A",
+      "brief": "正弦峰值 / 阶跃幅度（A）。与 bias 一起必须不超过当前 i_max，否则 action.scope_start 置 scope_state=4（参数错）"
+    },
+    {
+      "name": "scope.bias",
+      "type": "float",
+      "access": "rw",
+      "ref": "scope.bias",
+      "min": -5.0,
+      "max": 5.0,
+      "unit": "A",
+      "brief": "直流偏置（A）：小信号测量要避开死区和低电流非线性，建议 1~2 A（q 轴锁转子）或 0 A（d 轴）"
+    },
+    {
+      "name": "scope.freq",
+      "type": "float",
+      "access": "rw",
+      "ref": "scope.freq",
+      "min": 1.0,
+      "max": 5000.0,
+      "unit": "Hz",
+      "brief": "正弦频率（Hz）。内部量化到 40 kHz/2048 = 19.53125 Hz 的整数倍以保证整数周期（实测到 4 kHz 仍然整数周期），实际值读 telemetry.scope_freq"
+    },
+    {
+      "name": "action.scope_start",
+      "type": "void",
+      "access": "w",
+      "require": "controller.gate_drive_enabled",
+      "call": "scope_start(&controller);",
+      "brief": "开始一次捕获（阶跃约 24 ms，正弦约 64 ms）。必须在电机模式；完成后 telemetry.scope_state=3，被中止=4（原因见 scope.err，未暴露）"
+    },
+    {
+      "name": "action.scope_stop",
+      "type": "void",
+      "access": "w",
+      "call": "scope_stop();",
+      "brief": "中止/复位扫频（停止注入，清零结果状态）。离开电机模式时 scope_poll 也会自动中止"
+    },
+    {
+      "name": "action.scope_dump",
+      "type": "void",
+      "access": "w",
+      "call": "scope_request_dump();",
+      "brief": "把阶跃捕获的 1024×4 通道（cmd/fb/v/theta，int16 十六进制）从 USB CDC 打出来；只在 scope.wave=1 且 scope_state=3 时有效，会阻塞主循环几百毫秒"
+    },
+    {
+      "name": "telemetry.scope_state",
+      "type": "uint8",
+      "access": "r",
+      "get": "scope_state()",
+      "brief": "扫频状态：0 空闲 / 1 预滚 / 2 采集中 / 3 完成（结果可读）/ 4 中止"
+    },
+    {
+      "name": "telemetry.scope_freq",
+      "type": "float",
+      "access": "r",
+      "get": "scope_freq_actual()",
+      "unit": "Hz",
+      "brief": "本次正弦的实际频率（量化后）"
+    },
+    {
+      "name": "telemetry.scope_cmd_amp",
+      "type": "float",
+      "access": "r",
+      "get": "scope_cmd_amplitude()",
+      "unit": "A",
+      "brief": "参考的基波峰值（= scope.amp，解析值）；是否真被 i_max 削掉看 telemetry.scope_clip"
+    },
+    {
+      "name": "telemetry.scope_fb_amp",
+      "type": "float",
+      "access": "r",
+      "get": "scope_fb_amplitude()",
+      "unit": "A",
+      "brief": "实测电流的基波峰值"
+    },
+    {
+      "name": "telemetry.scope_gain_db",
+      "type": "float",
+      "access": "r",
+      "get": "scope_gain_db()",
+      "unit": "dB",
+      "brief": "闭环增益 20log10(scope_fb_amp/scope_cmd_amp)；-3 dB 点就是常说的闭环带宽"
+    },
+    {
+      "name": "telemetry.scope_phase",
+      "type": "float",
+      "access": "r",
+      "get": "scope_phase()",
+      "unit": "deg",
+      "brief": "闭环相移（实测 − 参考），负值是滞后。反算开环 L=T/(1−T) 后才知道穿越频率和相位裕度"
+    },
+    {
+      "name": "telemetry.scope_clip",
+      "type": "uint8",
+      "access": "r",
+      "get": "scope_clip()",
+      "brief": "1 = 本次激励的参考被 commutate() 的 i_max 削过（幅值/偏置超过当前电流上限），该点作废"
+    },
+    {
+      "name": "telemetry.scope_dc",
+      "type": "float",
+      "access": "r",
+      "get": "scope_dc()",
+      "unit": "A",
+      "brief": "实测电流的直流分量（正弦模式）或阶跃前的基线（阶跃模式）"
+    },
+    {
+      "name": "telemetry.scope_noise",
+      "type": "float",
+      "access": "r",
+      "get": "scope_noise()",
+      "unit": "A",
+      "brief": "去掉直流和基波后的残差 RMS：纹波混叠、噪声、非线性都在这里。突然变大说明该频点已经不可信"
+    },
+    {
+      "name": "telemetry.scope_motion",
+      "type": "float",
+      "access": "r",
+      "get": "scope_motion()",
+      "unit": "deg",
+      "brief": "捕获窗内转子电角度行程（开环累加）。q 轴扫频时它必须很小：大了就是齿隙/背隙在动，这次测量无效"
+    },
+    {
+      "name": "telemetry.scope_peak",
+      "type": "float",
+      "access": "r",
+      "get": "scope_peak()",
+      "unit": "A",
+      "brief": "阶跃响应的峰值（实测电流）"
+    },
+    {
+      "name": "telemetry.scope_overshoot",
+      "type": "float",
+      "access": "r",
+      "get": "scope_overshoot()",
+      "unit": "%",
+      "brief": "阶跃超调（相对阶跃幅度，取实测稳态值）"
+    },
+    {
+      "name": "telemetry.scope_settle",
+      "type": "float",
+      "access": "r",
+      "get": "scope_settle()",
+      "unit": "s",
+      "brief": "阶跃进入 ±2% 带的时间（在 0.8 ms 箱式平均上判、要求连续保持 1 ms）；-1 表示捕获窗内没稳定"
+    },
+    {
+      "name": "telemetry.scope_t90",
+      "type": "float",
+      "access": "r",
+      "get": "scope_t90()",
+      "unit": "s",
+      "brief": "阶跃的 10%→90% 上升时间；-1 表示没找到（幅度太小或已经发散）"
     }
   ]
 }

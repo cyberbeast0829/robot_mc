@@ -466,6 +466,7 @@ def generate_source(endpoints, descriptor):
         '#include "timing.h"',
         '#include "main.h"',
         '#include "cogging.h"',		# 齿槽补偿的遥测 getter（cogging_*）
+        '#include "scope.h"',		# 电流环扫频的遥测 getter（scope_*）
         "",
         "const char endpoint_json[] =",
         c_string_literal(descriptor) + ";",

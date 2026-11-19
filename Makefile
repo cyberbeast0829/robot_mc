@@ -166,6 +166,7 @@ HOSTTEST_MOTION = $(BUILD_DIR)/test_motion_law
 HOSTTEST_EP = $(BUILD_DIR)/test_endpoint_proto
 HOSTTEST_GEAR = $(BUILD_DIR)/test_dual_gear
 HOSTTEST_COG = $(BUILD_DIR)/test_cogging
+HOSTTEST_SCOPE = $(BUILD_DIR)/test_scope_law
 
 hosttest: $(BUILD_DIR)
 	$(HOSTCC) -std=gnu11 -O1 -Wall -Wextra -ICore/Inc tools/test_prefs_codec.c Core/Src/prefs_codec.c -lm -o $(HOSTTEST)
@@ -178,6 +179,8 @@ hosttest: $(BUILD_DIR)
 	./$(HOSTTEST_GEAR)
 	$(HOSTCC) -std=gnu11 -O1 -Wall -Wextra -ICore/Inc tools/test_cogging.c -lm -o $(HOSTTEST_COG)
 	./$(HOSTTEST_COG)
+	$(HOSTCC) -std=gnu11 -O1 -Wall -Wextra -ICore/Inc tools/test_scope_law.c -lm -o $(HOSTTEST_SCOPE)
+	./$(HOSTTEST_SCOPE)
 	$(HOSTCC) -std=gnu11 -O1 -Wall -Wextra -ICore/Inc tools/test_endpoint_proto.c Core/Src/endpoint.c -lm -o $(HOSTTEST_EP)
 	./$(HOSTTEST_EP)
 

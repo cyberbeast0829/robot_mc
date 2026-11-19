@@ -11,7 +11,7 @@ ID 由 `tools/endpoint_ids.json` 锁定，固件升级不会改变；`access` �
 
 | 名称 | ID | 类型 | 访问 | 单位 | 范围 | 默认 | 持久化 | 说明 |
 |---|---|---|---|---|---|---|---|---|
-| `config.i_bw` | 1 | float | rw | Hz | 100.0 .. 2000.0 | 1000.0 | 是 | 电流环目标穿越频率（Hz）：P/I 增益由标定的 config.r_phase / config.l_d / config.l_q 与 V_PER_CMD 推导（极点对消），与电机无关，写入后立即重算、无需重启（未标定 r_phase=0 时退回编译期常量）。实际穿越约 0.76×（2 拍 ADC→占空比延迟）：1000→762 Hz/PM 78°，2000→1650 Hz/PM 59° |
+| `config.i_bw` | 1 | float | rw | Hz | 100.0 .. 4000.0 | 2000.0 | 是 | 电流环目标穿越频率（Hz）：P/I 增益由标定的 config.r_phase / config.l_d / config.l_q 与 V_PER_CMD 推导（极点对消），与电机无关，写入后立即重算、无需重启（未标定 r_phase=0 时退回编译期常量）。实际穿越约 0.78×（2 拍 ADC→占空比延迟）；台架实测（d 轴，36.8 V）：1000→776 Hz/PM 79°，2000→1544 Hz/PM 68°，4000→3032 Hz/PM 48° |
 | `config.i_max` | 2 | float | rw | A | 0.0 .. `I_MAX_LIMIT` | I_MAX_LIMIT | 是 | 相电流限幅（硬上限 12A，即 hw_config.h 的 I_MAX_LIMIT；出厂默认 = 该上限）。过流锁存阈值 = 1.5×该值（18 A），仍低于 ±27.5 A 的采样饱和点 |
 | `config.i_fw_max` | 3 | float | rw | A | 0.0 .. 33.0 | 0.0 | 是 | 弱磁电流上限 |
 | `config.i_max_cont` | 4 | float | rw | A | 0.0 .. 40.0 | 14.0 | 是 | 连续电流上限 |
@@ -202,6 +202,20 @@ ID 由 `tools/endpoint_ids.json` 锁定，固件升级不会改变；`access` �
 | `telemetry.cogging_value` | 227 | float | r | A | — | — | 否 | 齿槽补偿表在 config.cogging_index 处的值（A，已去掉直流分量）。标定点 i 对应转子绝对计数 i·ENC_CPR/1024 |
 | `telemetry.cogging_pass1` | 240 | float | r | A | — | — | 否 | 诊断：最近一次标定正转那一遍在 config.cogging_index 处的原始测量值（未去均值/去趋势）。与 cogging_pass2 对比可以看出重复性 |
 | `telemetry.cogging_pass2` | 241 | float | r | A | — | — | 否 | 诊断：最近一次标定反转那一遍在 config.cogging_index 处的原始测量值 |
+| `telemetry.scope_state` | 252 | uint8 | r |  | — | — | 否 | 扫频状态：0 空闲 / 1 预滚 / 2 采集中 / 3 完成（结果可读）/ 4 中止 |
+| `telemetry.scope_freq` | 253 | float | r | Hz | — | — | 否 | 本次正弦的实际频率（量化后） |
+| `telemetry.scope_cmd_amp` | 254 | float | r | A | — | — | 否 | 参考的基波峰值（= scope.amp，解析值）；是否真被 i_max 削掉看 telemetry.scope_clip |
+| `telemetry.scope_fb_amp` | 255 | float | r | A | — | — | 否 | 实测电流的基波峰值 |
+| `telemetry.scope_gain_db` | 256 | float | r | dB | — | — | 否 | 闭环增益 20log10(scope_fb_amp/scope_cmd_amp)；-3 dB 点就是常说的闭环带宽 |
+| `telemetry.scope_phase` | 257 | float | r | deg | — | — | 否 | 闭环相移（实测 − 参考），负值是滞后。反算开环 L=T/(1−T) 后才知道穿越频率和相位裕度 |
+| `telemetry.scope_clip` | 265 | uint8 | r |  | — | — | 否 | 1 = 本次激励的参考被 commutate() 的 i_max 削过（幅值/偏置超过当前电流上限），该点作废 |
+| `telemetry.scope_dc` | 258 | float | r | A | — | — | 否 | 实测电流的直流分量（正弦模式）或阶跃前的基线（阶跃模式） |
+| `telemetry.scope_noise` | 259 | float | r | A | — | — | 否 | 去掉直流和基波后的残差 RMS：纹波混叠、噪声、非线性都在这里。突然变大说明该频点已经不可信 |
+| `telemetry.scope_motion` | 260 | float | r | deg | — | — | 否 | 捕获窗内转子电角度行程（开环累加）。q 轴扫频时它必须很小：大了就是齿隙/背隙在动，这次测量无效 |
+| `telemetry.scope_peak` | 261 | float | r | A | — | — | 否 | 阶跃响应的峰值（实测电流） |
+| `telemetry.scope_overshoot` | 262 | float | r | % | — | — | 否 | 阶跃超调（相对阶跃幅度，取实测稳态值） |
+| `telemetry.scope_settle` | 264 | float | r | s | — | — | 否 | 阶跃进入 ±2% 带的时间（在 0.8 ms 箱式平均上判、要求连续保持 1 ms）；-1 表示捕获窗内没稳定 |
+| `telemetry.scope_t90` | 263 | float | r | s | — | — | 否 | 阶跃的 10%→90% 上升时间；-1 表示没找到（幅度太小或已经发散） |
 
 ## timing：ISR 耗时统计（只读）
 
@@ -273,3 +287,6 @@ ID 由 `tools/endpoint_ids.json` 锁定，固件升级不会改变；`access` �
 | `action.tune_gains` | 161 | function | w |  | — | — | 否 | 用 config.inertia 算外环增益并写进 RAM（不自动保存）：vel_gain = tune_margin·J·omega_c/(KT·GR)；vel_integrator_gain = vel_gain·clamp(omega_c/25, 5, 30)；pos_gain = omega_c/20。写完用 csv/csp 子命令验证，满意再 action.save |
 | `action.cogging_calibrate` | 234 | function | w |  | — | — | 否 | 齿槽转矩补偿标定：自动进电机模式 → 转子逐点保持（正转 1024 点 + 反转 1024 点）→ 回菜单。每点几十毫秒，全程约 2~4 分钟。结果写 RAM（表 + config.cogging_valid），**不自动保存**，也不自动打开 config.cogging_en。进度读 system.cogging_progress，结果读 system.cogging_status / cogging_amp。要求外环增益已配置（先 action.tune_gains） |
 | `action.cogging_reset` | 235 | function | w |  | — | — | 否 | 丢弃齿槽补偿表：清零并置 config.cogging_valid=false（只改 RAM，action.save 后才会写进 flash）。换编码器/拆装电机后必须重标 |
+| `action.scope_start` | 249 | function | w |  | — | — | 否 | 开始一次捕获（阶跃约 24 ms，正弦约 64 ms）。必须在电机模式；完成后 telemetry.scope_state=3，被中止=4（原因见 scope.err，未暴露） |
+| `action.scope_stop` | 250 | function | w |  | — | — | 否 | 中止/复位扫频（停止注入，清零结果状态）。离开电机模式时 scope_poll 也会自动中止 |
+| `action.scope_dump` | 251 | function | w |  | — | — | 否 | 把阶跃捕获的 1024×4 通道（cmd/fb/v/theta，int16 十六进制）从 USB CDC 打出来；只在 scope.wave=1 且 scope_state=3 时有效，会阻塞主循环几百毫秒 |
