@@ -491,10 +491,26 @@ void commutate(ControllerStruct *controller, EncoderStruct *encoder)
        float i_d_error = controller->i_d_des - controller->i_d;
        float i_q_error = controller->i_q_des - controller->i_q;
 
-       // Calculate decoupling feed-forward voltages //
-
-       float v_d_ff = 0.0f;//-SQRT3*controller->dtheta_elec*L_Q*controller->i_q;
-       float v_q_ff = 0.0f;//SQRT3*controller->dtheta_elec*(0.0f*L_D*controller->i_d + controller->flux_linkage);
+       /* ---- dq 解耦 + 反电动势前馈（默认关闭，保留公式供以后启用）----
+        * 上游 mini-cheetah 原本是启用的，commit f982604 把系数改成 0，此后一直注释着。
+        * 关闭是**有意的**：电流环 PI 由标定的 R/L 极点对消整定（见 current_loop_retune()），
+        * 带宽 300~800 Hz，交叉耦合项和反电动势都被积分项吸收，跟踪滞后可以接受；
+        * 而前馈依赖 L_D/L_Q/flux_linkage 的精度，估偏了等于往指令里塞一份常值误差。
+        *
+        * 单位：本文件用的是**幅值不变**的 Park 变换（i_q = 相电流峰值，见 dq0()），
+        * svm() 又把 dq 电压按 v_bus*(DTC_MAX-DTC_MIN)*sqrt(1/3) 归一化，所以 v_d/v_q
+        * 的 1 个单位 = V_PER_CMD 伏：物理伏特必须 /V_PER_CMD 才是指令值。
+        * 这里**没有 SQRT3**——上游注释里那个 SQRT3 是早期 svm()/dq0 归一化不同时留下的，
+        * 照抄会偏 √3 倍。用 i_*_des 而不是测量的 i_d/i_q：要减的是参考路径上的耦合，
+        * 测量值还会把编码器差分速度和 ADC 噪声灌进电压指令。
+        *
+        * 启用前（高速/弱磁区，或把 config.i_bw 提到 1~2 kHz 以上才真正值得）：
+        *  - 必须在下面的限幅（v_max 钳位、limit_norm）之前加，且不能进 d_int/q_int 累加器；
+        *  - 未标定时 R_PHASE=0 -> L_D/L_Q/flux_linkage 都是 0，前馈自动退化为 0，天然安全；
+        *  - 打开后台架复测 csv_csp_test.py sweep 与电流环阶跃：PI 与前馈的分工变了，
+        *    d_int/q_int 的 v_max 抗饱和钳位可能要重新看。 */
+       float v_d_ff = 0.0f;	// -controller->dtheta_elec*L_Q*controller->i_q_des/V_PER_CMD;
+       float v_q_ff = 0.0f;	//  controller->dtheta_elec*(L_D*controller->i_d_des + controller->flux_linkage)/V_PER_CMD;
 
        controller->v_d = controller->k_d*i_d_error + controller->d_int + v_d_ff;
 
