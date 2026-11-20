@@ -13,6 +13,7 @@
 #include "hw_config.h"
 #include "user_config.h"
 #include "cogging.h"
+#include "phase_current_law.h"
 #include "timing.h"
 #include <math.h>
 
@@ -88,6 +89,34 @@ void analog_sample (ControllerStruct *controller){
 	controller->i_a = controller->i_scale*(float)(controller->adc_a_raw - controller->adc_a_offset);
 	controller->i_b = controller->i_scale*(float)(controller->adc_b_raw - controller->adc_b_offset);
 	controller->i_c = controller->i_scale*(float)(controller->adc_c_raw - controller->adc_c_offset);
+
+	/* ---- 低边采样窗口太短的那一相：用另外两相按 KCL 重建（见 phase_current_law.h）----
+	 * 采样点固定在 PWM 峰值，低边导通窗口 = AR - CCR（PWM1 低边是 CHx 的互补，
+	 * 只在 CNT > CCR 时导通）；本机 INVERT_DTC = 1 时 CCR = AR*(1-dtc)，所以窗口
+	 * ∝ dtc ——**duty 最小的那一相**（min-max 注入把它钉在母线正端，低边分流几乎
+	 * 不导通）读数最不可信，而三相瞬时电流之和恒为零，所以它能由另外两相补回来。
+	 * 三个阶段：
+	 *   1) 读本拍生效的比较值（上一拍 set_dtc() 写入、本次 UEV 刚装入，本拍的
+	 *      set_dtc() 还没执行）；
+	 *   2) 三相窗口都够就什么都不做（唯一的常见路径：3 次比较 + 一次分支）；
+	 *   3) 否则重建窗口最小的那一相（= CCR 最大的那一相）。
+	 * 这里在 PHASE_ORDER 交换**之前**做，用的是物理对应（i_a ↔ 桥臂 1/CCDAT1、
+	 * i_b ↔ 桥臂 2、i_c ↔ 桥臂 3），所以不用判断 PHASE_ORDER；阈值 i_min_low_ticks
+	 * 在 init_controller_params() 里按 AR 换算过一次。 */
+	int i_recon = PCL_NONE;
+	if(controller->gate_drive_enabled){
+		const uint32_t ar = TIM_PWM->AR;
+		i_recon = pcl_worst_phase(pcl_low_side_ticks(ar, TIM_PWM->CCDAT1),
+		                          pcl_low_side_ticks(ar, TIM_PWM->CCDAT2),
+		                          pcl_low_side_ticks(ar, TIM_PWM->CCDAT3),
+		                          controller->i_min_low_ticks);
+		if(i_recon != PCL_NONE){
+			pcl_reconstruct(&controller->i_a, &controller->i_b, &controller->i_c, i_recon);
+			if(controller->i_recon_count != 0xFFFFFFFFu){ controller->i_recon_count++; }
+		}
+	}
+	controller->i_recon = (uint8_t)i_recon;	/* PCL_NONE(-1) 存成 0xFF */
+
 	if(PHASE_ORDER){
 		float i_a = controller->i_a;
 		controller->i_a = controller->i_b;
@@ -232,6 +261,9 @@ void init_controller_params(ControllerStruct *controller){
 	/* 电流环 PI 增益由标定的 R/L 推导（未标定时退回常量），见 current_loop_retune() */
 	current_loop_retune(controller);
     controller->flux_linkage = KT/(1.5f*PPAIRS);
+    /* 低边采样窗口阈值（analog_sample / phase_current_law.h）：AR 运行期不变，
+     * 所以在这里换算一次，40 kHz 中断里只剩一次比较。必须在 MX_TIM1_Init() 之后 */
+    controller->i_min_low_ticks = (uint32_t)(I_SAMPLE_MIN_LOW_FRAC*(float)TIM_PWM->AR + 0.5f);
     /* Fixed on-chip PGA configuration and 5 mOhm shunts; I_MAX does not
      * change the hardware gain or the current conversion coefficient. */
     controller->i_scale = I_SCALE;

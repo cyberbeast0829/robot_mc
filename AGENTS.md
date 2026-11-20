@@ -137,6 +137,29 @@ saturated reading silently masks the overcurrent fault. Do not restore the old
 40 A limit or alter the PGA gain without verifying the analogue range and actual
 phase current.
 
+**Low-side sampling window** (`Core/Inc/phase_current_law.h`, called from
+`analog_sample()`): the injected ADCs sample at the PWM peak, so a phase whose
+duty approaches the modulation limit has the shortest low-side conduction
+window and the least trustworthy shunt reading — that one phase is rebuilt from
+the other two (`i_x = -i_y - i_z`, same as ODrive's `fetch_and_reset_adcs()`).
+PWM1 makes the low side the complement of CHx (it conducts only while CNT > CCR),
+so the window at the peak is `AR - CCR` — the **polarity parameter is not needed**
+(`INVERT_DTC` only changes how `set_dtc()` derives CCR from duty) — and with
+`INVERT_DTC = 1` the window is ∝ `dtc`: the phase with the **smallest duty** (the
+one min-max injection pins to the positive rail) is the bad one. ⚠ ODrive's board
+uses **PWM mode 2**, so their "smallest CCR is bad" rule inverts here.
+It engages when the window falls below `I_SAMPLE_MIN_LOW_FRAC` (15 % of the period);
+at `DTC_MAX = 0.9` full modulation leaves the bottom phase ~50 ticks, so the guard
+is active near the voltage limit. Keep it cheap in the ISR: the check runs
+*before* the `PHASE_ORDER` swap on the physical pairing (i_a ↔ CCDAT1, i_b ↔
+CCDAT2, i_c ↔ CCDAT3) and the threshold `i_min_low_ticks` is converted once in
+`init_controller_params()`, so the common path is 3 loads + 3 subtracts + 3 compares.
+`DTC_MAX` is also inside `V_PER_CMD`: raising it scales `v_max` (+28.6 % going
+0.7 → 0.9) and shortens the bottom phase's window, so recheck the calibration path
+(`CAL_V_PER_CMD` follows automatically) and the `K_SCALE` fallback together.
+`controller.i_recon` / `i_recon_count` report it to a debugger; `make hosttest`
+covers the logic.
+
 ⚠ **Never assume an `HAL_*` / `stm32f4xx_*` / `TIM1->BDTR` / `.Instance` reference resolves
 here** — verify it against the N32 SDK. The incomplete-port leftovers have been cleaned up
 (the `HAL_GPIO_WritePin` / `drv_disable_gd` / `TIM1->BDTR` calls; `foc.c`'s `__HAL_ADC_*` →
@@ -351,8 +374,9 @@ Ld/Lq、开环升速测磁链并令 `KT = 1.5·PPAIRS·λ`。测试电流 = `min
   ADC 采到的电流滞后写入的占空比两个周期，有符号写法会得到负 delta 而误判失败；
   分子里也不要加 R·I 项。
 - 控制环里的 dq 电压不是物理伏特：`svm()` 的换算给出
-  `CAL_V_PER_CMD = 0.5/((DTC_MAX-DTC_MIN)·√(1/3))`（约 1.237）。测量结果在存盘前
-  乘上它；**改 `svm()`/`DTC_MAX`/`DTC_MIN` 时必须同步改 `CAL_V_PER_CMD`**。
+  `CAL_V_PER_CMD = 0.5/((DTC_MAX-DTC_MIN)·√(1/3))`（`DTC_MAX = 0.9` 时约 0.962）。
+  测量结果在存盘前乘上它；**改 `svm()`/`DTC_MAX`/`DTC_MIN` 时必须同步改
+  `CAL_V_PER_CMD`**（本仓库里它就是 `V_PER_CMD` 的别名，自动跟随）。
 - 任一段失败就置 `comm_encoder_cal.failed` → 回菜单且不写 flash；`run_fsm_slow()`
   只在 `done_ordering && done_cal && done_rl` 后保存。细节见 `docs/DEV.md`。
 - **电流环 PI 增益由标定的 R/L 推导**（`foc.c` 的 `current_loop_retune()`，极点对消）：

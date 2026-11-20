@@ -39,7 +39,8 @@ FS = 40000.0            # 控制/采样频率（hw_config.h 的 DT = 25 us）
 NBIN = 2048             # scope.c 的锁相累积窗
 FBIN = FS / NBIN        # 19.53125 Hz：固件把频率量化到这个栅格上
 # dq 电压指令 → 物理相电压（hw_config.h 的 V_PER_CMD；scope 的 v 通道存的是指令单位）
-V_PER_CMD = 0.5 / (0.7 * 0.57735026919)      # ≈ 1.2368 V / 指令单位
+# 跟着 DTC_MAX 走：0.5 / ((DTC_MAX - DTC_MIN) * sqrt(1/3))。DTC_MAX = 0.9 时 ≈ 0.9623
+V_PER_CMD = 0.5 / (0.9 * 0.57735026919)      # V / 指令单位
 
 ST_IDLE, ST_PREROLL, ST_RUN, ST_DONE, ST_ERR = 0, 1, 2, 3, 4
 STATE_NAMES = {ST_IDLE: "空闲", ST_PREROLL: "预滚", ST_RUN: "采集中",

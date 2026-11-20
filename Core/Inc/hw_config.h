@@ -173,8 +173,30 @@
 #define I_SCALE				((ADC_DIFF_SPAN / ADC_FULL_SCALE) / (R_SHUNT * PGA_GAIN))
 // V_SCALE = (3.3 * VBUS_S_DIVIDER) / (2^12) 其中 VBUS_S_DIVIDER = 93.91 / 3.01
 #define V_SCALE 			0.02513618342504f    // Bus volts per A/D Count
-#define DTC_MAX 			0.7f          	// Max duty cycle (calibration converts its voltages with CAL_V_PER_CMD - see calibration.c)
+/* 调制上限（PWM 占空比的上界）。SVPWM 的线性极限（相电压峰值 = v_bus/√3）对应
+ * 的占空比跨度是 1.0，这里留 10% 给死区与低边采样窗口，所以取 0.9，而原来的 0.7 等于
+ * 白扔 30% 的母线电压（v_max 只有 0.404*v_bus，取 0.9 后是 0.52*v_bus）。
+ *
+ * 带来的连带变化（改这个值等于改"指令单位 → 伏特"的换算）：
+ *  - V_PER_CMD 由 1.2369 变成 0.9623 V/单位。CAL_V_PER_CMD 已经指向它，标定
+ *    （R/L/λ 都是物理量）不受影响；电流环 k = 2π*i_bw*L/V_PER_CMD 按比例变大，
+ *    但 k*V_PER_CMD 不变，**物理穿越频率不变**；兜底常量 K_SCALE 必须同步。
+ *  - duty 越大，最低的那一相低边导通越短：满调制时它只剩 ~1.7% 的窗口
+ *    （CCR 接近 AR，低边几乎不导通），由 I_SAMPLE_MIN_LOW_FRAC 判据按 KCL 重建。
+ *    ⚠ 提高这个值前先看低边门极波形，别只看数字。 */
+#define DTC_MAX 			0.9f          	// Max duty cycle (calibration converts its voltages with CAL_V_PER_CMD - see calibration.c)
 #define DTC_MIN 			0.0f          	// Min duty cycle
+/* 低边电流采样的最小低边导通窗口（占 PWM 周期的比例）。低边分流电阻只在低边
+ * MOSFET 导通时才有相电流流过；PWM1 下低边是 CHx 的互补（CNT > CCR 才导通），
+ * 而三路注入 ADC 固定在 PWM 峰值触发，所以一相的窗口 = AR - CCR。
+ * 本机 INVERT_DTC = 1 时 CCR = AR*(1-dtc) ⇒ 窗口 ∝ dtc：**duty 最小的那一相**
+ * 低边几乎不导通、读数不可信，改由另外两相按 KCL 重建（phase_current_law.h，
+ * analog_sample()）。0.15 表示"低边至少导通 15% 周期"= 450 tick ≈ 1.9 µs
+ * （再扣掉 20 tick 死区），大致相当于调制深度 > 70% 时开始介入。
+ * 与 DTC_MAX = 0.9 的关系：满调制时最底下那一相的 duty 只剩 ~0.017（窗口 ~50 tick），
+ * 判据必然介入；min-max 注入保证同一时刻最多只有一相贴近底部，所以"只补一相"够用。
+ * 设为 0 等于关闭这条判据（三相一律用实测值，加注释说明原因）。 */
+#define I_SAMPLE_MIN_LOW_FRAC	0.15f
 #define DTC_COMP 			0.000f          // deadtime compensation (100 ns / 25 us)
 #define DT					.000025f		// Loop period
 /* 硬件版本（system.hw_version_*；CYBERBEAST 的 QUERY_DEVICE_INFO 也报这组值）。
@@ -212,7 +234,7 @@
  * config.i_bw 推导（foc.c 的 current_loop_retune()，极点对消），这样 i_bw 就是
  * 真正的穿越频率、且与电机无关。下面三个只是**未标定时的兜底**（出厂 R_PHASE=0），
  * 等价于"假设 L≈24 µH、R/L≈1800 rad/s"，保留是为了第一次上电/没跑标定时行为不变。 */
-#define K_SCALE 0.00012f             // 兜底：k = K_SCALE*I_BW（假设 L≈24 µH）
+#define K_SCALE 0.000157f            // 兜底：k = K_SCALE*I_BW（假设 L≈24 µH：2π·24µH/V_PER_CMD）
 #define KI_D 0.045f                // 兜底：PI 零点，rad/sample（假设 R/L≈1800 rad/s）
 #define KI_Q 0.045f                // 同上（q 轴）
 /* 推导出的 P 增益上限（指令 V/A）。防止 l_d/l_q 被写成量级错误的值时增益大 100

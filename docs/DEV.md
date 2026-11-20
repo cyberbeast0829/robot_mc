@@ -59,6 +59,44 @@ ADC，采样点在 PWM 峰值、低侧采样窗口内。
 加一个参数：`params.json` 加条目（要持久化再加 `persist: true` + `default`）→
 `make endpoints` → `make check` → `make` → `make hosttest`。
 
+### 三相低边采样的重建（低边窗口不足的那一相）
+
+三路注入 ADC 由 ATIM1 的 UEV 触发，采样点固定在 PWM 峰值，此刻三相低边同时导通，
+低边分流只在"这一相的低边导通窗口"里有效。PWM1 下 CHx 在 `CNT < CCR` 期间有效、
+低边是它的互补（`tim.c`："`CNT=0` 时三相低边全关"），所以峰值处的窗口是
+
+```
+低边窗口 = AR - CCR        （"最近一次开关沿 CNT=CCR → 采样点"同样这么长）
+```
+
+与 `INVERT_DTC` 无关 —— 极性只决定 `set_dtc()` 怎么把 duty 换成 CCR。本机
+`INVERT_DTC = 1` ⇒ `CCR = AR*(1-dtc)` ⇒ 窗口 ∝ `dtc`：**`dtc` 最小的那一相**
+（min-max 注入把它顶到母线正端）低边几乎不导通，它的分流读数不可信，可由另外两相
+补回来 —— 与 ODrive `board.cpp` 的 `fetch_and_reset_adcs()` 同一个思路，但注意他们
+用的是 **PWM mode 2**（与 PWM1 互补），"CCR 最小就丢"在这里要反过来：**CCR 最大**。
+
+- 纯数学在 `Core/Inc/phase_current_law.h`，host 回归 `tools/test_phase_current.c`
+  （已进 `make hosttest`）：`pcl_low_side_ticks()` 把 CCR 换成低边窗口、
+  `pcl_worst_phase()` 选窗口最小的那一相（三相都 ≥ `I_SAMPLE_MIN_LOW_FRAC * AR`
+  就不重建）、`pcl_reconstruct()` 用 `i_x = -i_y - i_z` 补。
+- 调用点在 `analog_sample()`，**在 `check_faults()` 之前**，所以过流判据看到的也是
+  重建后的三相。CCDAT 读的是本拍已经生效的值（上一拍 `set_dtc()` 写入、本次 UEV
+  刚装入），本拍的 `set_dtc()` 还没执行。
+- 计时成本：判断放在 `PHASE_ORDER` 交换**之前**，用的是物理对应（`i_a` ↔ 桥臂 1 /
+  CCDAT1、`i_b` ↔ 桥臂 2、`i_c` ↔ 桥臂 3），所以中断里没有 `PHASE_ORDER` 分支；
+  阈值 `controller.i_min_low_ticks` 在 `init_controller_params()` 里按 AR 换算一次，
+  中断里不再做浮点运算。常见路径（三相都够）只有 3 次 `ldr` + 3 次比较 ≈ 14 条指令
+  （改前多算了 AR 的浮点换算和 3 次易失读，多约 30 条）。
+- ⚠ `DTC_MAX = 0.9` 时满调制那一刻最底下那一相的 `dtc` 只剩 ~0.017（CCR ≈ `AR`，
+  低边窗口 ~50 tick ≈ 0.2 µs），判据必然介入；`0.9` 是 SVPWM 线性极限（占空比跨度
+  1.0）留 10 % 余量的结果，别往 1.0 推。min-max 注入保证同一时刻最多只有一相贴近
+  底部，所以"只补一相"够用。改 `DTC_MAX` 必须同时看 `V_PER_CMD`（标定与母线功率
+  估算共用）和这条判据。
+- 调试：`controller.i_recon`（本拍被重建的相，0xFF = 三相都是实测）与
+  `controller.i_recon_count`（上电以来重建过的周期数），接调试器才看得到；
+  这两个值没有对应 endpoint，台架上用 J-Link 读 RAM 即可
+  （`controller` 地址取 `arm-none-eabi-nm`，`i_recon_count` 偏移 +32）。
+
 ## 标定
 
 `CALIBRATION_MODE` 的 ISR 链路是 `order_phases()` → `calibrate_encoder()` →
@@ -118,8 +156,8 @@ ADC，采样点在 PWM 峰值、低侧采样窗口内。
 - **电压单位换算**：控制环里的 dq 电压并不是物理伏特。`svm()` 把
   `(u - v_offset)` 变成 `0.5/v_scale` 的占空比偏移，而
   `v_scale = v_bus·(DTC_MAX-DTC_MIN)·√(1/3)`，所以实际相电压 = `CAL_V_PER_CMD ×
-  指令电压`，`CAL_V_PER_CMD = V_PER_CMD = 0.5/((DTC_MAX-DTC_MIN)·√(1/3))`（当前 DTC 0…0.7
-  时约 1.237；定义在 `hw_config.h`，母线功率估算也用它）。`measure_lr()` 在计算 R/L/λ
+  指令电压`，`CAL_V_PER_CMD = V_PER_CMD = 0.5/((DTC_MAX-DTC_MIN)·√(1/3))`（`DTC_MAX = 0.9`
+  时约 0.962；定义在 `hw_config.h`，母线功率估算也用它）。`measure_lr()` 在计算 R/L/λ
   前把电压项乘上这个因子，落盘的都是
   SI 值；**改 `svm()`、`DTC_MAX/DTC_MIN` 或 `OVERMODULATION` 时必须一起改它**，
   否则 R/L/Kt 会按比例失准。台架上可用万用表量相电阻做一次核对。
@@ -1645,6 +1683,14 @@ bootloader 契约（bootloader 是独立仓库 OpenBootloader 的固件，App �
   所以 `--addr` 必须是 `0x08008000`（`.hex` 自带地址，可省）；`--go-addr` 让
   bootloader 直接跳转、不再复位。用法与故障排查见
   [`tools/blcan_使用说明.md`](../tools/blcan_使用说明.md)。
+  ⚠ 2026-11-20 台架两次复现：刚进 bootloader 后的**第一个 erase 常常 ACK 超时**
+  （`timeout waiting for CAN frame (expected_ids=[0, 68])`），bootloader 会掉出升级
+  模式，直接重跑 upgrade 还是失败。先发一轮 `SYNC`（`blcan.py sync`，或连续打
+  `0x128`/`0x7F`）把它重新拉回升级模式，再跑 `upgrade` 即可。
+  ⚠ `tools/flash_jlink.py` 这一次虽然把镜像写对了（事后读 flash 逐字节核对），但
+  **回读校验一直失败**（250 kHz、8 KB 分块、重试 3 次都不行），脚本按失败退出、把核心
+  留在 halt，表现为"板子变砖"（USB 消失、CAN 也不应答）。所以恢复/升级优先走 CAN
+  OTA；非要用 J-Link，失败后记得手工 `r` + `g` 复位再判断现象。
 - **本地烧写**：`tools/flash_jlink.py` 默认把镜像写到 `0x08008000`；烧 bootloader 用
   `--base 0x08000000`。`--erase`（整片）会连 bootloader 一起擦掉。
 
@@ -1893,7 +1939,8 @@ schema 1 → 2 迁移已实机验证（同一块配置，不动 flash）：旧�
 
 自动检查：`make check`（生成物/文档最新）、
 `make hosttest`（`prefs_codec` + `test_can_cyberbeast` + `test_motion_law` +
-`test_dual_gear` + `test_endpoint_proto`）、
+`test_dual_gear` + `test_cogging` + `test_scope_law` + `test_phase_current` +
+`test_endpoint_proto`）、
 `make`（链接）。
 上位机侧的 CAN 传输有 `python tools/test_mc_ep_can.py`（或 `make hosttest-py`；
 需要 `pip install python-can`，不需要硬件：用 python-can 的 virtual 总线模拟一台
