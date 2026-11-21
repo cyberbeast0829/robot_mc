@@ -14,6 +14,7 @@
 #include "user_config.h"
 #include "cogging.h"
 #include "phase_current_law.h"
+#include "dtc_comp.h"
 #include "timing.h"
 #include <math.h>
 
@@ -562,6 +563,31 @@ void commutate(ControllerStruct *controller, EncoderStruct *encoder)
        /* The SVM is normalised to the bus voltage, so pass v_max WITHOUT the
         * over-modulation factor - see svm() */
        svm(controller->v_max/OVERMODULATION, controller->v_u, controller->v_v, controller->v_w, &controller->dtc_u, &controller->dtc_v, &controller->dtc_w); //space vector modulation
+
+       /* ---- 死区补偿（config.dt_comp > 0 才生效，算法与符号约定见 dtc_comp.h）----
+        * 逐桥臂、用**实测**相电流的符号（不是 i_des：电流环饱和时两者会分叉），
+        * 直接加在占空比上 —— 死区误差本来就是逐桥臂的，而星形接法没有中线，
+        * 补偿量里的共模分量对电机没有影响（min-max 注入也会吸收一部分），所以
+        * 逐桥臂注入不需要额外处理零序。
+        * 位置在 svm() 之后、set_dtc() 之前：set_dtc() 的 pcl_check_needed 判据要看
+        * **补偿后**的占空比（那才是真正写进 CCR、决定低边窗口的值）。
+        * 只在闭环路径（本函数）里补；标定走 commutate_open_loop()，要干净的电压
+        * 阶跃，不补（与 ODrive 68701584c 一致）。 */
+       if(DT_COMP > 0.0f){
+           /* 1/tol 只在参数变化时算一次：中断里不做除法。tol_prev 初值 0 保证第一拍
+            * 就会算（config.dt_comp_tol 的下限是 0.01，不会等于 0）。参数由主循环的
+            * endpoint 写、这里只读，32 位对齐 float 的读写在 M4 上是原子的。 */
+           static float tol_prev = 0.0f;
+           static float inv_tol = 0.0f;
+           float tol = DT_COMP_TOL;
+           if(tol != tol_prev){
+               tol_prev = tol;
+               inv_tol = (tol > 1e-3f) ? (1.0f/tol) : 1000.0f;
+           }
+           controller->dtc_u = dtc_comp_duty(controller->dtc_u, controller->i_a, DT_COMP, inv_tol, DTC_MIN, DTC_MAX);
+           controller->dtc_v = dtc_comp_duty(controller->dtc_v, controller->i_b, DT_COMP, inv_tol, DTC_MIN, DTC_MAX);
+           controller->dtc_w = dtc_comp_duty(controller->dtc_w, controller->i_c, DT_COMP, inv_tol, DTC_MIN, DTC_MAX);
+       }
 
        /* 占空比先出去，再做遥测。双更新（docs/DEV.md 的 P2）之后这个写操作有
         * 12.5 µs 的硬截止（谷值 UEV 要装载它），所以"算完立刻写、其余往后排"

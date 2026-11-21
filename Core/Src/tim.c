@@ -100,6 +100,9 @@ void MX_TIM1_Init(void)
   TIM_BDTRInitStructure.OSSRState       = TIM_OSSR_STATE_DISABLE;
   TIM_BDTRInitStructure.OSSIState       = TIM_OSSI_STATE_DISABLE;
   TIM_BDTRInitStructure.LOCKLevel       = TIM_LOCK_LEVEL_OFF;
+  /* 20 tick = 83 ns（240 MHz）。死区补偿的"占空比当量"就是这里 / 一个周期（2*AR =
+   * 6000 tick）：20/6000 = 0.00333，是 config.dt_comp 出厂默认 0.008 的一半左右
+   * （另一半是器件压降）。**改这个值要同步重标 config.dt_comp**（见 docs/DEV.md）。 */
   TIM_BDTRInitStructure.DeadTime        = 20;
   TIM_BDTRInitStructure.Break           = TIM_BREAK_IN_ENABLE;
   TIM_BDTRInitStructure.BreakPolarity   = TIM_BREAK_POLARITY_HIGH;

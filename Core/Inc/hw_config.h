@@ -197,7 +197,10 @@
  * 判据必然介入；min-max 注入保证同一时刻最多只有一相贴近底部，所以"只补一相"够用。
  * 设为 0 等于关闭这条判据（三相一律用实测值，加注释说明原因）。 */
 #define I_SAMPLE_MIN_LOW_FRAC	0.15f
-#define DTC_COMP 			0.000f          // deadtime compensation (100 ns / 25 us)
+/* 死区补偿不是编译期常量：强度/平滑宽度是 config.dt_comp / config.dt_comp_tol
+ * （params.json），算法在 Core/Inc/dtc_comp.h。硬件死区 = tim.c 的 DeadTime = 20 tick，
+ * 中心对齐一个周期 2*AR = 6000 tick ⇒ 20/6000 = 0.00333，这就是出厂默认值；
+ * 再往上加的部分是器件正向压降（见 docs/DEV.md "死区补偿"）。 */
 #define DT					.000025f		// Loop period
 /* 硬件版本（system.hw_version_*；CYBERBEAST 的 QUERY_DEVICE_INFO 也报这组值）。
  * CBL89 板。换板/改版必须同步这三行 —— 上位机靠它区分引脚与量程。 */

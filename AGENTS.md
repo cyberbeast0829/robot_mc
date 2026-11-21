@@ -219,6 +219,12 @@ Same shape as upstream, with these N32 names:
   模式），`action.tune_gains` 再按 `config.omega_c` / `config.tune_margin` 算出
   `vel_gain` / `vel_integrator_gain` / `pos_gain` 写进 RAM（`motion_tune_gains()`，
   公式与台架依据见 `docs/DEV.md`）。两个 action 都**不自动保存**。
+- **电流环内部（`commutate()`）的顺序不能动**：`svm()` → 死区补偿（`dtc_comp.h`，
+  参数 `config.dt_comp` / `dt_comp_tol`）→ `set_dtc()`。补偿必须在 `set_dtc()` 之前，
+  因为那里按占空比算 `pcl_check_needed`（低边采样窗口判据），它要的是补偿后的值。
+  补偿在 `dtc` 空间做，所以**不需要知道 GHS/GLS 与 CHx/CHxN 的对应关系**：
+  "dtc 变大 ⇒ i 变大"由电流环自身的正增益保证。换功率板/FET 只重标 `dt_comp`
+  （方法见 `docs/DEV.md` 的"死区补偿"），标定路径（`commutate_open_loop()`）刻意不补。
 - **输入整形**（`config.input_mode`，编号同 ODrive 的 `InputMode`）只整形喂给控制环的
   设定值，**不选控制环**（那是 `command.mode`）：0 忽略/1 直通/**2 VEL_RAMP（默认）**/
   3 POS_FILTER/5 TRAP_TRAJ/6 TORQUE_RAMP/9 MIT；4/7/8 不支持，按直通。

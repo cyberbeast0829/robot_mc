@@ -100,6 +100,8 @@ const prefs_entry_t prefs_entries[] = {
 	{238, PREFS_T_I32, 4, (void *)&(COG_METHOD)},
 	{239, PREFS_T_I32, 4, (void *)&(COG_SWEEP_MS)},
 	{243, PREFS_T_F32, 4, (void *)&(MIT_TAU_MAX)},
+	{266, PREFS_T_F32, 4, (void *)&(DT_COMP)},
+	{267, PREFS_T_F32, 4, (void *)&(DT_COMP_TOL)},
 };
 const unsigned prefs_entry_count = sizeof(prefs_entries) / sizeof(prefs_entries[0]);
 
@@ -194,6 +196,8 @@ void config_apply_defaults(void){
 	COG_METHOD = 1;
 	COG_SWEEP_MS = 8000;
 	MIT_TAU_MAX = 5.0f;
+	DT_COMP = 0.008f;
+	DT_COMP_TOL = 0.5f;
 }
 
 void config_apply_limits(void){
@@ -381,4 +385,10 @@ void config_apply_limits(void){
 	if(!isfinite(MIT_TAU_MAX)){MIT_TAU_MAX = 5.0f;}
 	if(MIT_TAU_MAX < 0.0f){MIT_TAU_MAX = 0.0f;}
 	if(MIT_TAU_MAX > 40.0f){MIT_TAU_MAX = 40.0f;}
+	if(!isfinite(DT_COMP)){DT_COMP = 0.008f;}
+	if(DT_COMP < 0.0f){DT_COMP = 0.0f;}
+	if(DT_COMP > 0.012f){DT_COMP = 0.012f;}
+	if(!isfinite(DT_COMP_TOL)){DT_COMP_TOL = 0.5f;}
+	if(DT_COMP_TOL < 0.01f){DT_COMP_TOL = 0.01f;}
+	if(DT_COMP_TOL > 5.0f){DT_COMP_TOL = 5.0f;}
 }
