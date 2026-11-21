@@ -263,9 +263,14 @@ void SystemInit(void)
     /* Reset MCOCFG register */
     RCC->MCOCFG = 0x00000000;
 
-    /* Enable ICACHE and disable Prefetch Buffer */
-    FLASH->AC |= (uint32_t)(FLASH_AC_ICAHEN);
-    FLASH->AC &= (uint32_t)(~FLASH_AC_PRFTBFEN);
+    /* Enable ICACHE and the prefetch buffer.
+     *
+     * 这一行原来是"开 ICACHE、关预取"。40 kHz 中断里 ~2.7 个周期/指令说明取指
+     * 是瓶颈（5 个 flash 等待周期 + ICACHE 未命中），顺序取指的预取缓冲对
+     * commutate()/analog_sample() 这条长直线很有用，实测见 docs/DEV.md
+     * "中断预算"。若台架出现取指错乱（偶发 HardFault / 乱跳），第一个要怀疑的
+     * 就是这里，改回只开 ICACHE 即可。 */
+    FLASH->AC |= (uint32_t)(FLASH_AC_ICAHEN | FLASH_AC_PRFTBFEN);
 
     /* Configure the System clock frequency, HCLK, PCLK2 and PCLK1 prescalers */
     /* Configure the Flash Latency cycles and enable prefetch buffer */
