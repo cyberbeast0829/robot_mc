@@ -27,7 +27,9 @@ typedef struct{
 	};
 	float angle_singleturn, old_angle, angle_multiturn, elec_angle, velocity, elec_velocity, ppairs;
 	int raw, count, turns;
-	int count_buff[N_POS_SAMPLES];		// multi-turn position history in integer counts, for the velocity calculation
+	int count_buff[N_POS_SAMPLES];		// multi-turn position history (ring, newest at count_head), for the velocity calculation
+	int count_multi;					// newest multi-turn count (= the old count_buff[0]); cogging uses this as its table index
+	uint8_t count_head;					// ring head: slot holding the newest sample
 	int count_wrapped;					// single-turn count in [0, ENC_CPR), input of the velocity PLL
 	int m_zero, e_zero;
 	int offset_lut[N_LUT];

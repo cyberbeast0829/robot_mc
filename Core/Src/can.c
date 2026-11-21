@@ -279,7 +279,17 @@ bool can_send_frame(uint32_t id, uint32_t id_type, const uint8_t *data, uint8_t 
         h.DataLength    = dlc_from_len(len);
         h.FDFormat      = can_fd_running ? FDCAN_FD_CAN : FDCAN_CLASSIC_CAN;
         h.BitRateSwitch = (can_fd_running && (len > 8u)) ? FDCAN_BRS_ON : FDCAN_BRS_OFF;
-        return FDCAN_AddMsgToTxFifoQ(FDCAN2, &h, (uint8_t *)data) == SUCCESS;
+        /* 发送路径现在有两个上下文：控制帧的应答/心跳在 40 kHz 中断里，
+         * SDO 应答和描述符流式发送在主循环（cb_poll / cb_defer 队列）。
+         * FDCAN_AddMsgToTxFifoQ() 是"读 PutIndex → 往消息 RAM 拷贝 → 置 TXBAR"，
+         * 主循环在拷贝途中被控制中断抢占时，两边会用同一个 PutIndex，副帧
+         * 被踩坏或整帧丢失（不重发，主站只能超时重试）。临界区只有十几条
+         * 指令，对中断延迟的影响 < 0.5 µs。 */
+        uint32_t primask = __get_PRIMASK();
+        __disable_irq();
+        bool ok = FDCAN_AddMsgToTxFifoQ(FDCAN2, &h, (uint8_t *)data) == SUCCESS;
+        __set_PRIMASK(primask);
+        return ok;
 }
 
 /* 旧协议用：把 CANTxMessage 里配好的 ID/DLC 发出去 */
@@ -291,7 +301,10 @@ bool can_send_legacy(CANTxMessage *msg){
 /* 从 Rx FIFO0 取一帧。返回 false = 没有待处理帧。 */
 bool can_rx_fetch(can_frame_t *f){
         FDCAN_RxHeaderType h;
-        if(FDCAN_GetRxFifoFillLevel(FDCAN2, FDCAN_RX_FIFO0) <= 0){return false;}
+        /* 每个控制周期都会走这一句，所以直接读 RXF0S 的 F0FL 字段而不是调用
+         * FDCAN_GetRxFifoFillLevel()（跨 TU 调用 ≈ 15 个周期，而结果就是
+         * `FDCAN2->RXF0S & FDCAN_RXF0S_F0FL`）。空 FIFO 是常见路径。 */
+        if((FDCAN2->RXF0S & FDCAN_RXF0S_F0FL) == 0u){return false;}
         if(FDCAN_GetRxMsg(FDCAN2, FDCAN_RX_FIFO0, &h, f->data) != SUCCESS){return false;}
         if(h.RxFrameType != FDCAN_DATA_FRAME){return false;}
         f->id      = h.ID;

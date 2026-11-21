@@ -25,6 +25,19 @@ uint16_t spi_tx_words[2], spi_rx_words[2];
  * which is what it used to do (infinite spin -> watchdog reset loop) */
 #define PS_WAIT_ITERS 100
 
+/* ---- 热路径上的寄存器直读/直写 -------------------------------------------
+ * 编码器采样在 40 kHz 中断里，每拍要碰 5 次 SDK 辅助函数（DMA_GetFlagStatus /
+ * DMA_ClearFlag / GPIO_WriteBits ×2）；它们都只是读一个寄存器或写一个掩码。
+ * 这里展开成同样的寄存器操作（CS 由 GPIOx->PBC/PBSC 置位/复位，TC 标志读
+ * INTSTS / 写 INTCLR），语义与 SDK 完全相同。
+ * 注意：这一段的收益很小（几十个周期）；ps_finish_sample() 那段实测的 −32%
+ * 主要来自局部变量化和 count_buff 环形化（见那里的注释）。 */
+static inline int ps_tc1_set(void){ return (DMA2->INTSTS & DMA_FLAG_TC1) != 0u; }
+static inline int ps_tc2_set(void){ return (DMA2->INTSTS & DMA_FLAG_TC2) != 0u; }
+static inline void ps_clear_tc(void){ DMA2->INTCLR = DMA_FLAG_TC1 | DMA_FLAG_TC2; }
+static inline void ps_cs_low(void){ ENC_SPI_NSS_GPIO_Port->PBC = ENC_SPI_NSS_Pin; }
+static inline void ps_cs_high(void){ ENC_SPI_NSS_GPIO_Port->PBSC = ENC_SPI_NSS_Pin; }
+
 void ps_warmup(EncoderStruct * encoder, int n){
 	/* Hall position sensors noisy on startup.  Take a bunch of samples to clear this data */
 	spi_tx_words[0] = ENC_READ_WORD;
@@ -32,9 +45,8 @@ void ps_warmup(EncoderStruct * encoder, int n){
 	for(int i = 0; i<n; i++){
 		/* The DMA counter counts data units, and the channels are configured for
 		 * 16-bit (HALFWORD) transfers, so one 16-bit encoder frame is 1 - not 2 */
-		DMA_ClearFlag(DMA_FLAG_TC1, DMA2);
-		DMA_ClearFlag(DMA_FLAG_TC2, DMA2);
-		GPIO_WriteBits(ENC_CS, Bit_RESET); // CS low
+		ps_clear_tc();
+		ps_cs_low(); // CS low
 		SPI_Transmit_DMA((uint8_t *)spi_tx_words, 1);
 		SPI_Receive_DMA((uint8_t *)spi_rx_words, 1);
 		/* Bounded like ps_finish_sample: if the flags never arrive (DMA/SPI
@@ -42,9 +54,9 @@ void ps_warmup(EncoderStruct * encoder, int n){
 		 * before the FSM ever starts - and with DBG_IWDG_STOP set even the
 		 * watchdog can't rescue it under the debugger */
 		uint32_t wait = PS_WAIT_ITERS;
-		while((DMA_GetFlagStatus(DMA_FLAG_TC2, DMA2) == RESET) && (--wait != 0)){;}
-		while((DMA_GetFlagStatus(DMA_FLAG_TC1, DMA2) == RESET) && (--wait != 0)){;}
-		GPIO_WriteBits(ENC_CS, Bit_SET); // CS high
+		while(!ps_tc2_set() && (--wait != 0)){;}
+		while(!ps_tc1_set() && (--wait != 0)){;}
+		ps_cs_high(); // CS high
 		SPI_StopTransmit_DMA();
 		SPI_StopReceive_DMA();
 		if(wait == 0){encoder->lost_frames++;}	// let telemetry show that the encoder never answered during warmup
@@ -70,9 +82,8 @@ void ps_warmup(EncoderStruct * encoder, int n){
 void ps_start_read(void){
 	/* The transfer-complete flags have to be cleared before the channels are
 	 * enabled, or the previous frame's flag would read as this one completing */
-	DMA_ClearFlag(DMA_FLAG_TC1, DMA2);
-	DMA_ClearFlag(DMA_FLAG_TC2, DMA2);
-	GPIO_WriteBits(ENC_CS, Bit_RESET); // CS low
+	ps_clear_tc();
+	ps_cs_low(); // CS low
 	SPI_Transmit_DMA((uint8_t *)spi_tx_words, 1);
 	SPI_Receive_DMA((uint8_t *)spi_rx_words, 1);
 }
@@ -86,10 +97,10 @@ int ps_finish_sample(EncoderStruct * encoder, float dt){
 	 * bit, which cannot happen before the TX half has gone out */
 	ISR_TIMING_SPAN_BEGIN(t_enc_wait);
 	uint32_t wait = PS_WAIT_ITERS;
-	while((DMA_GetFlagStatus(DMA_FLAG_TC1, DMA2) == RESET) && (--wait != 0)){;}
+	while(!ps_tc1_set() && (--wait != 0)){;}
 	ISR_TIMING_SPAN_END(ISR_EXT_ENC_WAIT, t_enc_wait);
 
-	GPIO_WriteBits(ENC_CS, Bit_SET); // CS high
+	ps_cs_high(); // CS high
 	SPI_StopTransmit_DMA();
 	SPI_StopReceive_DMA();
 
@@ -105,31 +116,36 @@ int ps_finish_sample(EncoderStruct * encoder, float dt){
 		(void)SPI1->DAT;
 		return 0;
 	}
-	encoder->raw = spi_rx_words[0];
+	/* 整段用局部变量跑完再写回：40 kHz 下每拍这一小段要做三十多次 SRAM 读写，
+	 * 而 cortex-m4 每条 LDR/STR 都要走一次总线。数值与逐字段版本完全相同：
+	 * 同样的运算顺序，且 ENC_CPR 是 2 的幂，乘 INV_CPR 与除 (float)ENC_CPR
+	 * 逐位等价（见 docs/DEV.md "中断预算"）。 */
+	const int raw = spi_rx_words[0];
+	encoder->raw = raw;
 
-	/* Shift around previous samples.  The buffer holds multi-turn positions in
-	 * integer counts, so velocity resolution doesn't degrade as the float
-	 * multi-turn angle gets large */
 	encoder->old_angle = encoder->angle_singleturn;
-	for(int i = N_POS_SAMPLES-1; i>0; i--){encoder->count_buff[i] = encoder->count_buff[i-1];}
 
-	/* Linearization */
-	int off_1 = encoder->offset_lut[(encoder->raw)>>9];				// lookup table lower entry
-	int off_2 = encoder->offset_lut[((encoder->raw>>9)+1)%128];		// lookup table higher entry
-	int off_interp = off_1 + ((off_2 - off_1)*(encoder->raw - ((encoder->raw>>9)<<9))>>9);     // Interpolate between lookup table entries
-	encoder->count = encoder->raw + off_interp;
+	/* Linearization: 128-entry table, linear interpolation inside one bin */
+	const int idx    = raw >> 9;							// 0..127
+	const int off_1  = encoder->offset_lut[idx];			// lookup table lower entry
+	const int off_2  = encoder->offset_lut[(idx + 1) & 127];	// 128 is a power of two
+	const int off_interp = off_1 + ((off_2 - off_1)*(raw & 511) >> 9);
+	const int count = raw + off_interp;
+	encoder->count = count;
 
-
-	/* Single-turn count relative to the zero position, wrapped to [0, ENC_CPR) */
-	int count_wrapped = (encoder->count - M_ZERO) % ENC_CPR;
-	if(count_wrapped < 0){count_wrapped += ENC_CPR;}
+	/* Single-turn count relative to the zero position, wrapped to [0, ENC_CPR):
+	 * the mask is the same positive residue that "% + if(<0)" produced */
+	const int count_wrapped = (count - M_ZERO) & (ENC_CPR - 1);
 	encoder->count_wrapped = count_wrapped;
-	encoder->angle_singleturn = TWO_PI_F*((float)count_wrapped)/((float)ENC_CPR);
+	const float angle_singleturn = TWO_PI_F*(float)count_wrapped*INV_CPR;
+	encoder->angle_singleturn = angle_singleturn;
 
-	encoder->elec_angle = (encoder->ppairs*(float)(encoder->count-E_ZERO))/((float)ENC_CPR);
-	int int_angle = (int)encoder->elec_angle;
-	encoder->elec_angle = TWO_PI_F*(encoder->elec_angle - (float)int_angle);
-	encoder->elec_angle = encoder->elec_angle<0 ? encoder->elec_angle + TWO_PI_F : encoder->elec_angle;	// Add 2*pi to negative numbers
+	const float ppairs = encoder->ppairs;
+	float elec_angle = ppairs*(float)(count - E_ZERO)*INV_CPR;
+	const int int_angle = (int)elec_angle;
+	elec_angle = TWO_PI_F*(elec_angle - (float)int_angle);
+	if(elec_angle < 0.0f){elec_angle += TWO_PI_F;}	// Add 2*pi to negative numbers
+	encoder->elec_angle = elec_angle;
 
 	/* Rollover */
 	int rollover = 0;
@@ -157,20 +173,31 @@ int ps_finish_sample(EncoderStruct * encoder, float dt){
 	}
 
 	/* Multi-turn position, exact in integer counts (good for +/-32768 turns
-	 * before overflowing), and in radians for the rest of the firmware */
-	encoder->count_buff[0] = count_wrapped + ENC_CPR*encoder->turns;
-	encoder->angle_multiturn = TWO_PI_F*((float)encoder->count_buff[0])/((float)ENC_CPR);
+	 * before overflowing), and in radians for the rest of the firmware.
+	 * count_buff 改成环形：新样本写 head，19 拍的历史只花一次写（原来的
+	 * 19 字搬移约等于这个函数 15% 的访存）。count_multi 就是原来
+	 * count_buff[0] 的值，所以 cogging.c 照旧按它对表。 */
+	const int count_multi = count_wrapped + ENC_CPR*encoder->turns;
+	encoder->count_multi = count_multi;
+	encoder->angle_multiturn = TWO_PI_F*(float)count_multi*INV_CPR;
+
+	uint8_t head = encoder->count_head;
+	if(++head >= N_POS_SAMPLES){head = 0;}
+	encoder->count_head = head;
+	encoder->count_buff[head] = count_multi;
 	if(first_sample){	// fill the buffer on the first sample so velocity starts at zero, not with a spike
-		for(int i = 1; i<N_POS_SAMPLES; i++){encoder->count_buff[i] = encoder->count_buff[0];}
+		for(int i = 0; i<N_POS_SAMPLES; i++){encoder->count_buff[i] = count_multi;}
 	}
+	uint8_t oldest = head + 1;			// head 的前一格 = N-1 拍之前的样本
+	if(oldest >= N_POS_SAMPLES){oldest = 0;}
 
 	/* Velocity: finite difference of the integer counts.  Differencing counts
 	 * instead of the float angles keeps velocity resolution independent of how
 	 * far the multi-turn position is from zero */
 	/* (Tried a moving least-squares fit here; it wasn't any better than the simple difference) */
-	encoder->velocity = TWO_PI_F*((float)(encoder->count_buff[0] - encoder->count_buff[N_POS_SAMPLES-1]))
+	encoder->velocity = TWO_PI_F*((float)(count_multi - encoder->count_buff[oldest]))
 			/((float)ENC_CPR*dt*(float)(N_POS_SAMPLES-1));
-	encoder->elec_velocity = encoder->ppairs*encoder->velocity;
+	encoder->elec_velocity = ppairs*encoder->velocity;
 
 	return 1;
 }
@@ -422,6 +449,8 @@ void ps_set_m_zero(int32_t v){
 	comm_encoder.angle_multiturn = angle;
 	comm_encoder.old_angle = angle;
 	for(int i = 0; i < N_POS_SAMPLES; i++){comm_encoder.count_buff[i] = new_counts;}
+	comm_encoder.count_head = 0;
+	comm_encoder.count_multi = new_counts;
 	ps_reset_pll(&comm_encoder);		/* 速度别从这次跳变里算出来 */
 
 	if(turns > 30000 || turns < -30000){

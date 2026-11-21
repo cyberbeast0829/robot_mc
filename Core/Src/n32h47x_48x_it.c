@@ -329,7 +329,6 @@ void can_tx_rx(void){
 	can_frame_t frame;
 	for(uint8_t i = 0; i < 2u; i++){
 		if(!can_rx_fetch(&frame)){break;}
-		GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
 		can_proto_rx(&frame);
 	}
 }

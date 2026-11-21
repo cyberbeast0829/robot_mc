@@ -801,16 +801,50 @@ static void cb_query_device_info(const can_frame_t *f)
 
 /* ---- 帧分发（ISR 上下文）--------------------------------------------- */
 
-static void cb_rx(const can_frame_t *f)
-{
-    if (f->id_type != FDCAN_EXTENDED_ID) { return; }
-    if (!cb_is_for_me(f->id)) { return; }
+/* 慢帧下沉：SDO 参数读写、JSON 描述符请求都要走 endpoint_handler()/描述符逻辑，
+ * 一次能吃掉 1200 拍（20% 的 25 µs 时隙，台架 timing.seg_can_max 实测）。
+ * 控制帧（MIT/CSP/CSV/TORQUE/CURRENT、START/STOP/SAVE/RESET/ESTOP）必须留在
+ * 中断里——它们刷新命令租约；其余只入队，由主循环 cb_poll() 执行，和 USB 那条
+ * 路径的架构一致（"解析在主循环、中断只搬运"）。
+ *
+ * 顺序：入队只在 ISR 里追加，出队在 ISR（控制帧前清空）和主循环里做，所以
+ * "写参数 → action.save / START_MOTOR" 这类先后关系不会被打乱：控制帧到达时
+ * 会先把队列排空再执行自己。
+ *
+ * 队列满（主循环被 printf/擦 flash 卡住时的极端情况）就丢弃并计数，主站会重发；
+ * 直接丢弃也优于把 ISR 撑破。 */
+#define CB_DEFER_DEPTH	4
+static can_frame_t cb_defer_ring[CB_DEFER_DEPTH];
+static volatile uint8_t cb_defer_head, cb_defer_tail;
+static uint32_t cb_defer_dropped;
 
+static int cb_is_deferrable(uint8_t mt)
+{
+    return (mt == CB_MSG_PARAM_READ) || (mt == CB_MSG_PARAM_WRITE)
+        || (mt == CB_MSG_JSON_DESC_READ);
+}
+
+static void cb_defer_push(const can_frame_t *f)
+{
+    uint8_t next = (uint8_t)((cb_defer_head + 1u) % CB_DEFER_DEPTH);
+    if (next == cb_defer_tail) { cb_defer_dropped++; return; }
+    cb_defer_ring[cb_defer_head] = *f;
+    cb_defer_head = next;
+}
+
+static int cb_defer_pop(can_frame_t *f)
+{
+    if (cb_defer_head == cb_defer_tail) { return 0; }
+    *f = cb_defer_ring[cb_defer_tail];
+    cb_defer_tail = (uint8_t)((cb_defer_tail + 1u) % CB_DEFER_DEPTH);
+    return 1;
+}
+
+static void cb_dispatch(const can_frame_t *f)
+{
     uint8_t mt = cb_get_msgtype(f->id);
     uint8_t src = cb_get_source(f->id);
     uint8_t seq = cb_get_seq(f->id);
-
-    if (src != 0) { cb_master_id = src; }
 
     switch (mt) {
     case CB_MSG_MIT_CONTROL:
@@ -942,6 +976,23 @@ static void cb_rx(const can_frame_t *f)
     }
 }
 
+static void cb_rx(const can_frame_t *f)
+{
+    if (f->id_type != FDCAN_EXTENDED_ID) { return; }
+    if (!cb_is_for_me(f->id)) { return; }
+
+    uint8_t mt = cb_get_msgtype(f->id);
+    uint8_t src = cb_get_source(f->id);
+    if (src != 0) { cb_master_id = src; }
+
+    if (cb_is_deferrable(mt)) { cb_defer_push(f); return; }
+
+    /* 控制帧先等排队的参数帧执行完，保证“写参数 → save/start”的顺序 */
+    can_frame_t q;
+    while (cb_defer_pop(&q)) { cb_dispatch(&q); }
+    cb_dispatch(f);
+}
+
 /* ---- 1 ms 时基 / 主循环 ---------------------------------------------- */
 
 static void cb_tick_1ms(void)
@@ -962,6 +1013,11 @@ static uint32_t cb_poll_last_loop;
 
 static void cb_poll(void)
 {
+    /* 先把中断里排队的慢帧（SDO / 描述符请求）做完。不受 1 ms 限速约束：
+     * 它们是主站同步等待的应答，晚一拍就多一次超时。 */
+    can_frame_t q;
+    while (cb_defer_pop(&q)) { cb_dispatch(&q); }
+
     uint32_t now = (uint32_t)controller.loop_count;
     if ((uint32_t)(now - cb_poll_last_loop) < 40u) { return; }   /* 40 × 25 us = 1 ms */
     cb_poll_last_loop = now;

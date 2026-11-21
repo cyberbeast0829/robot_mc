@@ -51,6 +51,16 @@ void set_dtc(ControllerStruct *controller){
 		// __HAL_TIM_SET_COMPARE(&TIM_PWM, TIM_CH_U, ((TIM_PWM->AR))*dtc_v);
 		// __HAL_TIM_SET_COMPARE(&TIM_PWM, TIM_CH_W, ((TIM_PWM->AR))*dtc_w);
 	}
+
+	/* 下一拍 analog_sample() 要不要扫低边窗口：窗口 = AR*dtc（见
+	 * phase_current_law.h），判据 dtc < I_SAMPLE_MIN_LOW_FRAC 与
+	 * pcl_worst_phase() 的 tick 比较等价，所以在这里按刚写下的三个占空比一次
+	 * 算清，中断里就省掉 4 次外设读 + 4 次比较。
+	 * 放在 set_dtc() 里而不是 commutate() 里：开环（标定）和 zero_current() 也
+	 * 直接调这个函数，写在这些路径上的占空比同样可能把某一相压到底部。 */
+	controller->pcl_check_needed =
+			(fminf3(controller->dtc_u, controller->dtc_v, controller->dtc_w)
+			 < I_SAMPLE_MIN_LOW_FRAC);
 }
 
 void analog_sample (ControllerStruct *controller){
@@ -60,14 +70,14 @@ void analog_sample (ControllerStruct *controller){
 	 * sequence to finish.  If a trigger or converter fails, the watchdog
 	 * resets the chip. */
 	ISR_TIMING_SPAN_BEGIN(t_adc_wait);
-	while(ADC_GetFlagStatus(ADC1, ADC_FLAG_JENDC) == RESET){;}
-	while(ADC_GetFlagStatus(ADC2, ADC_FLAG_JENDC) == RESET){;}
-	while(ADC_GetFlagStatus(ADC3, ADC_FLAG_JENDC) == RESET){;}
+	while(!adc_jendc_set(ADC1)){;}
+	while(!adc_jendc_set(ADC2)){;}
+	while(!adc_jendc_set(ADC3)){;}
 	ISR_TIMING_SPAN_END(ISR_EXT_ADC_WAIT, t_adc_wait);
 
-	ADC_ClearFlag(ADC1, ADC_FLAG_JENDC);
-	ADC_ClearFlag(ADC2, ADC_FLAG_JENDC);
-	ADC_ClearFlag(ADC3, ADC_FLAG_JENDC);
+	adc_jendc_clear(ADC1);
+	adc_jendc_clear(ADC2);
+	adc_jendc_clear(ADC3);
 
 	/* Raw samples and zero offsets stay bound to physical ADC1/2/3, even
 	 * when calibration changes PHASE_ORDER.  Swap only corrected currents. */
@@ -104,7 +114,7 @@ void analog_sample (ControllerStruct *controller){
 	 * i_b ↔ 桥臂 2、i_c ↔ 桥臂 3），所以不用判断 PHASE_ORDER；阈值 i_min_low_ticks
 	 * 在 init_controller_params() 里按 AR 换算过一次。 */
 	int i_recon = PCL_NONE;
-	if(controller->gate_drive_enabled){
+	if(controller->gate_drive_enabled && controller->pcl_check_needed){
 		const uint32_t ar = TIM_PWM->AR;
 		i_recon = pcl_worst_phase(pcl_low_side_ticks(ar, TIM_PWM->CCDAT1),
 		                          pcl_low_side_ticks(ar, TIM_PWM->CCDAT2),
@@ -264,6 +274,8 @@ void init_controller_params(ControllerStruct *controller){
     /* 低边采样窗口阈值（analog_sample / phase_current_law.h）：AR 运行期不变，
      * 所以在这里换算一次，40 kHz 中断里只剩一次比较。必须在 MX_TIM1_Init() 之后 */
     controller->i_min_low_ticks = (uint32_t)(I_SAMPLE_MIN_LOW_FRAC*(float)TIM_PWM->AR + 0.5f);
+    /* 保守起见先扫一次；commutate() 每拍按实际占空比刷新（见那里的注释） */
+    controller->pcl_check_needed = 1;
     /* Fixed on-chip PGA configuration and 5 mOhm shunts; I_MAX does not
      * change the hardware gain or the current conversion coefficient. */
     controller->i_scale = I_SCALE;
@@ -299,6 +311,7 @@ void reset_foc(ControllerStruct *controller){
      * 否则进电机模式的第一拍 torque_control() 会用上一次留下的（可能是 0）上限 */
     controller->i_max = I_MAX;
     controller->temp_i_lim = I_MAX;
+    controller->pcl_check_needed = 1;
     /* 每次进电机模式都按当前标定的 R/L 与 config.i_bw 重算电流环增益，这样
      * 标定完成或改了 i_bw 都不必等重启。纯浮点运算，只在状态切换时执行一次 */
     current_loop_retune(controller);
@@ -433,6 +446,13 @@ void field_weaken(ControllerStruct *controller)
        if(controller->i_q_des > 0.0f){controller->i_q_des = fast_fmaxf(controller->i_q_des + controller->fw_int, 0.0f);}
        else{controller->i_q_des = fast_fminf(controller->i_q_des - controller->fw_int, 0.0f);}
        controller->i_d_des = controller->fw_int;
+       /* 弱磁没出力时 q_max 就是 i_max，不用开方（vsqrt 14 拍，且每拍都跑）。
+        * 走这条分支时 i_d_des == 0，i_q_des 仍按 ±i_max 钳 —— 与开方版本等价，
+        * 因为 sqrt(i_max²-0) 恰好是 i_max。 */
+       if(controller->fw_int == 0.0f){
+           controller->i_q_des = fast_fmaxf(fast_fminf(controller->i_q_des, controller->i_max), -controller->i_max);
+           return;
+       }
        float q_max_squared = controller->i_max*controller->i_max - controller->i_d_des*controller->i_d_des;
        float q_max = q_max_squared > 0.0f ? sqrtf(q_max_squared) : 0.0f;
        controller->i_q_des = fast_fmaxf(fast_fminf(controller->i_q_des, q_max), -q_max);
@@ -457,28 +477,6 @@ void commutate(ControllerStruct *controller, EncoderStruct *encoder)
         * every state - see the note there */
 
        controller->v_max = OVERMODULATION*controller->v_bus_filt*(DTC_MAX-DTC_MIN)*SQRT1_3;
-
-       /* ---- 母线电流 / 机械功率（估算，见下）----
-        * 硬件没有直流分流器：用上一拍的 dq 电压和的功率反推。
-        *   P_elec = 1.5 * V_PER_CMD * (v_d*i_d + v_q*i_q)   [W]
-        *   i_bus  = P_elec / v_bus                           [A]
-        * 1.5 是幅值不变 dq 变换的功率系数。v_d/v_q 是上一拍的输出（指令在上一拍
-        * 已经生效），所以误差在一个控制周期内，对监控和软限幅足够。
-        * 这不是精密测量，不能拿它当保护阈值 —— 保护仍然靠相电流与母线电压。 */
-       {
-           float vbus = controller->v_bus_filt;
-           float p_elec = 1.5f*V_PER_CMD*(controller->v_d*controller->i_d
-                                         + controller->v_q*controller->i_q);
-           float i_bus = (vbus > 1.0f) ? (p_elec/vbus) : 0.0f;
-           if(!isfinite(i_bus)){i_bus = 0.0f;}
-           if(!isfinite(p_elec)){p_elec = 0.0f;}
-           controller->p_elec = p_elec;
-           controller->i_bus = i_bus;
-           controller->i_bus_filt = (1.0f-VBUS_FILT_ALPHA)*controller->i_bus_filt
-                                  + VBUS_FILT_ALPHA*i_bus;
-           /* 机械功率：输出端转矩 × 输出轴角速度（>0 输出机械功，<0 回馈） */
-           controller->mech_power = controller->i_q_filt*KT*GR*controller->dtheta_mech;
-       }
 
        /* ---- 电流上限：I_MAX 再叠加温度降流与转矩上限 ----
         * 温度保护关闭时完全不影响 I_MAX（默认就是关）。 */
@@ -565,7 +563,33 @@ void commutate(ControllerStruct *controller, EncoderStruct *encoder)
         * over-modulation factor - see svm() */
        svm(controller->v_max/OVERMODULATION, controller->v_u, controller->v_v, controller->v_w, &controller->dtc_u, &controller->dtc_v, &controller->dtc_w); //space vector modulation
 
+       /* 占空比先出去，再做遥测。双更新（docs/DEV.md 的 P2）之后这个写操作有
+        * 12.5 µs 的硬截止（谷值 UEV 要装载它），所以"算完立刻写、其余往后排"
+        * 是必须的；现在这样排在 40 kHz 上也只多给一点余量，控制结果不变。 */
        set_dtc(controller);
+
+       /* ---- 母线电流 / 机械功率（估算，见下）----
+        * 硬件没有直流分流器：用 dq 电压和的功率反推。
+        *   P_elec = 1.5 * V_PER_CMD * (v_d*i_d + v_q*i_q)   [W]
+        *   i_bus  = P_elec / v_bus                           [A]
+        * 1.5 是幅值不变 dq 变换的功率系数。放在 set_dtc() 之后，v_d/v_q 用的是
+        * 本拍刚算出的输出（比原来用上一拍的更准，差一个控制周期，遥测和软限幅
+        * 都用不着更严）；i_d/i_q 仍是本拍的测量值。
+        * 这不是精密测量，不能拿它当保护阈值 —— 保护仍然靠相电流与母线电压。 */
+       {
+           float vbus = controller->v_bus_filt;
+           float p_elec = 1.5f*V_PER_CMD*(controller->v_d*controller->i_d
+                                         + controller->v_q*controller->i_q);
+           float i_bus = (vbus > 1.0f) ? (p_elec/vbus) : 0.0f;
+           if(!isfinite(i_bus)){i_bus = 0.0f;}
+           if(!isfinite(p_elec)){p_elec = 0.0f;}
+           controller->p_elec = p_elec;
+           controller->i_bus = i_bus;
+           controller->i_bus_filt = (1.0f-VBUS_FILT_ALPHA)*controller->i_bus_filt
+                                  + VBUS_FILT_ALPHA*i_bus;
+           /* 机械功率：输出端转矩 × 输出轴角速度（>0 输出机械功，<0 回馈） */
+           controller->mech_power = controller->i_q_filt*KT*GR*controller->dtheta_mech;
+       }
 
     }
 float angle_est = 0; 

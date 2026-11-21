@@ -516,6 +516,61 @@ python tools/iloop_bw.py --can --interface slcan --channel COM12 sweep --axis d
 - 安全：只在 `gate_drive_enabled` 时注入，离开电机模式 `scope_poll()` 立刻把状态
   打成中止；另有 2 s 硬超时，主机掉线不会一直灌电流。
 
+## 中断预算（40 kHz = 6000 拍）与它的优化顺序
+
+`timing.*` 端点报的是**周期数**（DWT，240 MHz，1 拍 = 4.17 ns）。2026-11-20 台架
+把这条路径从头量了一遍，结论和直觉相反，记在这里免得再走一遍弯路：
+
+| 项 | 量级 | 说明 |
+|---|---|---|
+| 跨 TU 调用 | ~2% | `commutate()` 里 13 次 `bl`、`svm()` 里 8 次；**全部内联只值 2%**（每次 `bl`+`bx` 在 ICACHE 命中时只有 4~6 拍） |
+| 取指等待 | **~2.7 拍/指令** | 5 个 flash 等待周期 + ICACHE 未命中才是真正的成本：编码器路径平均跑 220 条指令却要 599 拍 |
+| 硬件等待 | 25~70 拍 | `ext_adc_wait` / `ext_enc_wait`，其余都不是"等" |
+
+按这个顺序改，每一档都实测过（菜单态 `total_max`、电机态 `seg_fsm_max`）：
+
+| # | 改动 | 效果 |
+|---|---|---|
+| 1 | 小函数（`fast_fmaxf`/`limit_norm`/ADC-DMA-GPIO 寄存器直读）内联/展开 | `total_max` −2% |
+| 2 | `ps_finish_sample()` 局部变量化 + `count_buff` 改环形（去掉 19 字搬移） | `seg_enc_max` **−32%** |
+| 3 | CAN 慢帧（SDO 读写 / 描述符请求）入队，主循环 `cb_poll()` 执行 | 同等 SDO 负载下 `seg_can_max` **−21%** |
+| 4 | `set_dtc()` 提到遥测之前 | 0 收益，但**双更新（谷值装载）要求"写完 CCDCT 才 12.5 µs"** |
+| 5 | `analog_sample` 按占空比跳过低边窗口扫描（`pcl_check_needed`） | `seg_adc_max` −4% |
+| 6 | **flash 预取缓冲与 ICACHE 同时打开**（`system_n32h47x_48x.c`） | 电机态 `seg_fsm_max` **−13%** |
+| 7 | `field_weaken()` 在 `fw_int==0` 时跳过开方；CAN 收帧不再 toggle LED | `seg_fsm_max` −1% |
+
+合计（`-Os` 构建）：菜单态 `total_max` 2710 → 2295，电机态 `total_max` 5296 → 4583、
+`seg_fsm_max` 3859 → 3340，全程 `overrun = 0`。
+
+### `.ramfunc`（在 SRAM 里执行）：试过，**本机是负收益，不要再做**
+
+2026-11-21 完整实现并台架对比（`RAMFUNC` 标记 + `ER_RAMCODE`/`.ramfunc` 段 + 启动
+拷贝，把 `ATIM1_UP_IRQHandler`、`commutate/analog_sample/set_dtc/dq0/abc/svm/
+field_weaken/torque_control/check_faults`、`ps_*`、`run_fsm`、`motion_control`、
+`cogging_apply`、`scope_*`、`sincos_lut` 共 11.5 KB 搬进 SRAM 0x20017000）：
+
+| | flash（最终） | SRAM 执行 |
+|---|---|---|
+| 菜单 `total_max` | **2295** | 2639 |
+| `seg_adc_max` | **546** | 642 |
+| `seg_enc_max` | **700** | 908 |
+| `seg_can_max` | **1103** | 1174 |
+| 电机 `total_max` | **4583** | 5129 |
+| 电机 `seg_fsm_max` | 3340 | **3270** |
+
+只有 FSM 段好 2%，其余全线变差。原因：240 MHz 下 SRAM 取指本身要等，而且中断
+里本来就有大量 SRAM 数据访问，取指挤的是同一条总线；相比之下 flash + ICACHE +
+预取缓冲（第 6 项）已经把那部分代价压得很低。所以**"2.7 拍/指令"要靠预取和减少
+指令数解决，不要靠搬进 RAM**。真要重测，注意 RAM 代码段和 ZI/栈是同一块 SRAM，
+且从 flash 调用 RAM 函数会经过 ARM 的长跳 veneer。
+
+**还没做的**：SDO 负载下 `seg_can_max` 仍有 ~1100 拍/帧（`FDCAN_GetRxMsg` 的
+message-RAM 拷贝）。想再削只能绕开 SDK 直接读 message RAM，收益有限。
+
+⚠ 双更新的前提不是 `total_max ≤ 3000`，而是**从进入中断到 `set_dtc()` 写
+`CCDATx` 的这段时间 ≤ 12.5 µs**（谷值 UEV 就要装载它）。`can_tx_rx()` 已经排在
+`set_dtc()` 之后，所以 CAN 的尖峰落在截止时间之外。
+
 ## 速度环与位置环（CSV / CSP）
 
 三条环都跑在控制中断里、相位锁在 PWM 更新（update/TRGO）上：
@@ -1815,9 +1870,16 @@ CubeMX 的 SysInit 段移到了配置加载之后
 | `can_cyberbeast_codec.h` | 纯编解码（固件与 host 测试共用） |
 
 `n32h47x_48x_it.c` 的 `can_tx_rx()` 只做：`can_proto_tick()` + 每周期最多取 2 帧
-→ `can_proto_rx()`。控制帧、查询、心跳、SDO 参数访问都在 ISR；**描述符流式发送
-在主循环**（`can_proto_poll()`，2 帧/ms）。新增协议 = 一个 `can_protocol_t` + 一个
-`can_prot` 枚举值，不动硬件层。
+→ `can_proto_rx()`。**控制帧**（MIT/CSP/CSV/TORQUE/CURRENT、START/STOP/SAVE/
+RESET/ESTOP、各 QUERY）在 ISR；**慢帧**——SDO 参数读写（`PARAM_READ/WRITE`，要跑
+`endpoint_handler()`）和描述符请求（`JSON_DESC_READ`）——只入队（`cb_defer_ring`，
+4 深度），由主循环的 `cb_poll()` 执行，实测同等 SDO 负载下 `seg_can_max`
+−21%（见"中断预算"）。控制帧到达时会**先把队列排空**再执行自己，保证
+"写参数 → save / start motor"的顺序。描述符流式发送同样在主循环（2 帧/ms）。
+发送因此有**两个上下文**（中断里的控制应答/心跳 + 主循环里的 SDO 应答），
+`can_send_frame()` 里用 PRIMASK 临界区包住 `FDCAN_AddMsgToTxFifoQ()`（它先读
+PutIndex 再往消息 RAM 拷贝，被抢占会踩掉一帧）。
+新增协议 = 一个 `can_protocol_t` + 一个 `can_prot` 枚举值，不动硬件层。
 
 ### CYBERBEAST 实现范围
 

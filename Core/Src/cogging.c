@@ -278,7 +278,7 @@ int cogging_cal_step(ControllerStruct *controller, const EncoderStruct *encoder)
 		 * start_bin 是第 0 个点在**表里**的索引（运行时按绝对计数查表）：
 		 * 第 i 个点的物理格是 (start_bin + i) mod COG_N，不是 i —— hold 法存表
 		 * 必须用它，否则整张表会被旋转一个随机的 k0 格。 */
-		int64_t k = (int64_t)encoder->count_buff[0] + (int64_t)M_ZERO;
+		int64_t k = (int64_t)encoder->count_multi + (int64_t)M_ZERO;
 		if (k < 0) { k -= (int64_t)(COG_STEP - 1); }		// 负数也要向下取整
 		k /= (int64_t)COG_STEP;
 		cogging_cal.start_abs = (int32_t)(k * (int64_t)COG_STEP) - M_ZERO;

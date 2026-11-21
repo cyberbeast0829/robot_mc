@@ -64,6 +64,7 @@ typedef struct{
     uint8_t i_recon;                                        // 本拍被 KCL 重建的相（0/1/2，物理桥臂序），0xFF = 三相都是实测（调试）
     uint32_t i_recon_count;                                 // 上电以来重建过的控制周期数（饱和，不回绕）
     uint32_t i_min_low_ticks;                               // 低边采样窗口阈值（tick）= I_SAMPLE_MIN_LOW_FRAC*AR，初始化时换算一次
+    uint8_t pcl_check_needed;                               // 上一拍写下的占空比里有低于阈值的相 → 本拍 analog_sample 要扫低边窗口
     float v_bus, v_bus_filt;                                // DC link voltage
     float theta_mech, theta_elec;                           // Rotor mechanical and electrical angle
     float dtheta_mech, dtheta_elec;                         // Rotor mechanical and electrical angular velocity
