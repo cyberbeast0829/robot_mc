@@ -48,6 +48,13 @@ extern "C" {
 #define INERTIA					__float_reg[32]									// 输出端惯量 kg·m^2（action.measure_inertia 测得，不自动保存）
 #define OMEGA_C					__float_reg[33]									// action.tune_gains 的目标穿越频率 rad/s
 #define TUNE_MARGIN				__float_reg[34]									// action.tune_gains 的速度环放大系数（补摩擦/齿隙造成的低估）
+/* ---- 电流环：死区补偿（算法见 Core/Inc/dtc_comp.h）----
+ * DT_COMP 是每桥臂注入的**占空比当量** Ve/v_bus，不是伏特（见 dtc_comp.h 的量纲段）。
+ * 硬件死区 = tim.c 的 DeadTime = 20 tick、一个周期 2*AR = 6000 tick ⇒ 0.00333；出厂
+ * 默认 0.008 是本板实测的"死区 + 器件压降"合计当量（0.00333 只补死区，还剩 59% 的
+ * 截距），换功率板要按 docs/DEV.md 的 d 轴静态 V/I 拟合重标。0 = 关闭。 */
+#define DT_COMP					__float_reg[55]									// 死区补偿强度（占空比当量，0 = 关闭）
+#define DT_COMP_TOL				__float_reg[56]									// 死区补偿的符号平滑宽度 A（必须大于采样时刻的电流纹波幅值）
 /* ---- 保护与限幅（P0）----
  * 温度上下限是 °C；enabled = 0 时温度只上报、不参与控制（默认就是关，
  * 因为 NTC 型号/分压需要台架核对后才可信）。 */

@@ -1,5 +1,5 @@
 {
-  "next_id": 266,
+  "next_id": 268,
   "map": {
     "config.i_bw": 1,
     "config.i_max": 2,
@@ -264,6 +264,8 @@
     "telemetry.scope_overshoot": 262,
     "telemetry.scope_t90": 263,
     "telemetry.scope_settle": 264,
-    "telemetry.scope_clip": 265
+    "telemetry.scope_clip": 265,
+    "config.dt_comp": 266,
+    "config.dt_comp_tol": 267
   }
 }
