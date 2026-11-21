@@ -81,7 +81,15 @@ class JLink:
         self.log = os.path.join(tmpdir, "jlink.log")
 
     def run(self, commands, quiet=True):
-        head = ["si SWD", "speed %d" % self.speed, "device %s" % self.device, "connect"]
+        # The app starts the IWDG (~4 s) and it keeps counting while the core is
+        # halted, so an erase+program+verify that runs long (or a slow 250 kHz
+        # link) can be cut short by a watchdog reset halfway through a chunk -
+        # observed as "chunk 0 verify failed 3/3" with the flash left partially
+        # written.  DBG_CTRL.IWDG_STOP (0xE0042004 bit 8 on N32H47x; this part
+        # has no APB1_FZ register) freezes it while halted, which is exactly when
+        # it matters.  Written after every connect because a reset clears it.
+        head = ["si SWD", "speed %d" % self.speed, "device %s" % self.device,
+                "connect", "h", "w4 0xE0042004, 0x100"]
         with open(self.script, "w", encoding="ascii") as fh:
             fh.write("\n".join(head + commands + ["exit"]) + "\n")
         with open(self.log, "wb") as fh:
