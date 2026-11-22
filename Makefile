@@ -190,10 +190,16 @@ hosttest: $(BUILD_DIR)
 	$(HOSTCC) -std=gnu11 -O1 -Wall -Wextra -ICore/Inc tools/test_endpoint_proto.c Core/Src/endpoint.c -lm -o $(HOSTTEST_EP)
 	./$(HOSTTEST_EP)
 
-# 上位机侧的 CAN 传输（tools/mc_ep.py）：用 python-can 的 virtual 总线模拟设备，
+# 上位机侧的 CAN 传输（rmc 包）：用 python-can 的 virtual 总线模拟设备，
 # 不需要硬件/适配器，但要 `pip install python-can`（所以不并进 hosttest）。
+# tools/mc_ep.py 已经是转发到 rmc 的 shim，所以这条覆盖的就是 rmc 的实现。
 hosttest-py:
 	$(PYTHON) tools/test_mc_ep_can.py
+
+# rmc 包（tools/rmc，PyPI: robotmc）自己的测试：描述符/分片读写/属性树/tab 补全。
+# 需要 `pip install pytest python-can`。
+hosttest-rmc:
+	$(PYTHON) -m pytest -q tools/rmc/tests
 
 ######################################
 # flash
@@ -241,4 +247,4 @@ clean:
 
 -include $(OBJECTS:.o=.d)
 
-.PHONY: all clean flash flash-pyocd flash-openocd size endpoints endpoints-check check hosttest hosttest-py
+.PHONY: all clean flash flash-pyocd flash-openocd size endpoints endpoints-check check hosttest hosttest-py hosttest-rmc

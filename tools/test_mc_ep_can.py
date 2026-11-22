@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""mc_ep.py 的 CAN 传输回归测试（不需要硬件、不需要 CAN 适配器）。
+"""rmc 的 CAN 传输回归测试（不需要硬件、不需要 CAN 适配器）。
+
+`mc_ep.py` 现在是转发到 rmc 的 shim，所以这里测的就是 `rmc` 的实现
+（`make hosttest-rmc` 另跑 tools/rmc/tests 里的包级测试）。
 
 用 python-can 的 virtual 总线在同一进程里放一台"假设备"，行为照
 Core/Src/can_cyberbeast.c 写（PARAM_READ / PARAM_WRITE / 描述符流），

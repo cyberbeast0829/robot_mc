@@ -1254,7 +1254,7 @@ suggest   = min(e_recover, e_limit)
 
 `tools/csv_csp_test.py`（USB endpoint，不需要 CAN 主站；`--port COMx` 走 CDC，
 `--usb` 走 vendor interface，后者往返更短）。**它自己负责命令租约刷新**——
-`command.*` 的租约只有 `config.can_timeout`（默认 100 ms），用 `mc_ep.py set` 一条条
+`command.*` 的租约只有 `config.can_timeout`（默认 100 ms），用 `rmc set` 一条条
 敲根本无法维持，测出来的“环路不工作”其实是保护动作。
 
 | 子命令 | 作用 |
@@ -1294,27 +1294,27 @@ python tools/csv_csp_test.py --port COM6 plain --hold 2 --kp 20 --kd 1
 python tools/csv_csp_test.py --port COM6 sweep --vel 1.0 --gains 1,2,3,4,6
 
 # 2) 选定 vel_gain 后加积分，再跑一次完整阶跃看正反转
-python tools/mc_ep.py --port COM6 set config.vel_integrator_gain 10
+rmc --port COM6 set config.vel_integrator_gain 10
 python tools/csv_csp_test.py --port COM6 csv --vel 1.0 --hold 0.8 --move 2.5 --log csv.csv
 
 # 3) 位置环：从 ω_c/20 起试（台架上 ω_c/5 会因齿隙/摩擦过冲，见"惯量标定"一节）
-python tools/mc_ep.py --port COM6 set config.pos_gain 22
+rmc --port COM6 set config.pos_gain 22
 python tools/csv_csp_test.py --port COM6 csp --step 0.2 --hold 1.2 --move 2.0 --log csp.csv
 
 # 4) 惯量标定 —— 一条指令，自动进出电机模式（结束自动回菜单）
-python tools/mc_ep.py --port COM6 call action.measure_inertia
-python tools/mc_ep.py --port COM6 get system.inertia_status     # 1 运行中 / 2 成功 / 3..7 失败原因
-python tools/mc_ep.py --port COM6 get config.inertia            # kg·m^2（只写 RAM，未保存）
-python tools/mc_ep.py --port COM6 get telemetry.pos_error_fault_suggest
+rmc --port COM6 call action.measure_inertia
+rmc --port COM6 get system.inertia_status     # 1 运行中 / 2 成功 / 3..7 失败原因
+rmc --port COM6 get config.inertia            # kg·m^2（只写 RAM，未保存）
+rmc --port COM6 get telemetry.pos_error_fault_suggest
 
 # 5) 由惯量算三个增益（只写 RAM；不满意就改 omega_c / tune_margin 重算）
-python tools/mc_ep.py --port COM6 set config.omega_c 450
-python tools/mc_ep.py --port COM6 set config.tune_margin 2.6     # 摩擦主导的关节从 2~3 起试
-python tools/mc_ep.py --port COM6 call action.tune_gains
-python tools/mc_ep.py --port COM6 get config.vel_gain            # 确认写进去了
+rmc --port COM6 set config.omega_c 450
+rmc --port COM6 set config.tune_margin 2.6     # 摩擦主导的关节从 2~3 起试
+rmc --port COM6 call action.tune_gains
+rmc --port COM6 get config.vel_gain            # 确认写进去了
 python tools/csv_csp_test.py --port COM6 csv --vel 1.0           # 验证
 python tools/csv_csp_test.py --port COM6 csp --step 0.2
-python tools/mc_ep.py --port COM6 call action.save               # 满意后再保存
+rmc --port COM6 call action.save               # 满意后再保存
 ```
 
 `action.tune_gains` 的输入只有 `config.inertia`、`config.omega_c`、
@@ -1524,7 +1524,7 @@ python tools/cogging_test.py --port COM10 on           # 打开补偿（RAM）
 | CDC 虚拟串口 | EP1 IN / EP3 OUT | `AA` + `LEN` + `CRC8` + payload + `CRC16`（和 ASCII 菜单共用数据流） | `endpoint_serial.c` |
 | vendor interface 2（fibre） | EP3 IN / EP1 OUT | 一个 USB bulk 包 = 一个 PAYLOAD（无外层、无 CRC） | `endpoint_usb.c` |
 
-**出货的板子没有 USB 座，客户只有 CAN 这一条路**（`mc_ep.py --can`），
+**出货的板子没有 USB 座，客户只有 CAN 这一条路**（`rmc`，默认走 CAN），
 USB 的两条是开发/台架用的。
 
 CAN 那条直接调 `endpoint_handler()`，不经过 `endpoint_process()`：因此没有
@@ -1540,7 +1540,46 @@ interface 2 是 vendor specific（EP1 OUT / EP3 IN），见
 > 端点严格区分读写；动作端点（线上 `"type":"function"`）**读和写都会执行**——
 > ODrive 的协议没有读写位，function 端点被“读”也会执行，这里跟随它，好让
 > 按 ODrive 语义调用动作的上位机（JointSDK）直接可用。
-> 上位机请用 `tools/mc_ep.py`（`--can`，或开发板上的 `--port`/`--usb`）。
+> 上位机请用 `rmc`（默认 CAN；开发板上的 `--port`/`--usb` 也支持）。
+
+### 上位机：`rmc` 包（PyPI `robotmc`）
+
+`tools/rmc/` 是独立可发布的 Python 包：**PyPI 分发名 `robotmc`，命令/import 名
+`rmc`**（`rmc` 这个名字在 PyPI 已被别的项目占用，`pip install rmc` 装到的不是它）。
+`tools/mc_ep.py` 现在是转发到 `rmc` 的弃用 shim（重新导出 `Device`/`EpError`/
+`TYPE_CODES`/`DEFAULT_*`），所以老脚本、老文档、`make hosttest-py` 都不用改。
+
+```bash
+pip install robotmc            # 依赖：python-can / pyserial / IPython / USB 与彩色终端支持
+rmc tree | dump | descriptor
+rmc get config.i_max
+rmc set config.i_max 3.5       # 写后读回，限幅/拒绝会提示
+rmc call action.save
+rmc monitor telemetry.i_q telemetry.position --rate 100
+rmc scan                       # 只听不发：列节点/消息（不会把设备打进 bus-off）
+rmc probe                      # 监听 + 描述符自检
+rmc backup cfg.json            # persist 参数（描述符里 persist:true）
+rmc restore cfg.json --yes --save
+rmc                            # 交互 shell：自动发现设备，以 m0/m1/... 参数树访问
+```
+
+- 传输：`--interface slcan|pcan|socketcan|gs_usb|…`；slcan 不经过 python-can
+  （自己发 `S8/Y5/M0/A1/O`，支持 CANable 2.0 的 FD）；FD 仲裁域固定 1 Mbit/s
+  （`--fd` + `--data-bitrate = config.can_baud`）。
+- shell 启动时被动扫描配置 CAN 通道上的活动节点，并发现匹配 VID/PID 的 CDC、
+  vendor USB；按 `system.serial_number` 去重，依首次连接顺序分配 `mN` 名称。
+  一个 shell 会话复用同一 CAN adapter（特别是 slcan 串口），避免每个 node 重复打开。
+  断开再连会按序列号恢复原名称；读取不到序列号时按连接路径临时识别并显示
+  `unknown`。彩色连接状态包含序列号和固件版本。
+- shell 用 IPython，`m0.<TAB>` 补全来自代理树的 `__dir__`；动作端点的 `repr`
+  不会执行（读=执行），`dump`/`backup` 跳过 `function` 类型。
+- CDC/USB 返回 `EP_ERR_VERSION` 时自动重下描述符再重试。
+- 单测：`tools/rmc/tests/`（python-can virtual 总线上的假设备 + 代理树/补全/
+  CLI 解析），`make hosttest-rmc`；不接硬件的端到端测试用
+  `python tools/rmc/tests/sim_device.py`（udp_multicast，需 `pip install msgpack`），
+  再用 `python -m rmc --interface udp_multicast --channel 239.74.163.10:28700 ...`
+  访问。发布流程见 `tools/rmc/README.md`
+  （`python -m build` → `twine check` → TestPyPI → PyPI）。
 
 ### CDC 帧
 
@@ -1586,7 +1625,7 @@ seq|0x8000(2) | status(1) | data...
 | 6 `EP_ERR_STATE` | 状态不允许（如门极使能时保存） |
 | 7 `EP_ERR_VERSION` | 描述符 CRC 不匹配，主机应重新下载 |
 
-⚠ **刷了"描述符有变化"的镜像之后，主机必须重新下载描述符**：`mc_ep.py` 每次启动都会
+⚠ **刷了"描述符有变化"的镜像之后，主机必须重新下载描述符**：`rmc` 每次启动都会
 拉一遍，所以命令行工具无感；自己写的长连接、上位机 GUI、JointSDK 会话**必须重连**。
 台架实测（2026-11-21）：拿旧 CRC 去读，每个请求都返回 `EP_ERR_VERSION`，现象就是
 "上位机连接不稳、甚至像断线" —— 其实链路是好的（另一次实测：在一次完整标定的 25 s
@@ -1602,7 +1641,7 @@ seq|0x8000(2) | status(1) | data...
 都执行。ODrive 的 endpoint 协议没有读写标志，`endpoint_handler()` 对 function
 端点无论从哪个方向进来都会调用它，JointSDK 也按 `PARAM_READ(0x20)` 调动作。
 所以 `PARAM_READ` 一个 `action.*` 会真的执行它（返回值 0 字节），危险动作由
-`require` 门禁兜底；上位机遍历参数时应跳过 `function` 类型（`mc_ep.py dump`
+`require` 门禁兜底；上位机遍历参数时应跳过 `function` 类型（`rmc dump`
 就是这么做的）。
 
 ### USB 复合设备与实时性
@@ -1628,8 +1667,8 @@ libusb-win32**（两者都验证可用；CDC 的两个 interface 仍由 `usbser`
 
 ```bash
 pip install pyusb libusb-package
-python tools/mc_ep.py --usb tree
-python tools/mc_ep.py --usb get telemetry.i_q
+rmc --usb tree
+rmc --usb get telemetry.i_q
 ```
 
 2026-11-04 台架（Keil 镜像，电机空闲）：vendor interface 连续读 `telemetry.i_q`
@@ -1641,7 +1680,7 @@ python tools/mc_ep.py --usb get telemetry.i_q
 ### endpoint 0（描述符）
 
 `tx_data` 是 `u32` 小端偏移：`0xFFFFFFFF` 返回 `[crc u16][len u16]`；其它偏移
-返回从该处开始的一段（长度由 `rxlen` 决定，`mc_ep.py` 用 60）。
+返回从该处开始的一段（长度由 `rxlen` 决定，`rmc` 用 60）。
 
 描述符是纯 ASCII JSON 数组。约束（改 `descriptor_json()` 时别破坏）：
 
@@ -1907,11 +1946,11 @@ bootloader 契约（bootloader 是独立仓库 OpenBootloader 的固件，App �
 
 ⚠ **刷完 App 先做一次"描述符自检"确认 flash 内容可信**（2026-11-14 台架）：用
 J-Link/Keil 的默认 5 MHz 下载 App 后，芯片上的镜像可能是坏的——表现是
-`python tools/mc_ep.py --usb get <任意参数>` 报 **"描述符 CRC 校验失败"**（设备声明的
+`rmc --usb get <任意参数>` 报 **"描述符 CRC 校验失败"**（设备声明的
 CRC 与读回的 JSON 对不上；实测 20491 字节里 528 字节错乱，因为设备上残留了上一版镜像
 的字节）。此时 App 看起来还在跑，但所有参数/遥测访问都失败。用
 `tools/blcan.py upgrade --verify` 走 OTA 重刷后逐字节一致。所以**刷完先跑一句
-`mc_ep.py --usb get system.prefs_loaded`：能返回就说明描述符自检通过**。
+`rmc --usb get system.prefs_loaded`：能返回就说明描述符自检通过**。
 bootloader 自己也可以用同一条 CAN 通路回读校验：`blcan.py read` 逐块读
 `0x08000000` 起的 10~11 KB，和 `Keil/Objects/LION_H473_Bootloader.hex`（或
 `MDK-ARM/N32H473/` 下的产物）解析出的镜像比 md5。
@@ -2046,9 +2085,9 @@ PutIndex 再往消息 RAM 拷贝，被抢占会踩掉一帧）。
 | `0x04` CURRENT | `t_ff = I × KT × GR`，不回应答；**刷新超时**（比 ODrive 的 F19 更安全） |
 | `0x01/0x81` CSP | 目标位置 deg(输出端) + `vel_limit` RPM(输出端) + `cur_limit` A(电机端)；Classic 8 B 用 float32 位置 + int16 RPM + int16 0.1A，FD 12 B 全 float32；进 `CTRL_POSITION`，单播回 MIT 响应 |
 | `0x02/0x82` CSV | 目标速度 RPM(输出端) + `cur_limit` A(电机端)；进 `CTRL_VELOCITY`，单播回 MIT 响应 |
-| `0x20/0x21` SDO | 直接 `endpoint_handler()`；值小端；Classic 下 ReqLen 钳到 4；`>4` 字节走分段写；批量读回 ERR。`mc_ep.py --can` 用这两个消息（8 字节的值在 Classic 下按 offset 分两次读，响应 bit7 = More） |
+| `0x20/0x21` SDO | 直接 `endpoint_handler()`；值小端；Classic 下 ReqLen 钳到 4；`>4` 字节走分段写；批量读回 ERR。`rmc --can` 用这两个消息（8 字节的值在 Classic 下按 offset 分两次读，响应 bit7 = More） |
 | `0x22` SAVE | 置 `state.save_pending`（门极关闭时由主循环写 flash） |
-| `0x24/0x25` 描述符 | 元数据 + 定长分片（8/64 B，末尾补 0），2 帧/ms。`mc_ep.py --can` 用它在 CAN 上拉整套参数树（Classic 1M 约 1~2 s） |
+| `0x24/0x25` 描述符 | 元数据 + 定长分片（8/64 B，末尾补 0），2 帧/ms。`rmc --can` 用它在 CAN 上拉整套参数树（Classic 1M 约 1~2 s） |
 | `0x40..0x49` 查询 | 状态/位置速度/电流/温度/母线/错误/版本；`0x44` 母线电流与 `0x47` 电/机械功率是**估算值**（无直流分流器，见"母线电流 / 功率估算"） |
 | `0x48` 心跳 | Classic 8 B / FD 19 B；pos/vel 按**原始计数域**钳位（F32 教训）；字节 18 是映射后的 ODrive AxisState |
 | `0x60..0x65` | SET_NODE_ID（RAM，需 save 持久化）/ SET_ZERO / START（仅 MENU）/ STOP / RESET / CLEAR |
@@ -2110,9 +2149,9 @@ GR = 9：i_max = 4 A 只有 1.2 N·m，出厂上限 12 A 是 3.6 N·m），量�
   设备在 1M 发心跳，这些帧没人 ACK，`can_tec` 十几帧就涨到 ~248，之后设备既不发也不答
   （TX 队列卡在一帧永远等 ACK 的报文），**换回正确波特率也不会自己恢复**，
   只能 `action.reboot`（USB 或菜单）。所以排查“`--can` 一帧都收不到”时：
-  `mc_ep.py --port COMx get telemetry.can_tec`（>128 = 中招）→ 重启再试；
-  `mc_ep.py --can probe` 只监听不发帧，就不会把设备打挂。
-- 上位机侧：`tools/mc_ep.py --can`（`--interface slcan|pcan|socketcan|…`）与
+  `rmc --port COMx get telemetry.can_tec`（>128 = 中招）→ 重启再试；
+  `rmc --can probe` 只监听不发帧，就不会把设备打挂。
+- 上位机侧：`rmc --can`（`--interface slcan|pcan|socketcan|…`）与
   `--port`/`--usb` 用同一套命令和参数名，传输层的差异见 "endpoint 协议" 的表格。
 
 ### 台架实测（2026-10-26，Keil 构建 + CANable 2.0）
@@ -2163,7 +2202,10 @@ schema 1 → 2 迁移已实机验证（同一块配置，不动 flash）：旧�
 上位机侧的 CAN 传输有 `python tools/test_mc_ep_can.py`（或 `make hosttest-py`；
 需要 `pip install python-can`，不需要硬件：用 python-can 的 virtual 总线模拟一台
 CYBERBEAST 从机，覆盖描述符流、分段读写、动作端点、`n=0` 的只写端点、
-Classic/FD 两种帧长）。
+Classic/FD 两种帧长）。它通过 `mc_ep.py` shim 测的就是 `rmc` 的传输实现。
+`rmc` 包自己的测试在 `tools/rmc/tests/`（`make hosttest-rmc`，需要
+`pip install pytest python-can`）：除传输外还覆盖属性树、tab 补全、backup/restore
+和 CLI 参数解析。
 Windows 用 MSYS2 bash 构建（Chocolatey 的 make 用 cmd，
 `mkdir -p` 会失败）：
 
@@ -2173,7 +2215,7 @@ make -j8
 ```
 
 改了协议/描述符时，用 JointSDK 的 `cb_jsondesc_parse.c` 解析
-`mc_ep.py descriptor` 导出的 JSON，确认 `rc=0`、类型/权限正确。
+`rmc descriptor` 导出的 JSON，确认 `rc=0`、类型/权限正确。
 
 ### 烧录（J-Link，可靠流程）
 
@@ -2227,8 +2269,8 @@ python tools/flash_jlink.py --bin build/motorcontrol.bin   # GNU 构建产物也
 | 16 | 门极使能时 `call action.reset_config` | `status 6`（`EP_ERR_STATE`），`save_status` 不变，配置不动 |
 | 17 | 空闲态 `set command.t_ff 5` 后 `call action.motor_mode` | 门极使能后 `telemetry.t_ff = 0`（进入模式时清零），电机不窜动 |
 | 18 | 插 USB，设备管理器 | 出现 COM 口（CDC）**和**一个 vendor interface；两者同时可用 |
-| 19 | `mc_ep.py --port COMx tree` | 和改复合描述符之前一致（ASCII 菜单也能用） |
-| 20 | Zadig 给 interface 2 装 WinUSB 后 `mc_ep.py --usb tree` | 参数树正常，`get/set/call` 与 CDC 结果一致 |
+| 19 | `rmc --port COMx tree` | 和改复合描述符之前一致（ASCII 菜单也能用） |
+| 20 | Zadig 给 interface 2 装 WinUSB 后 `rmc --usb tree` | 参数树正常，`get/set/call` 与 CDC 结果一致 |
 | 21 | 电机模式 + `--usb monitor telemetry.i_q ... --rate 100` | FOC 不失步、`telemetry.lost_frames` 不增长（USB 只在主循环处理） |
 | 18 | 电机模式下写 `command.t_ff`，然后停发 3×`can_timeout` | 命令自动清零（租约到期），`telemetry.i_q_des → 0` |
 | 19 | `set command.mode 1` + `set command.v_des 1` | 电机按速度环转到 ~1 rad/s；`telemetry.v_setpoint`/`vel_err` 有值，`command.mode` 回读为 1 |
@@ -2239,7 +2281,7 @@ python tools/flash_jlink.py --bin build/motorcontrol.bin   # GNU 构建产物也
 | 24 | `call action.enter_dfu_mode`（门极关闭） | 应答先返回（`EP_OK`）、串口打印 `Entering ROM DFU bootloader`；~0.5 s 后复位。⚠ **装了 bootloader 后这条目前过不了**：设备约 0.4 s 后自己从 `0x08000000` 回来（ROM ISP 起来后被上电复位弹回，见上文），DFU 设备不会出现 |
 | 25 | 门极使能时 `call action.enter_dfu_mode` | `status 6`（`EP_ERR_STATE`），不复位、门极保持 |
 | 25a | `call action.enter_bootloader_mode`（门极关闭），CAN 侧接 `python tools/blcan.py sync` | 应答先返回（`EP_OK`）、串口打印 `Entering bootloader`；~0.5 s 后复位，`blcan.py sync` 拿到 ACK（**ACK 落在 ID `0x128`**，再 `sync` 一次也应该是 ACK 而不是 NACK）且**超过 30 s 不自动跳回 App**（IWDG 被喂住） |
-| 25b | bootloader 里 `python tools/blcan.py upgrade --erase auto --addr 0x08008000 --verify --go-addr 0x08008000` | 升级完成、App 正常启动；`system.prefs_loaded = true`、`prefs_sequence` 不变、`config.gr`/`m_zero`/标定 LUT 都在，且 `mc_ep.py` 能下完整描述符（描述符 CRC 自检通过 = flash 内容与镜像一致） |
+| 25b | bootloader 里 `python tools/blcan.py upgrade --erase auto --addr 0x08008000 --verify --go-addr 0x08008000` | 升级完成、App 正常启动；`system.prefs_loaded = true`、`prefs_sequence` 不变、`config.gr`/`m_zero`/标定 LUT 都在，且 `rmc` 能下完整描述符（描述符 CRC 自检通过 = flash 内容与镜像一致） |
 | 25c | 门极使能时 `call action.enter_bootloader_mode` | `status 6`；不复位、门极保持 |
 | 25d | 串口菜单按 `b` | 同 25a（`b` 是 `BOOTLOADER_CMD`，不是设置前缀） |
 | 26 | `set config.pre_calibrated 0` 后 `call action.motor_mode` | `status 6`；串口按 `m` 打印 `Motor mode refused`；CYBERBEAST `START_MOTOR` 后状态仍是 IDLE |

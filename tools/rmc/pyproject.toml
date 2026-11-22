@@ -1,0 +1,54 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "robotmc"
+dynamic = ["version"]
+description = "CAN-first control tool and Python library for CyberBeast robot motor controllers (command: rmc)"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "CyberBeast" }]
+keywords = ["motor", "foc", "can", "canable", "pcan", "socketcan", "odrive", "robot"]
+dependencies = [
+    "python-can>=4.5",
+    "pyserial>=3.5",
+    "ipython>=7.0",
+    "colorama>=0.4.6",
+    "pyusb>=1.2",
+    "libusb-package>=1.0",
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Topic :: System :: Hardware",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+]
+
+[project.optional-dependencies]
+plot = ["matplotlib>=3.5"]
+dev = ["pytest>=7", "build", "twine", "msgpack>=1.0"]
+
+[project.scripts]
+rmc = "rmc.cli:main"
+
+[project.urls]
+Homepage = "https://www.cyberbeast.cn"
+Documentation = "https://cyberbeast.feishu.cn/docx/BPnQd8reEotLWVxqHFNc9qYZnKh"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+include = ["rmc*"]
+
+[tool.setuptools.dynamic]
+version = { attr = "rmc.version.__version__" }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

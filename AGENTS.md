@@ -49,7 +49,9 @@ Two equivalent builds produce the same firmware:
   `make check` 校验生成表/文档是否最新；`make hosttest` 在主机上跑 `prefs_codec`、
   CAN codec、`motion_law`、`dual_gear`、`cogging_law` 和 `endpoint_process()` 单测；
   `make hosttest-py` 跑 `tools/test_mc_ep_can.py`（上位机 CAN 传输，python-can 的
-  virtual 总线，不需要硬件；需要 `pip install python-can`）。
+  virtual 总线，不需要硬件；需要 `pip install python-can`）；
+  `make hosttest-rmc` 跑 `tools/rmc/tests`（rmc 包的属性树/补全/backup 测试，
+  需要 `pip install pytest python-can`）。
   ⚠ The startup vector table must match the device IRQ numbering — a mismatch silently
   misroutes every ISR (keep it in sync if you ever edit it).
 - **Keil MDK (uVision)**: project `Keil/mit_h473.uvprojx`, target `mit_h473`, device
@@ -71,7 +73,9 @@ Two equivalent builds produce the same firmware:
   (`tools/test_{prefs_codec,can_cyberbeast,motion_law,dual_gear,cogging,scope_law,endpoint_proto}.c`,
   no target hardware) are the only automated checks; `make hosttest-py`
   (`tools/test_mc_ep_can.py`, needs `python-can`, fake device on a virtual bus)
-  covers the host tool's CAN transport.
+  covers the host tool's CAN transport; `make hosttest-rmc`
+  (`tools/rmc/tests`, needs `pytest`) covers the `rmc` package (proxy tree,
+  tab completion, backup/restore, CLI parsing).
   Everything else is verified by a clean build + bench testing by the maintainer
   (`tools/cb_bench.py` drives the CYBERBEAST platform over slcan: `--stage-a/-b/-c/-c-static/-d`,
   `--reset-test`, `--timeout-test`; `tools/csv_csp_test.py` drives the velocity/position
@@ -100,6 +104,9 @@ Two equivalent builds produce the same firmware:
 - `docs/DEV.md`：开发者手册（架构、endpoint 协议、`params.json`/codegen、
   TLV 持久化、Flash/OTA 契约、CyberBeast/CAN、测试、发布检查表、变更规则）；
 - `docs/parameters.md`：由 `make endpoints` 生成，**不要手改**。
+- `tools/rmc/README.md`：上位机包 `rmc`（PyPI **`robotmc`**）的安装、命令、shell、
+  backup/restore 与发布流程（不占 `docs/` 的三份名额）。`tools/mc_ep.py` 只是
+  转发到它的弃用 shim。
 
 不要再拆成 `docs/dev/*`、`docs/user/*` 的多文件结构——文档数量本身就是维护成本。
 
@@ -502,8 +509,8 @@ Zadig 装 WinUSB（CDC 不受影响）。
   ⚠ `require` 只是**状态前置条件**，不是读写判别：`action.idle_mode` /
   `action.clear_fault` / `action.reboot` / `action.reset_timing` 连 `require` 都没有，
   一次读就会停机/复位。所以**上位机遍历参数时必须跳过 `function` 类型**
-  （`mc_ep.py dump` 就是这么做的）。**不要**把标量端点退回“payload 为空就是
-  读”的写法。USB 侧由 `mc_ep.py` 置位；CAN 侧由 `PARAM_READ(0x20)`/`PARAM_WRITE(0x21)`
+  （`rmc dump` 就是这么做的）。**不要**把标量端点退回“payload 为空就是
+  读”的写法。USB 侧由 `rmc` 置位；CAN 侧由 `PARAM_READ(0x20)`/`PARAM_WRITE(0x21)`
   操作码映射。协议版本已升到 2。
 - 两条传输共用 `endpoint_process()`（`endpoint.c`），只是外层不同：
   **USB CDC** 是 `0xAA+LEN+CRC8/CRC16` 字节流（和 ASCII 菜单共用数据流，
@@ -512,7 +519,7 @@ Zadig 装 WinUSB（CDC 不受影响）。
   `Core/Inc/endpoint.h`。
   第三条是 **CAN**（CYBERBEAST，`can_cyberbeast.c` 直接调 `endpoint_handler()`，
   不经过 `endpoint_process()`，因此没有 status 字节、写 ACK 不带成败位）；
-  上位机 `tools/mc_ep.py --can`（`--interface slcan|pcan|socketcan|…`）用的就是它。
+  上位机 `rmc --can`（`--interface slcan|pcan|socketcan|…`）用的就是它。
 - **实时性**：USB 中断里的 `endpoint_serial_feed()` 只做帧累积（含一次
   最多 64 字节的 CRC）；`endpoint_usb_rx_isr()` 只做 64 B PMA 拷贝并保持端点
   NAK（主循环处理完再 arm，用 USB 流控代替队列）。解析、调用 handler、应答都在主循环的
@@ -548,13 +555,18 @@ Zadig 装 WinUSB（CDC 不受影响）。
   `can_timeout` 置 0 来绕过）；**进入 MOTOR_MODE 必须先 `zero_commands()`**
   （`fsm_enter_state`），否则空闲态写入的 `t_ff` 会在门极打开的第一拍生效。
   它们的范围是运行期决定的（`range_dynamic: true`），描述符里不发 `min`/`max`。
-- 上位机：`python tools/mc_ep.py --can tree|get|set|call|dump|monitor|probe`
+- 上位机：`rmc`（PyPI 包 **`robotmc`**，源码 `tools/rmc/`；`tools/mc_ep.py` 是
+  转发到它的弃用 shim）：`tree|get|set|call|dump|monitor|probe|scan|backup|restore|
+  liveplotter`，不带子命令进 IPython shell，启动时发现 CAN/USB 设备，按
+  `system.serial_number` 分配稳定的 `m0/m1/...` 参数树名称；`m0.config.i_max` 读、
+  赋值写，`m0.action.save()`，`m0.<TAB>` 补全。CAN 多节点共享同一 adapter。
   （`--interface slcan|pcan|socketcan|…`；**出货板没有 USB 座，客户只走这条**）。
   同一套命令也支持开发板上的 `--port COMx`（CDC）和 `--usb`（vendor interface）。
   工具会先下载描述符，再按名字收发。CAN 侧走 CYBERBEAST 的
   `PARAM_READ/WRITE` + 描述符 `0x24/0x25`，**没有 status 字节、写 ACK 不带成败**，
   所以 `set` 一律读回。CAN 传输的硬件无关回归测试是
-  `python tools/test_mc_ep_can.py`（`make hosttest-py`），见 `docs/DEV.md` "测试"。
+  `python tools/test_mc_ep_can.py`（`make hosttest-py`）和 `tools/rmc/tests`
+  （`make hosttest-rmc`），见 `docs/DEV.md` "测试"。
 - **线上描述符必须是纯 ASCII，且类型名必须是 ODrive/Fibre 认得的**：
   `params.json` 里的中文 `brief` 只用于文档，**不进**设备描述符（OM/MS 端的
   JointSDK 轻量解析器不支持 `\uXXXX`，会整体解析失败）；动作端点在

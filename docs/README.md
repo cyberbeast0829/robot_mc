@@ -25,26 +25,27 @@ N32H473CE 三相 FOC 固件。只有三份要读的文档，按"你是谁"选一
 | 配置块序号 | 每次保存 +1 | `system.prefs_sequence` |
 
 描述符的 CRC 就是接口版本，每次增删参数都会变（具体值用 endpoint 0 探测，或
-`mc_ep.py descriptor` 看）。CRC 变了以后旧上位机的请求会被 `EP_ERR_VERSION`
+`rmc descriptor` 看）。CRC 变了以后旧上位机的请求会被 `EP_ERR_VERSION`
 拒绝，不会出现"名字对上了、类型对不上"的静默错误。
 
 ## 五分钟上手
 
-出货版本默认只有 CAN 接口（没有 USB 座），所以先装 `pyserial` + `python-can`，
-用 CANable 之类的适配器走 `--can`：
+出货版本默认只有 CAN 接口（没有 USB 座）。装上位机包 **`robotmc`**（命令 `rmc`；
+`pip install rmc` 是另一个项目，别装错），用 CANable 之类的适配器走 CAN：
 
 ```bash
-pip install pyserial python-can
-python tools/mc_ep.py --can tree                            # 参数树（CANable/slcan，自动找适配器）
-python tools/mc_ep.py --can get config.i_max
-python tools/mc_ep.py --can set config.i_max 3.5
-python tools/mc_ep.py --can call action.save
-python tools/mc_ep.py --can get system.save_status           # 1 = 保存成功
-python tools/mc_ep.py --can probe                            # 一帧都看不到时先跑这个
+pip install robotmc
+rmc tree                            # 参数树（CANable/slcan，自动找适配器）
+rmc get config.i_max
+rmc set config.i_max 3.5
+rmc call action.save
+rmc get system.save_status           # 1 = 保存成功
+rmc probe                            # 一帧都看不到时先跑这个
+rmc                                  # 交互 shell（自动发现设备，m0.<TAB> 补全）
 
 # 其它后端：pcan / socketcan / gs_usb …（python-can 的名字）
-python tools/mc_ep.py --can --interface pcan get config.i_max
-python tools/mc_ep.py --can --interface socketcan --channel can0 tree
+rmc --interface pcan get config.i_max
+rmc --interface socketcan --channel can0 tree
 ```
 
 开发/台架板子上还有 USB 复合设备，命令和参数名完全一样：
@@ -61,7 +62,7 @@ Windows 用 Zadig 给 interface 2 装 WinUSB）。
 CANable/PCAN 都行；bootloader 固定 500 kbit/s Classic，和 App 的 CAN 配置无关）：
 
 ```bash
-python tools/mc_ep.py --can call action.enter_bootloader_mode    # 带 USB 的板子也可按串口菜单 b
+rmc call action.enter_bootloader_mode    # 带 USB 的板子也可按串口菜单 b
 python tools/blcan.py --channel COM3 sync
 python tools/blcan.py --channel COM3 upgrade --firmware build/mit_h473.bin \
         --erase auto --addr 0x08008000 --chunk-size 256 --verify --go-addr 0x08008000

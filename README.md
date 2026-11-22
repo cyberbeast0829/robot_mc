@@ -41,28 +41,31 @@ MSYS2 bash：Chocolatey 的 make 用 cmd，`mkdir -p` 会失败。
 
 ## 上位机
 
-出货版本默认**只有 CAN 接口**（没有 USB 座），所以上位机走 CAN：
+出货版本默认**只有 CAN 接口**（没有 USB 座），所以上位机走 CAN。
+上位机是 PyPI 包 **`robotmc`**（命令 `rmc`，源码 `tools/rmc/`；
+`tools/mc_ep.py` 是转发到它的弃用 shim）：
 
 ```bash
-pip install pyserial python-can
-python tools/mc_ep.py --can tree                                # CANable/slcan，自动找适配器
-python tools/mc_ep.py --can get config.i_max
-python tools/mc_ep.py --can set config.i_max 3.5
-python tools/mc_ep.py --can call action.save
-python tools/mc_ep.py --can get system.save_status               # 1 = 保存成功
-python tools/mc_ep.py --can probe                                # 链路诊断：只监听总线
+pip install robotmc                     # 已含 CAN、USB/CDC、IPython shell 与彩色终端依赖
+rmc tree                                # CANable/slcan，自动找适配器
+rmc get config.i_max
+rmc set config.i_max 3.5
+rmc call action.save
+rmc get system.save_status               # 1 = 保存成功
+rmc probe                                # 链路诊断：只监听总线
+rmc                                      # 交互 shell（自动发现设备，m0.<TAB> 补全）
 
 # 其它 CAN 后端（python-can 的名字）
-python tools/mc_ep.py --can --interface pcan get config.i_max              # PCAN-USB
-python tools/mc_ep.py --can --interface socketcan --channel can0 tree      # Linux
-python tools/mc_ep.py --can --fd --data-bitrate 5000000 tree               # CAN FD 5M
+rmc --interface pcan get config.i_max              # PCAN-USB
+rmc --interface socketcan --channel can0 tree      # Linux
+rmc --fd --data-bitrate 5000000 tree               # CAN FD 5M
 ```
 
 开发/台架板子上还有 USB 复合设备，参数名和输出完全一样：
 
 ```bash
-python tools/mc_ep.py --port COM7 tree   # CDC 虚拟串口（只需 pyserial）
-python tools/mc_ep.py --usb tree         # vendor interface（还需 pyusb + WinUSB）
+rmc --port COM7 tree   # CDC 虚拟串口
+rmc --usb tree         # vendor interface（还需 pip install pyusb libusb-package）
 ```
 
 ## 许可证

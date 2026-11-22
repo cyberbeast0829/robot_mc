@@ -718,7 +718,7 @@ def generate_docs(endpoints):
     """只生成一份按分组排列的参数手册（docs/parameters.md）。
 
     端点索引/描述符副本不再单独出文件：params.json 就是索引，设备本身也会回送
-    描述符（`mc_ep.py descriptor`）。文档数量越少越不容易过期。
+    描述符（`rmc descriptor`）。文档数量越少越不容易过期。
     """
     visible = [e for e in endpoints if not e.get("hidden")]
     lines = [
