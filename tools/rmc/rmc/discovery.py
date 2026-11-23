@@ -7,7 +7,9 @@ from .protocol import (
     DEFAULT_PID, DEFAULT_USB_INTERFACE, DEFAULT_VID,
 )
 from .transport.can import CanBusManager
-from .transport.fibre import FibreLink, SerialTransport, UsbTransport
+from .transport.fibre import (
+    FibreLink, SerialTransport, UsbTransport, _usb_description,
+)
 
 
 def _open_device(link):
@@ -33,7 +35,9 @@ def _can_options(kwargs):
     }
 
 
-def _discover_can(kwargs, manager, seconds, devices, errors):
+def _discover_can(kwargs, manager, seconds, devices, errors, exclude_nodes=None,
+                  include_configured_node=True):
+    exclude_nodes = set(exclude_nodes or ())
     options = _can_options(kwargs)
     try:
         listener = manager.link(node_id=kwargs.get("node_id", DEFAULT_CAN_NODE_ID),
@@ -46,7 +50,9 @@ def _discover_can(kwargs, manager, seconds, devices, errors):
     node_messages = {0x25, *range(0x40, 0x4A), 0xC1}
     nodes = {source for (source, msgtype) in counts
              if 1 <= source <= 127 and msgtype in node_messages}
-    nodes.add(kwargs.get("node_id", DEFAULT_CAN_NODE_ID))
+    if include_configured_node:
+        nodes.add(kwargs.get("node_id", DEFAULT_CAN_NODE_ID))
+    nodes.difference_update(exclude_nodes)
     for node_id in sorted(nodes):
         try:
             link = manager.link(node_id=node_id, **options)
@@ -78,10 +84,14 @@ def _usb_devices(vid=DEFAULT_VID, pid=DEFAULT_PID):
         backend=fibre._usb_backend())
 
 
-def _discover_usb(kwargs, devices, errors, port=None, cdc=True, vendor=False):
+def _discover_usb(kwargs, devices, errors, port=None, cdc=True, vendor=False,
+                  exclude_transports=None):
+    exclude_transports = set(exclude_transports or ())
     if cdc:
         for device_port in _cdc_ports(
                 port, kwargs.get("vid", DEFAULT_VID), kwargs.get("pid", DEFAULT_PID)):
+            if "CDC " + device_port in exclude_transports:
+                continue
             try:
                 io = SerialTransport(device_port, kwargs.get("baud", 115200),
                                      kwargs.get("timeout", 1.0))
@@ -97,6 +107,11 @@ def _discover_usb(kwargs, devices, errors, port=None, cdc=True, vendor=False):
         if usb_devices is None:
             return
         for usb_device in usb_devices:
+            description = _usb_description(
+                kwargs.get("vid", DEFAULT_VID), kwargs.get("pid", DEFAULT_PID),
+                kwargs.get("usb_interface", DEFAULT_USB_INTERFACE), usb_device)
+            if description in exclude_transports:
+                continue
             try:
                 io = UsbTransport(
                     vid=kwargs.get("vid", DEFAULT_VID),
@@ -113,15 +128,20 @@ def _discover_usb(kwargs, devices, errors, port=None, cdc=True, vendor=False):
 
 
 def discover_devices(kwargs=None, include_can=True, include_usb=True, port=None,
-                     cdc=True, vendor=True, seconds=1.0, can_manager=None):
+                     cdc=True, vendor=True, seconds=1.0, can_manager=None,
+                     exclude_transports=None, exclude_nodes=None,
+                     include_configured_node=True):
     """Return ``(devices, errors)``; CAN discovery is passive plus the configured node."""
     kwargs = dict(kwargs or {})
     devices = []
     errors = []
     if include_can:
-        _discover_can(kwargs, can_manager or CanBusManager(), seconds, devices, errors)
+        _discover_can(kwargs, can_manager or CanBusManager(), seconds, devices, errors,
+                      exclude_nodes=exclude_nodes,
+                      include_configured_node=include_configured_node)
     if include_usb:
-        _discover_usb(kwargs, devices, errors, port=port, cdc=cdc, vendor=vendor)
+        _discover_usb(kwargs, devices, errors, port=port, cdc=cdc, vendor=vendor,
+                      exclude_transports=exclude_transports)
     return devices, errors
 
 

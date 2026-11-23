@@ -12,7 +12,9 @@
 
 import struct
 import sys
+import threading
 import time
+from functools import wraps
 
 from ..errors import EpError, NoDescriptorReply
 from ..protocol import (
@@ -32,6 +34,14 @@ try:
     import can
 except ImportError:      # pragma: no cover
     can = None
+
+
+def _synchronized(method):
+    @wraps(method)
+    def call(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+    return call
 
 
 def _find_canable_port():
@@ -303,7 +313,12 @@ class CanLink:
             self.bus = SlcanBus(channel, bitrate, fd, data_bitrate, tty_baudrate)
         else:
             self.bus = PyCanBus(interface, channel, bitrate, fd, data_bitrate)
+        self._lock = getattr(self.bus, "_rmc_transaction_lock", None)
+        if self._lock is None:
+            self._lock = threading.RLock()
+            self.bus._rmc_transaction_lock = self._lock
 
+    @_synchronized
     def close(self):
         if self._owns_bus:
             self.bus.close()
@@ -343,6 +358,7 @@ class CanLink:
         while self.bus.recv(0) is not None:
             pass
 
+    @_synchronized
     def sniff(self, seconds):
         """数一数总线上都有谁在发帧：{(source, msgtype): 帧数}。"""
         counts = {}
@@ -359,6 +375,7 @@ class CanLink:
             counts[key] = counts.get(key, 0) + 1
         return counts
 
+    @_synchronized
     def listen(self, seconds):
         """监听并把帧交给回调的版本（scan 用），返回 [(id, data), ...]。"""
         frames = []
@@ -375,6 +392,7 @@ class CanLink:
 
     # -- 三个动作 ---------------------------------------------------------
 
+    @_synchronized
     def fetch_descriptor(self):
         last = None
         for _ in range(3):
@@ -432,6 +450,7 @@ class CanLink:
         self.crc = json_crc
         return bytes(data)
 
+    @_synchronized
     def read_value(self, ep_id, size):
         if size <= 0:
             return b""
@@ -460,6 +479,7 @@ class CanLink:
                 raise EpError("endpoint %d 只回了 %d/%d 字节" % (ep_id, len(out), size))
         return bytes(out[:size])
 
+    @_synchronized
     def write_value(self, ep_id, data, read_back=False):
         self._drain()
         if self.fd or len(data) <= 4:
@@ -484,6 +504,7 @@ class CanLink:
             return self.read_value(ep_id, len(data))
         return b""
 
+    @_synchronized
     def call_action(self, ep_id, via_read=False):
         # 动作端点用 PARAM_READ 触发（ODrive/JointSDK 的语义，固件两种都放行）；
         # CAN 只有这一种方式，via_read 对它是无效参数。
@@ -502,11 +523,13 @@ class CanBusManager:
 
     def __init__(self):
         self._buses = {}
+        self._lock = threading.RLock()
 
     @staticmethod
     def _key(interface, channel, bitrate, fd, data_bitrate, tty_baudrate):
         return (interface, channel, bitrate, bool(fd), data_bitrate, tty_baudrate)
 
+    @_synchronized
     def link(self, interface=DEFAULT_CAN_INTERFACE, channel=None,
              bitrate=DEFAULT_CAN_BITRATE, fd=False,
              data_bitrate=DEFAULT_CAN_DATA_BITRATE,
@@ -527,11 +550,17 @@ class CanBusManager:
                        master_id=master_id, timeout=timeout,
                        tty_baudrate=tty_baudrate, bus=bus)
 
+    @_synchronized
     def close(self):
         buses, self._buses = self._buses, {}
         for bus in buses.values():
             try:
-                bus.close()
+                lock = getattr(bus, "_rmc_transaction_lock", None)
+                if lock is None:
+                    bus.close()
+                else:
+                    with lock:
+                        bus.close()
             except Exception:
                 pass
 

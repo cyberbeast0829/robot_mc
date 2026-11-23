@@ -355,6 +355,12 @@ def cmd_shell(args):
         seconds=1.0, can_manager=can_manager)
     session = ShellSession(connect_kwargs=kwargs, can_manager=can_manager)
     session.discovery_errors = errors
+    session.discovery_options = {
+        "include_can": not (explicit_port or explicit_usb),
+        "include_usb": True,
+        "cdc": not explicit_usb,
+        "vendor": not explicit_port,
+    }
     for device in devices:
         session.register(device)
     launch_shell(session)

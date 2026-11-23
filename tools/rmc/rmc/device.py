@@ -244,6 +244,13 @@ class Device:
                     info["fw_version_" + key] = self.read(name)
                 except EpError:
                     pass
+        for key in ("major", "minor", "variant"):
+            name = "system.hw_version_" + key
+            if name in self.by_name:
+                try:
+                    info["hw_version_" + key] = self.read(name)
+                except EpError:
+                    pass
         for name in ("system.config_schema", "system.prefs_loaded", "system.prefs_sequence"):
             if name in self.by_name:
                 try:

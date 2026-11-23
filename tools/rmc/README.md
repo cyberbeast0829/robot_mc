@@ -55,8 +55,8 @@ FD 下仲裁域由固件固定在 1 Mbit/s（`--bitrate` 保持 1000000），`--
 
 ```bash
 $ rmc
-rmc 0.1.0 — robot_mc endpoint tool (protocol 2)
-✓ 已连接 m0 | serial=0x0123456789ABCDEF | fw=1.0.6.2 | slcan COM3，1000000 bit/s（Classic） | 261 endpoints | CRC 0x5A31
+rmc 0.1.1 — robot_mc endpoint tool (protocol 2)
+✓ 已连接 m0 | serial=0x0123456789ABCDEF | fw=1.0.6.2 | hw=4.2.89 | slcan COM3，1000000 bit/s（Classic） | 261 endpoints | CRC 0x5A31
 m0.<TAB> 补全；输入 help() 查看用法，exit 退出。
 
 >>> m0.config.i_max
@@ -66,7 +66,7 @@ m0.<TAB> 补全；输入 help() 查看用法，exit 退出。
 >>> m0.telemetry.i_q
 -0.1832
 >>> connect(node_id=2)             # 同一 CAN 通道上的另一台设备
-✓ 已连接 m1 | serial=0xFEDCBA9876543210 | fw=1.0.6.2 | ...
+✓ 已连接 m1 | serial=0xFEDCBA9876543210 | fw=1.0.6.2 | hw=4.2.89 | ...
 >>> m1.config.i_max
 12
 >>> watch("m0.telemetry.position", rate=20)
@@ -77,8 +77,12 @@ m0.<TAB> 补全；输入 help() 查看用法，exit 退出。
 ```
 
 - shell 启动时被动发现配置 CAN 通道上的活动节点，并扫描匹配 VID/PID 的 CDC、
-  vendor USB；每台设备都显示 `mN`、固件 `system.serial_number`（固定 16 位十六进制）
-  和固件版本。也可在 shell 中反复 `connect(...)` 加入设备。
+  vendor USB；运行中持续监测断连并发现新连接。连接信息包含 `mN`、固件
+  `system.serial_number`（固定 16 位十六进制）、固件版本
+  `fw_version_major.minor.revision.unreleased` 和硬件版本
+  `hw_version_major.minor.variant`。也可在 shell 中反复 `connect(...)` 加入设备。
+- 连接状态约每秒检查一次，连续两次探测失败才报告断开，以避免瞬时丢帧误判。
+  CAN 自动发现依赖节点发送活动帧；静默节点可用 `connect(node_id=...)` 手动连接。
 - `mN` 按本次 shell 会话中首次连接顺序分配；同一序列号断开后重连会复用原名称。
   若固件没有序列号端点或读取失败，会以连接路径作为临时身份并显示 `unknown`。
 - 一台电机同时通过 CAN 和 USB 连接时，按序列号合并为同一设备；连接重复项不会
@@ -230,7 +234,7 @@ python tools/mc_ep.py --can --interface udp_multicast \
 python -m build
 python -m venv .venv-rmc
 .venv-rmc\Scripts\activate            # Linux: source .venv-rmc/bin/activate
-pip install dist/robotmc-0.1.0-py3-none-any.whl
+pip install dist/robotmc-0.1.1-py3-none-any.whl
 rmc --version
 ```
 

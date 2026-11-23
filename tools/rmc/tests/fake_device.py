@@ -37,6 +37,10 @@ PARAMS = {
     31: ("system.fw_version_major", "uint8", "r", 1),
     32: ("system.fw_version_minor", "uint8", "r", 2),
     33: ("system.fw_version_revision", "uint8", "r", 3),
+    34: ("system.fw_version_unreleased", "uint8", "r", 2),
+    35: ("system.hw_version_major", "uint8", "r", 4),
+    36: ("system.hw_version_minor", "uint8", "r", 2),
+    37: ("system.hw_version_variant", "uint8", "r", 89),
 }
 ACTION_SAVE = 20
 

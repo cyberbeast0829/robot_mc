@@ -5,7 +5,7 @@ import pytest
 from fake_device import MemoryLink
 from rmc.device import Device
 from rmc.shell import HELP_TEXT, ShellSession, build_namespace
-from rmc.shell import print_device_status
+from rmc.shell import ConnectionMonitor, print_device_status
 
 
 def make_session():
@@ -89,6 +89,8 @@ def test_info(capsys):
     assert "transport" in out
     assert "descriptor_crc" in out
     assert "serial_number" in out
+    assert "fw_version_unreleased" in out
+    assert "hw_version_variant" in out
 
 
 def _device_with_serial(serial_number):
@@ -125,7 +127,8 @@ def test_duplicate_serial_is_merged_and_connection_is_colored(capsys):
     output = capsys.readouterr().out
     assert "\x1b[" in output
     assert "0x0000000000ABCDEF" in output
-    assert "fw=1.2.3" in output
+    assert "fw=1.2.3.2" in output
+    assert "hw=4.2.89" in output
 
 
 def test_missing_serial_uses_transport_identity_and_displays_unknown(capsys):
@@ -173,3 +176,51 @@ def test_shell_connect_and_disconnect_update_namespaces(capsys):
     namespace["connect"](interface="virtual")
     assert user_ns["m0"] is first_reconnected.root
     capsys.readouterr()
+
+
+def test_connection_monitor_reports_disconnect_and_reconnect(capsys, monkeypatch):
+    class FlakyLink(MemoryLink):
+        online = True
+        is_can = True
+        node_id = 1
+
+        def read_value(self, ep_id, size):
+            if not self.online:
+                from rmc.errors import EpError
+                raise EpError("link down")
+            return super().read_value(ep_id, size)
+
+    class Manager:
+        closed = 0
+
+        def close(self):
+            self.closed += 1
+
+    link = FlakyLink()
+    first = Device(link=link)
+    first.fetch_descriptor()
+    manager = Manager()
+    session = ShellSession(first, can_manager=manager)
+    user_ns = {"m0": first.root}
+    monitor = ConnectionMonitor(session, lambda: user_ns)
+    monkeypatch.setattr("rmc.shell.discover_devices", lambda *_a, **_k: ([], []))
+
+    link.online = False
+    monitor.poll_once()
+    assert list(session.devices) == ["m0"]
+    monitor.poll_once()
+    assert not session.devices
+    assert repr(user_ns["m0"]) == "<m0 未连接>"
+    assert manager.closed == 1
+    assert "m0 传输已断开" in capsys.readouterr().out
+
+    reconnected = _device_with_serial(0x0123456789ABCDEF)
+    monkeypatch.setattr(
+        "rmc.shell.discover_devices", lambda *_a, **_k: ([reconnected], []))
+    monitor.poll_once()
+    assert list(session.devices) == ["m0"]
+    assert user_ns["m0"] is reconnected.root
+    output = capsys.readouterr().out
+    assert "已连接" in output
+    assert "fw=1.2.3.2" in output
+    assert "hw=4.2.89" in output

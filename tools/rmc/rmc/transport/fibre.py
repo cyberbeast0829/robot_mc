@@ -5,6 +5,7 @@ tools/mc_ep.py（`--port` / `--usb`）。
 """
 
 import struct
+import threading
 
 from ..errors import EpError
 from ..protocol import (
@@ -37,6 +38,14 @@ def _usb_backend():
         return usb.backend.libusb1.get_backend(find_library=libusb_package.find_library)
     except Exception:
         return None
+
+
+def _usb_description(vid, pid, interface, dev):
+    location = ""
+    if getattr(dev, "bus", None) is not None or getattr(dev, "address", None) is not None:
+        location = " bus %s address %s" % (getattr(dev, "bus", "?"),
+                                           getattr(dev, "address", "?"))
+    return "USB %04x:%04x interface %d%s" % (vid, pid, interface, location)
 
 
 class SerialTransport:
@@ -113,12 +122,7 @@ class UsbTransport:
         self.ep_out = ep_out
         self.ep_in = ep_in
         self.timeout = timeout
-        location = ""
-        if getattr(dev, "bus", None) is not None or getattr(dev, "address", None) is not None:
-            location = " bus %s address %s" % (getattr(dev, "bus", "?"),
-                                               getattr(dev, "address", "?"))
-        self.description = "USB %04x:%04x interface %d%s" % (
-            vid, pid, interface, location)
+        self.description = _usb_description(vid, pid, interface, dev)
         try:
             dev.get_active_configuration()
         except (usb.core.USBError, NotImplementedError):
@@ -187,14 +191,20 @@ class FibreLink:
         self.io = io
         self.seq = 0
         self.crc = 0        # 描述符 CRC16，同时是接口版本（请求里的 trailer）
+        self._lock = threading.Lock()
 
     def close(self):
-        self.io.close()
+        with self._lock:
+            self.io.close()
 
     def describe(self):
         return getattr(self.io, "description", "CDC/USB")
 
     def _transact(self, endpoint_id, tx_data, rx_len, trailer, write=False):
+        with self._lock:
+            return self._transact_locked(endpoint_id, tx_data, rx_len, trailer, write)
+
+    def _transact_locked(self, endpoint_id, tx_data, rx_len, trailer, write):
         self.seq = (self.seq + 1) & 0x7FFF
         flags = REPLY_FLAG | (WRITE_FLAG if write else 0)
         payload = struct.pack("<HHH", self.seq, endpoint_id | flags, rx_len)
