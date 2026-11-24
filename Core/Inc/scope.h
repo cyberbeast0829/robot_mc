@@ -43,6 +43,7 @@
 #define SCOPE_OFF		0
 #define SCOPE_STEP		1
 #define SCOPE_SINE		2
+#define SCOPE_PASSIVE	3		/* 只观测不注入：raw/count/速度/i_q（原 diag.c 的功能）*/
 
 /* scope.state */
 #define SCOPE_ST_IDLE	0
@@ -51,6 +52,8 @@
 #define SCOPE_ST_DONE	3			/* 结果已算好，可以读遥测（**只有主循环会置**，
 									 * 中断只置 acc_done，避免主机读到还没算的 0）*/
 #define SCOPE_ST_ERR	4			/* 被中止（离开电机模式/超时/参数非法）*/
+/* PASSIVE 的额外超时预算（控制周期）：decim 上限 400 × 1024 点 ≈ 10.3 s */
+#define SCOPE_TIMEOUT_PASSIVE	(40000u*11u)
 
 /* scope.err */
 #define SCOPE_ERR_NONE		0
@@ -65,6 +68,7 @@ typedef struct{
 	volatile float amp;				/* 正弦峰值 / 阶跃幅度（A）*/
 	volatile float bias;			/* 直流偏置（A）*/
 	volatile float freq;			/* 正弦频率（Hz，按 19.53 Hz 栅格量化）*/
+	volatile uint16_t decim;		/* PASSIVE 抽取：每 decim 个控制周期存一点（≥1）*/
 
 	/* 运行时 */
 	volatile uint8_t state;
@@ -80,6 +84,8 @@ typedef struct{
 	uint32_t k;						/* 频点：f = k·SCOPE_FS/SCOPE_ACC_N */
 	uint32_t phase;					/* 32 位相位累加器 */
 	uint32_t phase_step;			/* = k·2^32/SCOPE_ACC_N（N=2048 时是精确移位）*/
+	uint16_t sub;					/* PASSIVE 的抽取计数器 */
+	int32_t raw0, count0;			/* PASSIVE 的差分基准 */
 	float u;						/* 本拍注入值 */
 	float sin_ref, cos_ref;			/* 本拍激励的参考相量（apply 算好，capture 直接用）*/
 

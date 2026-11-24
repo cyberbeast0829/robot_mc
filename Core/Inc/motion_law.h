@@ -23,6 +23,7 @@
 #define MOTION_LAW_H
 
 #include <math.h>
+#include <string.h>
 #include <stdint.h>
 
 #define ML_INT_DECAY        0.99f   /* 输出饱和时速度积分器的衰减因子（ODrive 同款） */
@@ -168,19 +169,21 @@ static inline float ml_pos_dir_gate(float cmd, float p_meas, float p_min, float 
 	return cmd;
 }
 
-/* 速度 PI：i_q = clamp(vel_gain*err + integ)。
- * 抗饱和用 ODrive 的做法：输出被限幅的那一拍积分器按 ML_INT_DECAY 衰减而不是
- * 继续累积，未限幅才正常积分。任何 NaN 输入都退化为 0 —— 绝不让 NaN 走进电流环。 */
-static inline float ml_vel_pi(float vel_gain, float integrator_gain, float i_max,
-                              float *integ, float v_cmd, float v_meas, float dt)
+/* 速度 PI 带前馈：i_q = clamp(vel_gain*err + integ + i_ff)。
+ * i_ff（摩擦/重力前馈）参与**限幅判断**，所以饱和时积分器不会因为"前馈把输出
+ * 顶出去"而误以为是误差造成的、继续累积；不饱和时前馈不影响积分。 */
+static inline float ml_vel_pi_ff(float vel_gain, float integrator_gain, float i_max,
+                                 float *integ, float v_cmd, float v_meas, float i_ff,
+                                 float dt)
 {
 	if (!(v_cmd == v_cmd) || !(v_meas == v_meas) || !(i_max > 0.0f) || !(dt > 0.0f)) {
 		*integ = 0.0f;
 		return 0.0f;
 	}
+	if (!(i_ff == i_ff)) { i_ff = 0.0f; }
 
 	float err = v_cmd - v_meas;
-	float unlim = vel_gain * err + (*integ);
+	float unlim = vel_gain * err + (*integ) + i_ff;
 	float iq = ml_clampf(unlim, -i_max, i_max);
 
 	if (iq != unlim) {
@@ -191,6 +194,15 @@ static inline float ml_vel_pi(float vel_gain, float integrator_gain, float i_max
 	*integ = ml_clampf(*integ, -i_max, i_max);
 
 	return iq;
+}
+
+/* 速度 PI：i_q = clamp(vel_gain*err + integ)。
+ * 抗饱和用 ODrive 的做法：输出被限幅的那一拍积分器按 ML_INT_DECAY 衰减而不是
+ * 继续累积，未限幅才正常积分。任何 NaN 输入都退化为 0 —— 绝不让 NaN 走进电流环。 */
+static inline float ml_vel_pi(float vel_gain, float integrator_gain, float i_max,
+                              float *integ, float v_cmd, float v_meas, float dt)
+{
+	return ml_vel_pi_ff(vel_gain, integrator_gain, i_max, integ, v_cmd, v_meas, 0.0f, dt);
 }
 
 /* 位置 P：速度指令 = pos_gain*位置误差 + 前馈，单位 (rad/s) */
@@ -530,6 +542,189 @@ static inline int ml_tune_gains(float j, float kt, float gr, float omega_c, floa
 	*vel_i_gain = *vel_gain * w_i;
 	*pos_gain = omega_c / 30.0f;
 	return 1;
+}
+
+/* ---- 自适应窗口最小二乘测速 ---------------------------------------------
+ *
+ * 为什么不用（只调低带宽的）PLL：16 位编码器静止时原始计数就有 σ≈4.3 count
+ * 的抖动，二阶 PLL 的**速度**噪声 ∝ bw^1.5。台架实测 bw=3000 时静止速度
+ * σ=0.053 rad/s（输出轴，约 0.5 RPM）、峰峰 2.9 RPM —— 客户看到的"静止 1 RPM
+ * 波动"就是它。把带宽降下来能压噪声，但相位滞后会跟着涨，450 rad/s 的速度环
+ * 立刻失稳（docs/DEV.md 有 1k/2k/4k 的自激频率实测）。
+ *
+ * 这里改成**位置的最小二乘斜率**：对最近 m 个"块平均计数"做直线拟合，斜率就是
+ * 速度。噪声 σ_slope ≈ σ_blk·√12/(m^1.5·dt)，样本越多噪声掉得越快（PLL 是
+ * 带宽换噪声，这里是窗口长度换噪声），而窗口长度可以随速度自适应：
+ *   - 高速：m 小（0.5~1 ms），噪声已经远低于 0.1%，滞后可以忽略；
+ *   - 低速：m 大（10~100 ms），把噪声按 1/m^1.5 压到目标值，代价是滞后增大
+ *     —— 但低速时机械时间常数本来就大，外环按 ml_lag_gain_scale() 降带宽即可。
+ * 静止时如果计数完全不动，斜率**精确为 0**（不像 PLL 会一直抖）。
+ *
+ * ml_ls_window：给定速度与块噪声，选满足相对噪声目标的最短窗口（块数）。
+ * speed 单位 counts/s，dt_blk 单位 s。 */
+static inline float ml_pow_two_thirds(float x)
+{
+	if (!(x > 1.0f)) { return 1.0f; }
+
+	uint32_t u;
+	memcpy(&u, &x, 4);
+	int e = (int)((u >> 23) & 0xFFu) - 127;
+	u = (u & 0x007FFFFFu) | 0x3F800000u;		/* 尾数还原到 [1,2) */
+	float mant;
+	memcpy(&mant, &u, 4);
+	if (mant > 1.4142136f) { mant *= 0.5f; e += 1; }	/* 收窄到 [0.707, 1.414) */
+
+	/* log2(m) = 2/ln2 * (t + t^3/3 + ...)，t = (m-1)/(m+1)，|t| <= 0.172：
+	 * 取到 t^3 的误差 <1e-4。一次除法远小于 powf 的几百个周期。 */
+	float t = (mant - 1.0f) / (mant + 1.0f);
+	float t2 = t * t;
+	float y = ((float)e + 2.8853901f * t * (1.0f + t2 * (1.0f / 3.0f))) * 0.66666667f;
+
+	int n = (int)y;
+	float f = y - (float)n;
+	/* 2^f 的五阶泰勒（f 在 [0,1)，误差 <2e-4） */
+	float p2 = 1.0f + f * (0.6931472f + f * (0.2402265f + f * (0.0555041f
+	          + f * (0.0096181f + f * 0.0013334f))));
+	uint32_t su = (uint32_t)(n + 127) << 23;
+	float scale;
+	memcpy(&scale, &su, 4);
+	return p2 * scale;
+}
+
+/* ml_ls_window：给定速度与块噪声，选满足相对噪声目标的最短窗口（块数）。
+ * speed 单位 counts/s，dt_blk 单位 s。
+ * ⚠ x^(2/3) 用 ml_pow_two_thirds()（不用 powf：libm 在 40 kHz 中断里太贵，
+ * 台架实测 1 RPM + dither 时 total_max 会被它顶到 5987/6000）。 */
+static inline int ml_ls_window(float speed_abs, float dt_blk, float sigma_blk,
+                               float rel, int m_max)
+{
+	if (!(rel > 0.0f)) { rel = 0.004f; }
+	if (!(dt_blk > 0.0f)) { return m_max; }
+	if (!(speed_abs > 1.0e-6f)) { return m_max; }
+
+	/* m^1.5 = 3.464*sigma/(rel*v*dt)；need < 2^1.5 时直接取最小窗口 */
+	float need = 3.4641016f * sigma_blk / (rel * speed_abs * dt_blk);
+	if (need <= 2.8284271f) { return (m_max < 2) ? m_max : 2; }
+	float m = ml_pow_two_thirds(need);
+	int mi = (int)(m + 0.5f);
+	if (mi < 2) { mi = 2; }
+	if (mi > m_max) { mi = m_max; }
+	return mi;
+}
+
+/* 滑动窗口最小二乘的增量状态（**整数**，避免浮点舍入随运行时间累积）。
+ *
+ * 对窗口内的**位置**样本 p_i（i = 年龄，0 = 最新）做直线拟合，速度 = -dp/dt。
+ * 位置可以写成 p_i = p_0 − Σ_{k<i} y_k（y_k 是每块的计数增量），代进最小二乘
+ * 的正规方程后，斜率只依赖三个和：
+ *
+ *   A = Σ y_k,  B = Σ k·y_k,  C = Σ k²·y_k        （k = 0…m−1）
+ *   v = 12·Σu_k y_k / (dt·m(m²−1)),  u_k = (k+1)(m−1−k)/2
+ *   Σu_k y_k = [(m−2)·B − C + (m−1)·A] / 2
+ *
+ * ⚠ 权重是**三角形**（两端小、中间大），不是线性的 —— 早期版本按"对增量本身
+ * 做线性拟合"写，静止时看似正确（0），一转起来就恒为 0。这个等价形式还有一个
+ * 好处：稳态时分子是满量程（不靠大数相消），float 转换不会丢精度。
+ *
+ * 每块 O(1) 更新（滑窗 + 必要时加长/缩短一块）：
+ *   滑窗：B += A − m·y_out,  C += 2B + A − m²·y_out,  A += y_in − y_out
+ *   加长：A += u, B += m·u, C += m²·u, m++
+ *   缩短：m−−, A −= u, B −= m·u, C −= m²·u
+ *
+ * ⚠ 用 int64：C 在高速下会到 m³/3·y（本机 m=1023、6 kcount/块 时约 2e12），
+ * int32 早就溢出了。 */
+typedef struct{
+	int m;
+	int64_t a;
+	int64_t b;
+	int64_t c;
+} ml_ls_t;
+
+static inline void ml_ls_reset(ml_ls_t *s)
+{
+	s->m = 0;
+	s->a = 0;
+	s->b = 0;
+	s->c = 0;
+}
+
+/* 窗口滑一块：y_in 是新样本，y_out 是离开窗口的样本（还没填满时传 0）*/
+static inline void ml_ls_slide(ml_ls_t *s, int32_t y_in, int32_t y_out)
+{
+	const int64_t yo = y_out;
+	const int64_t b_old = s->b;
+	s->c += 2 * b_old + s->a - (int64_t)s->m * s->m * yo;
+	s->b = b_old + s->a - (int64_t)s->m * yo;
+	s->a += (int64_t)y_in - yo;
+}
+
+/* 加长一块：u 是"年龄 = m"的样本（紧邻当前窗口的那块）*/
+static inline void ml_ls_grow(ml_ls_t *s, int32_t u)
+{
+	s->a += u;
+	s->b += (int64_t)s->m * u;
+	s->c += (int64_t)s->m * s->m * u;
+	s->m++;
+}
+
+/* 缩短一块：u 是原窗口里最老的那块（年龄 = m-1）*/
+static inline void ml_ls_shrink(ml_ls_t *s, int32_t u)
+{
+	s->m--;
+	s->a -= u;
+	s->b -= (int64_t)s->m * u;
+	s->c -= (int64_t)s->m * s->m * u;
+}
+
+/* 斜率（块计数 / 秒）：v = 6·N / [dt·m(m²−1)]，N = (m−2)b − c + (m−1)a */
+static inline float ml_ls_slope(const ml_ls_t *s, float dt_blk)
+{
+	const int m = s->m;
+	if (m < 2) { return 0.0f; }
+	float den = dt_blk * (float)m * (float)(m * m - 1) * (1.0f / 6.0f);
+	if (!(den > 0.0f)) { return 0.0f; }
+	int64_t num = (int64_t)(m - 2) * s->b - s->c + (int64_t)(m - 1) * s->a;
+	return (float)num / den;
+}
+
+/* 窗口的等效相位滞后（秒）：窗口本身的群延迟 m·dt/2，加上块平均 dt/2，
+ * 再加上外环 1 kHz 左右更新带来的零阶保持（按 0.5 ms 计） */
+static inline float ml_ls_lag(int m, float dt_blk)
+{
+	return (0.5f * (float)m + 0.5f) * dt_blk + 0.0005f;
+}
+
+/* 按测速滞后限制外环穿越频率：滞后在 ω_c 处贡献 ω_c·T_lag 的相位，取
+ * ≤ 0.35 rad（20°）作为预算。返回速度环增益的缩放系数（1 = 不降）。
+ * 下限 0.02 只是防呆，低于它说明窗口太长、参数不合理。 */
+static inline float ml_lag_gain_scale(float omega_c, float lag)
+{
+	if (!(lag > 0.0f) || !(omega_c > 0.0f)) { return 1.0f; }
+	float g = (0.35f / lag) / omega_c;
+	if (g > 1.0f) { g = 1.0f; }
+	if (g < 0.02f) { g = 0.02f; }
+	return g;
+}
+
+/* 摩擦前馈：i_q_ff = viscous·v + coulomb·sat(v/eps)。
+ * 库仑项在 ±eps 内线性过渡而不是直接取符号 —— 速度设定值过零时电流跟着平滑
+ * 过零，不会像 sign() 那样在 0 附近来回跳（那是可听的"咔哒"和额外的振动）。
+ * 输出是**电机端相电流**（与速度环同一量纲），用输出轴速度作自变量。 */
+static inline float ml_friction_ff(float coulomb, float viscous, float eps, float v)
+{
+	if (!(v == v)) { return 0.0f; }
+	float ff = (viscous > 0.0f) ? (viscous * v) : 0.0f;
+	if ((coulomb > 0.0f)) {
+		if (!(eps > 0.0f)) {
+			ff += (v > 0.0f) ? coulomb : ((v < 0.0f) ? -coulomb : 0.0f);
+		} else {
+			float x = v / eps;
+			if (x > 1.0f) { x = 1.0f; }
+			else if (x < -1.0f) { x = -1.0f; }
+			ff += coulomb * x;
+		}
+	}
+	return ff;
 }
 
 #endif /* MOTION_LAW_H */

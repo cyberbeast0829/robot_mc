@@ -102,6 +102,15 @@ const prefs_entry_t prefs_entries[] = {
 	{243, PREFS_T_F32, 4, (void *)&(MIT_TAU_MAX)},
 	{266, PREFS_T_F32, 4, (void *)&(DT_COMP)},
 	{267, PREFS_T_F32, 4, (void *)&(DT_COMP_TOL)},
+	{274, PREFS_T_F32, 4, (void *)&(FRIC_COULOMB)},
+	{275, PREFS_T_F32, 4, (void *)&(FRIC_VISCOUS)},
+	{276, PREFS_T_F32, 4, (void *)&(FRIC_EPS)},
+	{277, PREFS_T_F32, 4, (void *)&(VEL_EST_NOISE)},
+	{278, PREFS_T_BOOL, 1, (void *)&(VEL_SCHED_EN)},
+	{281, PREFS_T_F32, 4, (void *)&(VEL_CTRL_NOISE)},
+	{282, PREFS_T_F32, 4, (void *)&(DITHER_AMP)},
+	{283, PREFS_T_F32, 4, (void *)&(DITHER_FREQ)},
+	{284, PREFS_T_F32, 4, (void *)&(DITHER_V_MAX)},
 };
 const unsigned prefs_entry_count = sizeof(prefs_entries) / sizeof(prefs_entries[0]);
 
@@ -194,10 +203,19 @@ void config_apply_defaults(void){
 	memset((void *)&(COGGING_LUT), 0, 2048);
 	COG_DETREND = 3;
 	COG_METHOD = 1;
-	COG_SWEEP_MS = 8000;
+	COG_SWEEP_MS = 12000;
 	MIT_TAU_MAX = 5.0f;
 	DT_COMP = 0.008f;
 	DT_COMP_TOL = 0.5f;
+	FRIC_COULOMB = 0.0f;
+	FRIC_VISCOUS = 0.0f;
+	FRIC_EPS = 0.02f;
+	VEL_EST_NOISE = 0.004f;
+	VEL_SCHED_EN = 1;
+	VEL_CTRL_NOISE = 0.02f;
+	DITHER_AMP = 0.1f;
+	DITHER_FREQ = 300.0f;
+	DITHER_V_MAX = 0.5f;
 }
 
 void config_apply_limits(void){
@@ -391,4 +409,29 @@ void config_apply_limits(void){
 	if(!isfinite(DT_COMP_TOL)){DT_COMP_TOL = 0.5f;}
 	if(DT_COMP_TOL < 0.01f){DT_COMP_TOL = 0.01f;}
 	if(DT_COMP_TOL > 5.0f){DT_COMP_TOL = 5.0f;}
+	if(!isfinite(FRIC_COULOMB)){FRIC_COULOMB = 0.0f;}
+	if(FRIC_COULOMB < 0.0f){FRIC_COULOMB = 0.0f;}
+	if(FRIC_COULOMB > 10.0f){FRIC_COULOMB = 10.0f;}
+	if(!isfinite(FRIC_VISCOUS)){FRIC_VISCOUS = 0.0f;}
+	if(FRIC_VISCOUS < 0.0f){FRIC_VISCOUS = 0.0f;}
+	if(FRIC_VISCOUS > 1.0f){FRIC_VISCOUS = 1.0f;}
+	if(!isfinite(FRIC_EPS)){FRIC_EPS = 0.02f;}
+	if(FRIC_EPS < 0.0001f){FRIC_EPS = 0.0001f;}
+	if(FRIC_EPS > 1.0f){FRIC_EPS = 1.0f;}
+	if(!isfinite(VEL_EST_NOISE)){VEL_EST_NOISE = 0.004f;}
+	if(VEL_EST_NOISE < 0.0005f){VEL_EST_NOISE = 0.0005f;}
+	if(VEL_EST_NOISE > 0.05f){VEL_EST_NOISE = 0.05f;}
+	if(VEL_SCHED_EN > 1){VEL_SCHED_EN = 1;}
+	if(!isfinite(VEL_CTRL_NOISE)){VEL_CTRL_NOISE = 0.02f;}
+	if(VEL_CTRL_NOISE < 0.001f){VEL_CTRL_NOISE = 0.001f;}
+	if(VEL_CTRL_NOISE > 0.2f){VEL_CTRL_NOISE = 0.2f;}
+	if(!isfinite(DITHER_AMP)){DITHER_AMP = 0.1f;}
+	if(DITHER_AMP < 0.0f){DITHER_AMP = 0.0f;}
+	if(DITHER_AMP > 2.0f){DITHER_AMP = 2.0f;}
+	if(!isfinite(DITHER_FREQ)){DITHER_FREQ = 300.0f;}
+	if(DITHER_FREQ < 10.0f){DITHER_FREQ = 10.0f;}
+	if(DITHER_FREQ > 5000.0f){DITHER_FREQ = 5000.0f;}
+	if(!isfinite(DITHER_V_MAX)){DITHER_V_MAX = 0.5f;}
+	if(DITHER_V_MAX < 0.0f){DITHER_V_MAX = 0.0f;}
+	if(DITHER_V_MAX > 20.0f){DITHER_V_MAX = 20.0f;}
 }

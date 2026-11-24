@@ -22,9 +22,9 @@
  */
 
 #include <math.h>
+#include "motion_law.h"
 #include "cogging.h"
 #include "cogging_law.h"
-#include "motion_law.h"
 #include "user_config.h"
 #include "hw_config.h"
 #include "math_ops.h"
@@ -146,7 +146,6 @@ static void cog_next_point(void)
 
 /* 标定期间的位置保持环（定义在下面） */
 static float cog_hold(ControllerStruct *controller, float p_meas, float v_meas);
-
 /* sweep 法的一拍：位置斜坡 + 分箱累积速度环输出（含 P 与 I，即"维持这个速度
  * 所需的全部 i_q"）。匀速时动摩擦是常值（去均值时去掉）、方向相反（两遍平均
  * 抵消），而齿槽随位置变化，正好留在表里。
@@ -221,6 +220,9 @@ static float cog_hold(ControllerStruct *controller, float p_meas, float v_meas)
 
 	v_cmd = ml_clampf(v_cmd, -vlim, vlim);
 	controller->i_cmd_max = i_lim;
+	/* 标定内环用 PLL 速度、不降增益：扫描速度只有几 RPM，最小二乘窗口会被迫
+	 * 拉长（几 ms 滞后），降增益后位置环跟不上斜坡、两遍结果对不上（status -3）。
+	 * 标定是离线动作，PLL 的噪声会被分箱平均掉，不需要低噪声 */
 	float iq = ml_vel_pi(VEL_GAIN, VEL_INTEGRATOR_GAIN, i_lim, &controller->vel_integ,
 	                     v_cmd, v_meas, DT);
 

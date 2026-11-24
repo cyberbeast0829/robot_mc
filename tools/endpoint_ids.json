@@ -1,5 +1,5 @@
 {
-  "next_id": 268,
+  "next_id": 287,
   "map": {
     "config.i_bw": 1,
     "config.i_max": 2,
@@ -266,6 +266,25 @@
     "telemetry.scope_settle": 264,
     "telemetry.scope_clip": 265,
     "config.dt_comp": 266,
-    "config.dt_comp_tol": 267
+    "config.dt_comp_tol": 267,
+    "diag.decim": 268,
+    "diag.n": 269,
+    "action.diag_start": 270,
+    "action.diag_dump": 271,
+    "system.diag_state": 272,
+    "system.diag_count": 273,
+    "config.fric_coulomb": 274,
+    "config.fric_viscous": 275,
+    "config.fric_eps": 276,
+    "config.vel_est_noise": 277,
+    "config.vel_sched_en": 278,
+    "telemetry.velocity_diff": 279,
+    "telemetry.vel_lag_ms": 280,
+    "config.vel_ctrl_noise": 281,
+    "config.dither_amp": 282,
+    "config.dither_freq": 283,
+    "config.dither_v_max": 284,
+    "timing.total_avg": 285,
+    "scope.decim": 286
   }
 }

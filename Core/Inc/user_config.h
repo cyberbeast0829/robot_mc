@@ -96,6 +96,27 @@ extern "C" {
 #define COG_GAIN				__float_reg[51]									// 补偿缩放（0..2，1 = 标定值原样）
 #define COG_MAX					__float_reg[52]									// 前馈电流钳位 A（0 = 不使用补偿）
 #define COG_POS_THR				__float_reg[53]									// 标定收敛阈值（输出轴 rad），建议 ≤ 半个表距
+/* ---- 摩擦前馈（输出轴速度 → 电机端电流）----
+ * 速度环的积分器本来就能吃掉库仑摩擦，但它要靠速度误差慢慢积累：低速时这表现
+ * 为爬行/stick-slip，而且积分器一旦去补摩擦就没法同时压住扰动。这里按
+ * "运动方向 + 速度大小"把摩擦直接前馈掉，积分器只负责剩下的小量。
+ * coulomb 取空载突破电流（action.measure_inertia 的 telemetry.inertia_break_current），
+ * viscous 取 (i_q(高速) − i_q(近零速)) / 速度差。0 = 关闭（默认，不改变旧行为）。 */
+#define FRIC_COULOMB			__float_reg[57]									// 库仑摩擦前馈 A
+#define FRIC_VISCOUS			__float_reg[58]									// 粘滞摩擦前馈 A/(rad/s)
+#define FRIC_EPS				__float_reg[59]									// 库仑项在 ±eps 内线性过渡 rad/s
+/* ---- 测速 ---- */
+#define VEL_EST_NOISE			__float_reg[60]									// 最小二乘测速的相对噪声目标（0.004 = 0.4%，遥测/测量）
+#define VEL_CTRL_NOISE			__float_reg[61]									// 速度环反馈窗口的相对噪声目标（0.05 = 5%，换更小滞后）
+/* ---- 低速抖动（dither）----
+ * 0.1~1 RPM 的"蠕动"是摩擦的 Stribeck 负阻尼 + 静摩擦造成的 stick-slip 极限环，
+ * 靠提高速度环增益治不了（编码器噪声不允许）。在 q 轴电流上叠一个高频小幅
+ * 正弦，让接触面始终处在"动摩擦"状态，负阻尼消失。幅值取库仑摩擦的 10~30%，
+ * 频率要远高于速度环带宽（机械上被惯量滤掉：Δv ≈ ΔT/(J·2πf)）。
+ * amp = 0 关闭（默认）。只在 0 < |v_setpoint| < v_max 时注入，静止时不抖。 */
+#define DITHER_AMP				__float_reg[62]									// dither 幅值 A（0 = 关闭）
+#define DITHER_FREQ				__float_reg[63]									// dither 频率 Hz
+#define DITHER_V_MAX			__float_reg[64]									// 只在 |v_setpoint| 低于它时注入（输出轴 rad/s）
 
 #define PHASE_ORDER             __int_reg[0]                                    // Phase swapping during calibration
 #define CAN_ID                  __int_reg[1]                                    // CAN bus ID
@@ -160,11 +181,13 @@ extern "C" {
 #define TORQUE_VEL_LIM_EN       torque_vel_lim_en_flag		// 阻抗/力矩模式下的速度限制开关
 #define COGGING_EN              cogging_en_flag				// 齿槽补偿开关（config.cogging_en）
 #define COGGING_VALID           cogging_valid_flag			// 齿槽补偿表有效（标定成功才置 1，config.cogging_valid）
+#define VEL_SCHED_EN            vel_sched_en_flag			// 速度环增益按测速滞后自动降带宽（config.vel_sched_en）
 extern uint8_t pre_calibrated_flag, fet_temp_en_flag, mot_temp_en_flag;
 extern uint8_t vel_limit_en_flag, torque_vel_lim_en_flag;
 extern uint8_t gear_ref_valid_flag;
 extern uint8_t gear_sec_reversed_flag;
 extern uint8_t cogging_en_flag, cogging_valid_flag;
+extern uint8_t vel_sched_en_flag;
 
 
 extern float __float_reg[];

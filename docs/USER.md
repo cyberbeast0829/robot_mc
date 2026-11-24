@@ -398,7 +398,16 @@ rmc call action.idle_mode
 | `config.enable_vel_limit` | — | true | 关掉后 CSV/CSP 不再受 `config.v_max` 约束（`command.v_des` 的物理范围变成 ±200 rad/s） |
 | `config.enable_torque_vel_lim` | — | false | 打开后在 MIT/力矩/电流模式也按 `v_max` 限速（`i_q ≤ (v_max−v)·vel_gain`） |
 | `config.pos_error_fault` | rad | 0 | 跟随误差故障阈值，0 = 关 |
-| `config.pll_bandwidth` | rad/s | 2000 | 编码器速度估计带宽（约 318 Hz）；低速抖就降到 1000，想要更高带宽就升到 3000 |
+| `config.pll_bandwidth` | rad/s | 3000 | 编码器速度 PLL 的带宽。**外环已经不再用它**（现在是自适应窗口最小二乘测速），只影响齿槽标定的内环，一般不用动 |
+| `config.vel_est_noise` | — | 0.004 | 遥测/测量测速的相对噪声目标（0.004 = 0.4%）。越小越平滑、滞后越大 |
+| `config.vel_ctrl_noise` | — | 0.05 | **速度环反馈**测速的相对噪声目标（5%）。窗口更短、滞后更小；调小会让低速环路更慢 |
+| `config.vel_sched_en` | — | true | 按测速滞后自动降低速度环增益（保证相位余量）。关闭只用于台架 A/B |
+| `config.fric_coulomb` | A | 0.10 | 库仑摩擦前馈：按 `v_setpoint` 方向叠加的电机端电流。取空载突破电流（`action.measure_inertia` 的 `telemetry.inertia_break_current`）。**0 = 关**；过大（>实际摩擦）会造成新的低速极限环 |
+| `config.fric_viscous` | A/(rad/s) | 0.010 | 粘滞摩擦前馈：`(i_q(高速) − i_q(近零速)) / 速度差` |
+| `config.fric_eps` | rad/s | 0.004 | 库仑项在 ±eps 内线性过渡，避免速度过零时电流跳变 |
+| `config.dither_amp` | A | 0.10 | 低速 dither 幅值（q 轴正弦）：压 0.1~1 RPM 的 stick-slip。**0 = 关**。太大反而变差 |
+| `config.dither_freq` | Hz | 300 | dither 频率；机械上被惯量滤掉，太高会引入噪声/铁损 |
+| `config.dither_v_max` | rad/s | 0.5 | 只在速度设定值低于该值（且非 0）时注入；静止时不抖 |
 | `config.inertia` | kg·m² | 0.00096 | 输出端惯量，由 `action.measure_inertia` 测得（只写 RAM）。**默认值只是本台架的实测值**，换电机/换关节必须重测 |
 | `config.omega_c` | rad/s | 450 | `action.tune_gains` 的目标穿越频率（越大越激进，300–600 起试） |
 | `config.tune_margin` | × | 1.5 | `action.tune_gains` 对速度环的放大系数：摩擦/齿隙大的关节要调大；1 = 纯公式（只适合纯惯性负载）。本台架 GR 9 + 电流环按标定 R/L 推导后实测 1.5（1.7 起超调 >25%，2.2 失稳） |
@@ -1007,6 +1016,23 @@ rmc --port COM7 call action.enter_dfu_mode
 | 整片擦除后电流环/惯量标定结果离谱 | 标定数据被擦掉，跑的是默认值 | 重新 `action.calibrate`，再 `action.save`；然后重测惯量 |
 
 ## 9. FAQ
+
+**静止时遥测速度一直跳（约 1 RPM）？** 2026-11 之前的固件里 `telemetry.velocity`
+是 475 µs 整数差分，静止时 σ≈1.0 RPM、峰峰约 6 RPM —— 那是**测速噪声**（16 位编码器
+原始计数本身就有 σ≈4.3 count 的抖动），不是电机在动。新固件的
+`telemetry.velocity` 改成自适应窗口最小二乘（静止时精确为 0、实测 0.0007 RPM），
+旧值可在 `telemetry.velocity_diff` 对照。
+
+**低速（0.1~1 RPM）有"蠕动/爬行"？** 这是摩擦的 stick-slip，先按下面的顺序调：
+1. `action.cogging_calibrate` → `config.cogging_en = true` → `action.save`
+   （台架：不补齿槽 1 RPM 纹波 25~33%，补后 7~16%）；
+2. `config.fric_coulomb` ≈ 实测突破电流（`action.measure_inertia` 的
+   `telemetry.inertia_break_current`），`config.fric_viscous` ≈ 高速与近零速
+   i_q 之差除以速度差；
+3. `config.dither_amp` 从 0.05 起试到 0.1（默认 0.1/300 Hz）；过大会**更差**；
+4. `config.vel_ctrl_noise` 保持 0.05，别往小调。
+0.1 RPM 时电机只有约 1000 count/s，1% 就是 10 count/s，再叠加传感器噪声和
+0.1 A 级静摩擦 —— **这套机构上 1% 以内的平稳蠕动做不到**，7~16% 已接近极限。
 
 **升级后要重新标定吗？** 不用，除非换了硬件或整片擦除。
 

@@ -91,11 +91,20 @@ ID 由 `tools/endpoint_ids.json` 锁定，固件升级不会改变；`access` �
 | `config.cogging_gain` | 220 | float | rw | x | 0.0 .. 2.0 | 1.0 | 是 | 齿槽补偿缩放：1.0 = 用标定值原样前馈。偏小（0.7~0.9）更保守；大于 1 只在确认标定低估时用 |
 | `config.cogging_max` | 221 | float | rw | A | 0.0 .. 10.0 | 1.0 | 是 | 前馈电流钳位（A，0 = 不使用补偿）。用来兜住一张错误的表，正常齿槽补偿只有零点几安，取 1~2 A 足够 |
 | `config.cogging_pos_thr` | 222 | float | rw | rad | 1e-05 .. 0.01 | 0.0003 | 是 | 标定收敛阈值（输出轴 rad）：位置误差连续低于它 cogging_settle_ms 毫秒后才开始采样。建议 ≤ 半个表距 2π/(1024·GR)，本机（GR=9）约 0.0007 rad |
+| `config.fric_coulomb` | 274 | float | rw | A | 0.0 .. 10.0 | 0.0 | 是 | 库仑摩擦前馈（电机端电流 A，按输出轴速度方向施加）。取空载突破电流（action.measure_inertia 的 telemetry.inertia_break_current）。0 = 关闭，默认关 |
+| `config.fric_viscous` | 275 | float | rw | A/(rad/s) | 0.0 .. 1.0 | 0.0 | 是 | 粘滞摩擦前馈：i_q_ff = fric_viscous·v_setpoint。用两个速度点的 i_q 均值差估：(i_q(v2)−i_q(v1))/(v2−v1)。0 = 关闭 |
+| `config.fric_eps` | 276 | float | rw | rad/s | 0.0001 .. 1.0 | 0.02 | 是 | 库仑前馈的过零过渡宽度：\|v\|<fric_eps 时按比例衰减，避免速度过零时电流跳变 |
+| `config.vel_est_noise` | 277 | float | rw |  | 0.0005 .. 0.05 | 0.004 | 是 | 自适应窗口测速的相对噪声目标（0.004 = 0.4%）：遥测/测量用的窗口长度按它选，越小越平滑但滞后越大。默认 0.004 |
+| `config.vel_ctrl_noise` | 281 | float | rw |  | 0.001 .. 0.2 | 0.02 | 是 | 速度环反馈（另一套窗口）的相对噪声目标：默认 0.02（300 RPM 台架实测 1.95%→1.76% 速度纹波、i_q σ 0.78→0.71 A；调到 0.01 反而更差——滞后被增益调度压掉，扰动抑制变弱）。噪声经 vel_gain 变成电流纹波，不要调得太激进 |
+| `config.dither_amp` | 282 | float | rw | A | 0.0 .. 2.0 | 0.1 | 是 | 低速 dither 幅值（q 轴电流正弦，0 = 关闭）。用于压 friction stick-slip（0.1~1 RPM 的蠕动）：幅值取库仑摩擦的 10~30%，频率远离速度环带宽 |
+| `config.dither_freq` | 283 | float | rw | Hz | 10.0 .. 5000.0 | 300.0 | 是 | 低速 dither 频率（Hz）。机械上被惯量滤掉：dv ~ dT/(J*2*pi*f)，频率越高速度扰动越小，但会引入可听噪声和铁损 |
+| `config.dither_v_max` | 284 | float | rw | rad/s | 0.0 .. 20.0 | 0.5 | 是 | 只在 0 < \|v_setpoint\| 低于该值（输出轴 rad/s）时注入 dither；静止时不抖 |
+| `config.vel_sched_en` | 278 | bool | rw |  | — | 1 | 是 | 速度环增益随测速滞后自动降低带宽（保证相位余量）。关闭只用于台架 A/B 对照 |
 | `config.cogging_settle_ms` | 223 | int32 | rw | ms | 0 .. 500 | 40 | 是 | 标定：每个点位置进入阈值后还要保持多久才开始采样（默认 40 ms）。调大更稳、标定更慢 |
 | `config.cogging_avg` | 224 | int32 | rw | cycle | 1 .. 400 | 80 | 是 | 标定：每个点采样平均的控制周期数（40 kHz，默认 80 = 2 ms）。调大抑制噪声、标定更慢 |
 | `config.cogging_detrend` | 237 | int32 | rw |  | 0 .. 6 | 3 | 是 | 标定后去掉一个 N 阶多项式趋势（0 = 不去）。重力/外载正反两遍抵消不了，而它在一个转子圈里是慢变趋势（本机 GR=9，只走 1/9 输出圈 ≈ 40°），三次多项式就能拟合掉；齿槽是 84/168… 次/转，不会被误删。有重力负载的关节保持默认 3；直接驱动（GR=1）用 5~6；确认无外载可设 0 |
 | `config.cogging_method` | 238 | int32 | rw |  | 0 .. 1 | 1 | 是 | 标定方法：1 = 匀速扫描（默认，约 10 s）—— 转子匀速转一圈再反向转回来，按转子位置分箱累积速度环输出；动摩擦是常值且两向相反，平均后抵消，没有静摩擦误差。0 = 逐点停住读积分器 —— 测的是纯静态力矩，但静摩擦（本机粘滞带 ±0.15 A）会把 0.02 A 量级的齿槽信号淹没，台架实测幅值偏大 3 倍、相位差 60°，不推荐 |
-| `config.cogging_sweep_ms` | 239 | int32 | rw | ms | 500 .. 20000 | 8000 | 是 | 扫描法：一个转子机械圈走多少毫秒（默认 8000 = 0.125 圈/s，齿槽基波约 3~15 Hz，远低于速度环带宽）。台架实测：2000/4000/8000/16000 对应两遍差异 0.243/0.111/0.043/0.032 A（信号约 0.055 A）；已经加了 90 Hz 二阶低通，默认值够用。调慢更干净但更久（两圈合计约 2×该值） |
+| `config.cogging_sweep_ms` | 239 | int32 | rw | ms | 500 .. 20000 | 12000 | 是 | 扫描法：一个转子机械圈走多少毫秒（默认 8000 = 0.125 圈/s，齿槽基波约 3~15 Hz，远低于速度环带宽）。台架实测：2000/4000/8000/16000 对应两遍差异 0.243/0.111/0.043/0.032 A（信号约 0.055 A）；已经加了 90 Hz 二阶低通，默认值够用。调慢更干净但更久（两圈合计约 2×该值） |
 | `config.cogging_index` | 225 | int32 | rw |  | 0 .. 1023 | 0 | 否 | 诊断游标：配合 telemetry.cogging_value 逐个读表（tools/cogging_test.py dump 用），不持久化 |
 
 ## command：运行命令（电机模式下有效）
@@ -130,8 +139,10 @@ ID 由 `tools/endpoint_ids.json` 锁定，固件升级不会改变；`access` �
 | `telemetry.dtheta_elec` | 42 | float | r | rad/s | — | — | 否 | 电角速度 |
 | `telemetry.position` | 43 | float | r | rad | — | — | 否 | 输出轴多圈位置 |
 | `telemetry.position_motor` | 44 | float | r | rad | — | — | 否 | 电机侧多圈位置 |
-| `telemetry.velocity` | 45 | float | r | rad/s | — | — | 否 | 输出轴速度 |
-| `telemetry.velocity_motor` | 46 | float | r | rad/s | — | — | 否 | 电机侧速度 |
+| `telemetry.velocity` | 45 | float | r | rad/s | — | — | 否 | 输出轴速度：自适应窗口最小二乘估计（低噪声；静止时精确为 0）。旧版这里是 19 拍整数差分，噪声大，见 telemetry.velocity_diff |
+| `telemetry.velocity_motor` | 46 | float | r | rad/s | — | — | 否 | 电机侧速度（最小二乘估计） |
+| `telemetry.velocity_diff` | 279 | float | r | rad/s | — | — | 否 | 旧版 19 拍（475 us）整数差分速度，输出轴，仅作对照：静止时约 1 RPM 的噪声就来自它 |
+| `telemetry.vel_lag_ms` | 280 | float | r | ms | — | — | 否 | 当前测速窗口的等效相位滞后；速度环的自动降带宽（config.vel_sched_en）按它算 |
 | `telemetry.count` | 47 | int32 | r |  | — | — | 否 | 编码器多圈计数 |
 | `telemetry.torque` | 48 | float | r | N-m | — | — | 否 | 输出轴转矩估计 |
 | `telemetry.p_des` | 49 | float | r | rad | — | — | 否 | 当前位置设定值（输出轴） |
@@ -224,6 +235,7 @@ ID 由 `tools/endpoint_ids.json` 锁定，固件升级不会改变；`access` �
 | 名称 | ID | 类型 | 访问 | 单位 | 范围 | 默认 | 持久化 | 说明 |
 |---|---|---|---|---|---|---|---|---|
 | `timing.isr_period` | 100 | uint32 | r |  | — | — | 否 | 控制中断周期（CPU cycles） |
+| `timing.total_avg` | 285 | float | r | cycle | — | — | 否 | 整段中断耗时均值（自上次 action.reset_timing 起；计数约 107 s 回绕，读均值前先 reset） |
 | `timing.count` | 101 | uint32 | r |  | — | — | 否 | 已统计的中断周期数 |
 | `timing.overrun` | 102 | uint32 | r |  | — | — | 否 | 错过的控制周期数 |
 | `timing.period_last` | 103 | uint32 | r |  | — | — | 否 | 上一次中断周期（CPU cycles，正常应约等于 timing.isr_period） |

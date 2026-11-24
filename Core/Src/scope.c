@@ -18,6 +18,7 @@
 #include "scope_law.h"
 #include "math_ops.h"
 #include "structs.h"
+#include "user_config.h"
 #include "main.h"
 
 ScopeStruct scope;
@@ -30,6 +31,26 @@ ScopeStruct scope;
 void scope_start(ControllerStruct *controller)
 {
 	const uint8_t wave = scope.wave;
+
+	if(wave == SCOPE_PASSIVE){
+		/* 只观测不注入：不需要 amp/bias，采样窗固定 SCOPE_N 点，抽取比由
+		 * scope.decim 给（时间基准 = SCOPE_FS/decim）。录 raw/count/速度/i_q。 */
+		const uint32_t primask = __get_PRIMASK();
+		__disable_irq();
+		scope.err = SCOPE_ERR_NONE;
+		scope.acc_done = 0;
+		scope.dump_req = 0;
+		scope.wave_run = SCOPE_PASSIVE;
+		scope.idx = 0;
+		scope.ticks = 0;
+		scope.sub = 0;
+		scope.n_run = SCOPE_N;
+		scope.raw0 = comm_encoder.raw;
+		scope.count0 = comm_encoder.count;
+		scope.state = SCOPE_ST_RUN;
+		__set_PRIMASK(primask);
+		return;
+	}
 
 	if((wave != SCOPE_STEP) && (wave != SCOPE_SINE)){ scope_stop(); return; }	/* 0 = 关闭 */
 
@@ -127,6 +148,8 @@ void scope_request_dump(void)
  * ------------------------------------------------------------------------- */
 void scope_apply(ControllerStruct *controller)
 {
+	/* PASSIVE 只观测：一个轴都不改 */
+	if(scope.wave_run == SCOPE_PASSIVE){ return; }
 	if((scope.state != SCOPE_ST_PREROLL) && (scope.state != SCOPE_ST_RUN)){ return; }
 	if(scope.acc_done){ return; } /* 采样完成：交还控制权，i_*_des 当作 0 */
 
@@ -189,6 +212,39 @@ void scope_capture(ControllerStruct *controller)
 
 	if(scope.state != SCOPE_ST_RUN){ return; }
 	if(scope.acc_done){ return; }
+
+	if(scope.wave_run == SCOPE_PASSIVE){
+		/* 抽取采样：时间基准 = decim × 25 us。硬超时按"最长窗口"给
+		 * （decim 上限 400 × 1024 点 ≈ 10.3 s），不能沿用 2 s 的注入超时 */
+		if(++scope.ticks > (SCOPE_TIMEOUT + SCOPE_TIMEOUT_PASSIVE)){
+			scope.state = SCOPE_ST_ERR;
+			scope.err = SCOPE_ERR_TIMEOUT;
+			return;
+		}
+		const uint16_t dec = (scope.decim > 0u) ? scope.decim : 1u;
+		if(++scope.sub < dec){ return; }
+		scope.sub = 0;
+
+		const uint32_t ip = scope.idx;
+		if(ip >= SCOPE_N){ scope.acc_done = 1; return; }
+		int16_t *p = scope.buf[ip];
+		p[0] = (int16_t)(comm_encoder.raw - scope.raw0);
+		p[1] = (int16_t)(uint16_t)(comm_encoder.count - scope.count0);
+		/* 速度通道按**输出轴** rad/s 存（×500 = 0.002 rad/s ≈ 0.02 rpm 分辨率，
+		 * 量程 ±64 rad/s ≈ ±610 rpm）。用电机侧 rad/s 时 1000 倍率在 300 rpm 就饱和，
+		 * 饱和后纹波被削平（通道退化成常数），低速又嫌分辨率不够 */
+		float vv = comm_encoder.velocity * (500.0f / (GR > 0.0f ? GR : 1.0f));
+		if(vv > 32000.0f){ vv = 32000.0f; }
+		else if(vv < -32000.0f){ vv = -32000.0f; }
+		p[2] = (int16_t)vv;
+		float iq = controller->i_q_des * 1000.0f;
+		if(iq > 32000.0f){ iq = 32000.0f; }
+		else if(iq < -32000.0f){ iq = -32000.0f; }
+		p[3] = (int16_t)iq;
+		scope.idx = ip + 1u;
+		if(scope.idx >= scope.n_run){ scope.acc_done = 1; }
+		return;
+	}
 
 	if(++scope.ticks > SCOPE_TIMEOUT){
 		scope.state = SCOPE_ST_ERR;
@@ -276,7 +332,17 @@ static void scope_finish(void)
 	}
 }
 
-/* 一次导 8 个点：4 通道 × 4 位十六进制（int16 的补码），一行 128 个字符 */
+/* 一次导 8 个点：4 通道 × 4 位十六进制（int16 的补码），一行 128 个字符。
+ * 表头第 4 个字段是**有效采样率**（PASSIVE 时 = SCOPE_FS/decim），解析器据此算
+ * 时间轴；STEP/SINE 仍然是 40000。 */
+static unsigned scope_fs(void)
+{
+	if((scope.wave_run == SCOPE_PASSIVE) && (scope.decim > 0u)){
+		return (unsigned)(SCOPE_FS/(float)scope.decim);
+	}
+	return (unsigned)SCOPE_FS;
+}
+
 static void scope_dump(void)
 {
 	static char line[8*SCOPE_CH*4 + 1];
@@ -284,7 +350,7 @@ static void scope_dump(void)
 
 	myprintf("\r\nSCOPE %u %u %u %u\r\n",
 	         (unsigned)SCOPE_N, (unsigned)SCOPE_CH,
-	         (unsigned)SCOPE_STEP_AT, (unsigned)SCOPE_FS);
+	         (unsigned)SCOPE_STEP_AT, (unsigned)scope_fs());
 
 	for(uint32_t i = 0; i < SCOPE_N; i += 8){
 		char *p = line;
@@ -306,7 +372,7 @@ static void scope_dump(void)
 void scope_poll(void)
 {
 	static uint32_t last_idx;
-	static uint16_t stale;
+	static uint32_t stale;
 
 	/* 采样完成：先算结果，再把 state 置成 DONE（主机看到 3 就一定读得到真结果）。
 	 * ⚠ 必须放在下面 RUN 分支的早退**之前**：acc_done 之后中断不再推进 idx，
@@ -326,12 +392,16 @@ void scope_poll(void)
 		}
 		/* 状态机没在前进（例如在 CALIBRATION 里被启动，run_fsm 的 MOTOR_MODE
 		 * 分支根本不会调 scope_capture）：主循环看到 idx 不变就中止，
-		 * 免得主机一直等一个永远不会完成的捕获 */
+		 * 免得主机一直等一个永远不会完成的捕获。
+		 * ⚠ 阈值必须按 decim 放大：PASSIVE 的 idx 每 decim 个控制周期才动一次，
+		 * 主循环一圈只要几微秒，200 圈在 decim=100（2.5 ms/点）时会先到顶，
+		 * 于是"刚开始就报错"（台架踩过）*/
+		const uint32_t stale_max = 200u*((scope.decim > 0u) ? scope.decim : 1u);
 		if(scope.idx != last_idx){
 			last_idx = scope.idx;
 			stale = 0;
 		}
-		else if(++stale > 200u){
+		else if(++stale > stale_max){
 			scope.state = SCOPE_ST_ERR;
 			scope.err = SCOPE_ERR_TIMEOUT;
 		}
@@ -344,7 +414,7 @@ void scope_poll(void)
 
 	if(scope.dump_req){
 		scope.dump_req = 0;
-		if(scope.wave_run == SCOPE_STEP){
+		if((scope.wave_run == SCOPE_STEP) || (scope.wave_run == SCOPE_PASSIVE)){
 			scope_dump();		/* 会阻塞主循环几百毫秒（myprintf 忙等）*/
 		}
 	}

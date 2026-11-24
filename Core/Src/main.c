@@ -61,8 +61,11 @@
 
 /* USER CODE BEGIN PV */
 
-/* Flash Registers */
-float __float_reg[64];
+/* Flash Registers
+ * ⚠ 数组大小是**硬边界**：user_config.h 里的 __float_reg[N] 一旦越过 63 就是
+ * 越界写（编译器不报错，读出来是相邻内存的 0，表现为"参数永远写不进去"）。
+ * 新增参数时要么用空闲下标，要么同时把这里加大。 */
+float __float_reg[80];
 int __int_reg[256];
 /* 布尔/标志类配置（见 user_config.h 的说明：TLV 里 bool 记录是 1 字节） */
 uint8_t pre_calibrated_flag = 0;
@@ -74,6 +77,7 @@ uint8_t gear_ref_valid_flag = 0;		// 双编参考未建立（跑一次 action.ge
 uint8_t gear_sec_reversed_flag = 0;		// 副编码器读数方向（1 = 随正转变小，解算前镜像）
 uint8_t cogging_en_flag = 0;			// config.cogging_en：默认关（标定成功后再打开）
 uint8_t cogging_valid_flag = 0;			// config.cogging_valid：表有效（标定成功才置 1）
+uint8_t vel_sched_en_flag = 1;			// config.vel_sched_en：测速滞后大时自动降速度环带宽（默认开）
 PreferenceWriter prefs;
 
 /* Structs for control, etc */

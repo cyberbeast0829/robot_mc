@@ -123,6 +123,7 @@ typedef struct{
     float pos_ff_last;                                      // previous CSP position command (output rad)
     int32_t pos_ff_cycle;                                   // loop_count of the previous CSP frame
     float pos_fault_t;                                      // following-error fault debounce timer (s)
+    uint32_t dither_phase;                                  // 低速 dither 的相位累加器（config.dither_*）
 
     /* ---- 位置软限位的“界外冻结”（见 motion.c 的 motion_seed / CTRL_POSITION 分支）----
      * 切到 CSP 时如果实测位置已经在 [P_MIN,P_MAX] 外，不去追被钳到边界的 p_des
@@ -193,6 +194,8 @@ void torque_control(ControllerStruct *controller);
 /* Control-law dispatcher for MOTOR_MODE (motion.c): picks impedance / velocity /
  * position from controller.ctrl_mode and runs the prescaled outer loops. */
 void motion_control(ControllerStruct *controller, EncoderStruct *encoder);
+/* 低速 dither（摩擦 stick-slip）：motion_control() 之后、cogging_apply() 之前调用 */
+void motion_dither(ControllerStruct *controller);
 /* action.tune_gains: 由 config.inertia 算 vel_gain / vel_integrator_gain / pos_gain
  * 并写进 RAM（不落盘）。受 config.omega_c 与 config.tune_margin 控制。 */
 void motion_tune_gains(ControllerStruct *controller);

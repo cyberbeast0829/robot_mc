@@ -132,6 +132,8 @@ extern uint32_t _reboot_cookie;
 			  * CTRL_POSITION/CTRL_VELOCITY 走 motion.c 的串级外环。两者都只产生
 			  * i_q_des，电流环（commutate）照旧在 40 kHz 上跑 */
 			 motion_control(&controller, &comm_encoder);
+			 /* 低速 dither（摩擦 stick-slip，config.dither_*；amp=0 时不做事）*/
+			 motion_dither(&controller);
 			 /* 齿槽补偿：按转子位置查表，把前馈电流叠到 i_q_des 上（在弱磁之前，
 			  * 这样弱磁仍有最终话语权）。标定期间它自己什么都不做 */
 			 cogging_apply(&controller, &comm_encoder);

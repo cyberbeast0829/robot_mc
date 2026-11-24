@@ -1,4 +1,4 @@
-/*
+﻿/*
  * test_motion_law.c
  *
  * 速度环 / 位置环纯数学部分的 host 侧回归测试（不需要目标板）。
@@ -498,6 +498,202 @@ static void test_limits(void)
     CHECK_NEAR(v, 1.0f - 15.0f * dt, 1e-6f);
 }
 
+/* 自适应窗口最小二乘测速：增量维护的 a/b 必须与直接拟合逐位一致（同一运算
+ * 顺序下），窗口加长/缩短/滑动的每一步都不能破坏它。 */
+/* ????????**??**????????y[0] ??????????
+ * ? ml_ls_slope ????????? */
+static float direct_ls_slope(const int32_t *y, int m, float dt)
+{
+    /* ???p[0] = 0?p[i] = -?_{k<i} y[k] */
+    double si = 0.0, sp = 0.0, sii = 0.0, sip = 0.0;
+    double p = 0.0;
+    for (int i = 0; i < m; i++) {
+        si += i; sp += p; sii += (double)i * i; sip += (double)i * p;
+        p -= (double)y[i];
+    }
+    double den = (double)m * sii - si * si;
+    double slope = ((double)m * sip - si * sp) / den;   /* dp/di?i ??? */
+    return (float)(-slope / dt);                        /* ?? = -dp/dt */
+}
+
+static void test_ls_estimator(void)
+{
+    const float dt = 10.0f * DT25;   /* 10 ? 25 us = 0.25 ms ?? */
+    ml_ls_t s;
+    int32_t ring[16];
+    int head = 0, fill = 0;
+    uint32_t seed = 12345u;
+
+    ml_ls_reset(&s);
+
+    /* 1) ??????? 1 count = 4000 counts/s */
+    for (int i = 0; i < 48; i++) {
+        int32_t y = 1;
+        head = (head + 1) % 16; ring[head] = y;
+        if (fill < 16) fill++;
+        if (fill < 2) continue;
+
+        if (s.m < 2) { ml_ls_slide(&s, y, 0); s.m++; }
+        else if (s.m < fill) { ml_ls_slide(&s, y, ring[(head - s.m + 16) % 16]); }
+        else if (s.m < 15) { ml_ls_slide(&s, y, 0); s.m++; }
+        else { ml_ls_slide(&s, y, ring[(head - s.m + 16) % 16]); }
+        while (s.m < 6 && s.m < fill) { ml_ls_grow(&s, ring[(head - s.m + 16) % 16]); }
+
+        int32_t ref[16];
+        int64_t sa = 0, sb = 0, sc = 0;
+        for (int j = 0; j < s.m; j++) {
+            ref[j] = ring[(head - j + 16) % 16];
+            sa += ref[j]; sb += (int64_t)j * ref[j]; sc += (int64_t)j * j * ref[j];
+        }
+        CHECK(s.a == sa);
+        CHECK(s.b == sb);
+        CHECK(s.c == sc);
+        CHECK_NEAR(ml_ls_slope(&s, dt), direct_ls_slope(ref, s.m, dt),
+                   1e-5f * fabsf(direct_ls_slope(ref, s.m, dt)) + 1e-3f);
+    }
+    CHECK_NEAR(ml_ls_slope(&s, dt), 4000.0f, 0.01f);
+
+    /* 2) ???? + ????????????????????? */
+    int mismatches = 0;
+    for (int i = 0; i < 500; i++) {
+        seed = seed * 1664525u + 1013904223u;
+        int32_t y = (int32_t)((seed >> 16) & 0x7FF) + (int32_t)(i & 7);
+        head = (head + 1) % 16; ring[head] = y;
+        if (fill < 16) fill++;
+
+        if (s.m < 2) { ml_ls_slide(&s, y, 0); s.m++; }
+        else if (s.m < fill) { ml_ls_slide(&s, y, ring[(head - s.m + 16) % 16]); }
+        else if (s.m < 15) { ml_ls_slide(&s, y, 0); s.m++; }
+        else { ml_ls_slide(&s, y, ring[(head - s.m + 16) % 16]); }
+
+        int target = 2 + (int)((seed >> 8) % 11u);
+        if (target > fill) target = fill;
+        if (target > 15) target = 15;
+        while ((s.m > target) && (s.m > 2)) { ml_ls_shrink(&s, ring[(head - s.m + 1 + 16) % 16]); }
+        while ((s.m < target) && (s.m < fill)) { ml_ls_grow(&s, ring[(head - s.m + 16) % 16]); }
+
+        int32_t ref[16];
+        int64_t sa = 0, sb = 0, sc = 0;
+        for (int j = 0; j < s.m; j++) {
+            ref[j] = ring[(head - j + 16) % 16];
+            sa += ref[j]; sb += (int64_t)j * ref[j]; sc += (int64_t)j * j * ref[j];
+        }
+        if ((s.a != sa) || (s.b != sb) || (s.c != sc)) { mismatches++; }
+        if (s.m >= 2) {
+            CHECK_NEAR(ml_ls_slope(&s, dt), direct_ls_slope(ref, s.m, dt),
+                       1e-5f * fabsf(direct_ls_slope(ref, s.m, dt)) + 1.0f);
+        }
+    }
+    CHECK(mismatches == 0);
+
+    /* 3) ?????? -> ????? 0?PLL ????*/
+    ml_ls_reset(&s);
+    fill = 0;
+    head = 0;
+    for (int i = 0; i < 12; i++) {
+        head = (head + 1) % 16;
+        ring[head] = 0;
+        if (fill < 16) fill++;
+        if (fill < 2) continue;
+        if (s.m < 2) { ml_ls_slide(&s, 0, 0); s.m++; }
+        else if (s.m < fill) { ml_ls_slide(&s, 0, ring[(head - s.m + 16) % 16]); }
+        else if (s.m < 15) { ml_ls_slide(&s, 0, 0); s.m++; }
+        else { ml_ls_slide(&s, 0, ring[(head - s.m + 16) % 16]); }
+        while (s.m < 5 && s.m < fill) { ml_ls_grow(&s, ring[(head - s.m + 16) % 16]); }
+    }
+    CHECK_NEAR(ml_ls_slope(&s, dt), 0.0f, 0.0f);
+
+    /* 4) ???????????????????? [2, m_max] */
+    CHECK_NEAR((float)ml_ls_window(1.0e6f, dt, 1.36f, 0.004f, 512), 2.0f, 1.0f);
+    CHECK(ml_ls_window(1.0e4f, dt, 1.36f, 0.004f, 512) > 40);
+    CHECK(ml_ls_window(1.0e4f, dt, 1.36f, 0.004f, 512) < 90);
+    CHECK(ml_ls_window(0.0f, dt, 1.36f, 0.004f, 512) == 512);
+    CHECK(ml_ls_window(1.0e6f, dt, 1.36f, 0.004f, 7) <= 7);
+
+    /* 5) ??????????????????? 1.0??? 0.02 */
+    CHECK_NEAR(ml_lag_gain_scale(450.0f, 0.0f), 1.0f, 0.0f);
+    CHECK_NEAR(ml_lag_gain_scale(450.0f, 0.0005f), 1.0f, 0.0f);
+    CHECK(ml_lag_gain_scale(450.0f, 0.010f) < 0.2f);
+    CHECK(ml_lag_gain_scale(450.0f, 10.0f) >= 0.02f);
+    CHECK(ml_ls_lag(10, dt) > ml_ls_lag(2, dt));
+}
+
+static void test_fast_pow(void)
+{
+    /* ?? x^(2/3) ? libm powf ???? <3%????????????? */
+    for (float x = 2.83f; x < 1.0e9f; x *= 1.7f) {
+        float a = ml_pow_two_thirds(x);
+        float b = powf(x, 2.0f / 3.0f);
+        CHECK(fabsf(a - b) <= 0.03f * b);
+    }
+    /* ?"? powf ?????"????? ?25%??????? ?20%? */
+    const float dt = 10.0f * DT25;
+    for (float v = 1.0e2f; v < 1.0e7f; v *= 1.3f) {
+        int m = ml_ls_window(v, dt, 1.36f, 0.05f, 1023);
+        float need = 3.4641016f * 1.36f / (0.05f * v * dt);
+        int ref = (int)(powf(need, 2.0f / 3.0f) + 0.5f);
+        if (ref < 2) { ref = 2; }
+        if (ref > 1023) { ref = 1023; }
+        CHECK_NEAR((float)m, (float)ref, 0.25f * (float)ref + 1.0f);
+    }
+}
+
+static void test_friction_ff(void)
+{
+    /* 纯粘滞 */
+    CHECK_NEAR(ml_friction_ff(0.0f, 0.01f, 0.02f, 2.0f), 0.02f, 1e-7f);
+    /* 纯库仑：饱和区取符号，零速为零，过零线性 */
+    CHECK_NEAR(ml_friction_ff(0.1f, 0.0f, 0.02f, 0.5f), 0.1f, 1e-7f);
+    CHECK_NEAR(ml_friction_ff(0.1f, 0.0f, 0.02f, -0.5f), -0.1f, 1e-7f);
+    CHECK_NEAR(ml_friction_ff(0.1f, 0.0f, 0.02f, 0.0f), 0.0f, 1e-7f);
+    CHECK_NEAR(ml_friction_ff(0.1f, 0.0f, 0.02f, 0.01f), 0.05f, 1e-6f);
+    /* eps <= 0：退化成硬符号 */
+    CHECK_NEAR(ml_friction_ff(0.1f, 0.0f, 0.0f, 0.001f), 0.1f, 1e-7f);
+    /* NaN 输入不能污染电流环 */
+    CHECK_NEAR(ml_friction_ff(0.1f, 0.01f, 0.02f, NAN), 0.0f, 0.0f);
+}
+
+static void test_ls_high_speed_grow(void)
+{
+    /* 高速启动：窗口从 0 长到 1023，每块 ~6000 counts。b 到 m²/2·y ≈ 3.1e9，
+     * 超过 int32 —— 这就是台架上"静止精确为 0、一转起来测速恒为 0"的根因。 */
+    enum { NN = 1024 };
+    static int32_t ring[NN];
+    const float dt = 10.0f * DT25;
+    ml_ls_t s;
+    int head = 0, fill = 0, m_max = NN - 1;
+    ml_ls_reset(&s);
+
+    for (int i = 0; i < 1200; i++) {
+        int32_t y = 6000 + (i % 5);
+        head = (head + 1) % NN; ring[head] = y;
+        if (fill < NN) fill++;
+
+        if (s.m < 2) { ml_ls_slide(&s, y, 0); s.m++; }
+        else if (s.m < fill) { ml_ls_slide(&s, y, ring[(head - s.m + NN) % NN]); }
+        else if (s.m < m_max) { ml_ls_slide(&s, y, 0); s.m++; }
+        else { ml_ls_slide(&s, y, ring[(head - s.m + NN) % NN]); }
+
+        if (i > 60) { while (s.m < m_max && s.m < fill) { ml_ls_grow(&s, ring[(head - s.m + NN) % NN]); } }
+
+        int64_t sa = 0, sb = 0, sc = 0;
+        int32_t ref[NN];
+        for (int j = 0; j < s.m; j++) {
+            ref[j] = ring[(head - j + NN) % NN];
+            sa += ref[j]; sb += (int64_t)j * ref[j]; sc += (int64_t)j * j * ref[j];
+        }
+        CHECK(s.a == sa);
+        CHECK(s.b == sb);
+        CHECK(s.c == sc);
+        if (s.m >= 2) {
+            CHECK_NEAR(ml_ls_slope(&s, dt), direct_ls_slope(ref, s.m, dt),
+                       1e-4f * fabsf(direct_ls_slope(ref, s.m, dt)) + 1.0f);
+        }
+    }
+    CHECK(s.m == m_max);
+    CHECK(s.b > 2000000000LL);      /* 确认真的越过了 int32 的界 */
+}
+
 int main(void)
 {
     test_clamp();
@@ -514,6 +710,10 @@ int main(void)
     test_trap_plan_eval();
     test_trap_step();
     test_posf();
+    test_ls_estimator();
+    test_ls_high_speed_grow();
+    test_fast_pow();
+    test_friction_ff();
 
     if (failures == 0) {
         printf("test_motion_law: all tests passed\n");

@@ -22,6 +22,7 @@
 #include "user_config.h"
 #include "hw_config.h"
 #include "position_sensor.h"
+#include "math_ops.h"
 
 /* 惯量标定的时长/阈值（控制周期数，40 kHz）。都远小于 IWDG(~4 s) */
 #define INERTIA_T(sec)			((uint16_t)((sec)/DT))
@@ -113,7 +114,7 @@ static void motion_seed(ControllerStruct *controller, const EncoderStruct *encod
 
 	/* 从实测速度起步：CSV 的阶跃变成“从当前速度开始拉”，CSP 也不会因为
 	 * 速度环从零速开始而先顿一下 */
-	controller->v_setpoint = encoder->pll_velocity * inv_gr;
+	controller->v_setpoint = encoder->velocity_fast * inv_gr;
 	controller->v_target = controller->v_setpoint;
 
 	/* 位置前馈按帧差分，切换模式时丢弃上一帧的参考与时间戳 */
@@ -403,9 +404,9 @@ void motion_control(ControllerStruct *controller, EncoderStruct *encoder)
 		const float inv_gr = inv_gear_ratio();
 		const float dt_v = (float)vel_pre * DT;		// 速度环周期
 		const float dt_p = dt_v * (float)pos_pre;	// 位置环周期
-		/* 外环用 PLL 速度（平滑、滞后可控），不用 encoder.velocity 的
-		 * 475 us 差分 —— 那条路径留给 MIT 与 legacy 遥测，一行没改 */
-		const float v_meas = encoder->pll_velocity * inv_gr;
+		/* 外环用测速的**短窗口**版本（滞后小、噪声经 vel_gain 后仍可忽略），
+		 * 遥测/标定用长窗口版本（低噪声）。两者都不再使用 PLL / 475 us 差分 */
+		const float v_meas = encoder->velocity_fast * inv_gr;
 		/* 速度限幅来自帧又受 config.v_max 约束；万一被写成 0/负（旧配置或
 		 * 手误），退回 v_max，不要变成“速度指令恒为 0”把关节放空 */
 		float v_lim = controller->v_limit;
@@ -513,9 +514,25 @@ void motion_control(ControllerStruct *controller, EncoderStruct *encoder)
 		                                         P_MIN, P_MAX);
 
 		controller->vel_err = controller->v_setpoint - v_meas;
-		controller->i_q_ref = ml_vel_pi(VEL_GAIN, VEL_INTEGRATOR_GAIN,
-		                                controller->i_cmd_max, &controller->vel_integ,
-		                                controller->v_setpoint, v_meas, dt_v);
+		{
+			/* 测速窗口在低速时被迫变长（见 position_sensor.c），滞后会吃掉相位
+			 * 余量，所以按滞后把速度环整体降压（kp 与 ki 同比例，零点位置不变）。
+			 * 高速时窗口只有 0.5~1 ms，缩放系数为 1，行为与原来一致。
+			 * 摩擦前馈走 ml_vel_pi_ff 的前馈口，参与限幅判断 */
+			float vg = VEL_GAIN;
+			float vig = VEL_INTEGRATOR_GAIN;
+			if (VEL_SCHED_EN) {
+				const float gs = ml_lag_gain_scale(OMEGA_C, encoder->vel_fast_lag);
+				vg *= gs;
+				vig *= gs;
+			}
+			const float i_ff = ml_friction_ff(FRIC_COULOMB, FRIC_VISCOUS, FRIC_EPS,
+			                                  controller->v_setpoint);
+			controller->i_q_ref = ml_vel_pi_ff(vg, vig, controller->i_cmd_max,
+			                                   &controller->vel_integ,
+			                                   controller->v_setpoint, v_meas,
+			                                   i_ff, dt_v);
+		}
 		/* 推荐阈值随 pos_gain / inertia / i_max 变，跟着算一次（十几条浮点运算） */
 		update_pos_fault_suggest(controller);
 	}
@@ -524,4 +541,31 @@ void motion_control(ControllerStruct *controller, EncoderStruct *encoder)
 	 * 期间必须从外环保持值重新赋值，否则它会一拍接一拍地累加下去 */
 	controller->i_q_des = controller->i_q_ref;
 	controller->i_d_des = 0.0f;
+}
+
+/* 低速 dither：0 < |v_setpoint| < DITHER_V_MAX 时在 q 轴电流上叠一个高频正弦。
+ * 目的不是"让速度更准"，而是把静摩擦/Stribeck 负阻尼造成 stick-slip 的接触面
+ * 一直保持在动摩擦区（见 user_config.h 的 DITHER_* 注释）。幅值不参与速度环的
+ * 限幅判断，但会在 commutate() 里被 i_max 一起钳住。 */
+void motion_dither(ControllerStruct *controller)
+{
+	const float amp = DITHER_AMP;
+	if (!(amp > 0.0f)) { return; }
+	if (!(DITHER_FREQ > 1.0f)) { return; }
+	/* 只在外环（CSV/CSP）里注入：阻抗/MIT 模式的 v_setpoint 不是"运动指令" */
+	if (controller->ctrl_mode == CTRL_IMPEDANCE) { return; }
+	const float v = controller->v_setpoint;
+	const float va = (v > 0.0f) ? v : -v;
+	if (!(va > 0.0f) || (va > DITHER_V_MAX)) {
+		controller->dither_phase = 0;
+		return;
+	}
+	/* 相位累加器：f·2^32/40000 每拍。频率限在 [10, 5000] Hz */
+	float f = DITHER_FREQ;
+	if (f < 10.0f) { f = 10.0f; }
+	if (f > 5000.0f) { f = 5000.0f; }
+	controller->dither_phase += (uint32_t)(f * (4294967296.0f / 40000.0f));
+	float s, c;
+	sincos_lut((float)(controller->dither_phase >> 8) * (TWO_PI_F / 16777216.0f), &s, &c);
+	controller->i_q_des += amp * s;
 }

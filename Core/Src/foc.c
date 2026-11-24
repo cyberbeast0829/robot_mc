@@ -466,7 +466,10 @@ void commutate(ControllerStruct *controller, EncoderStruct *encoder)
 
 		controller->theta_elec = encoder->elec_angle;
 		controller->dtheta_elec = encoder->elec_velocity;
-		controller->dtheta_mech = encoder->velocity/GR;
+		/* MIT 阻尼与 TORQUE_VEL_LIM 要**最短滞后**的信号：最小二乘窗口在静止时是 256 ms
+		 * （速度提示为 0，见 ml_ls_window），从静止起步的几十毫秒里会把阻尼反馈读成 0，
+		 * 冲击/阶跃的时机会错。这里保留 19 拍整数差分（475 us，行为与改动前一致）*/
+		controller->dtheta_mech = encoder->velocity_diff/GR;
 		controller->theta_mech = encoder->angle_multiturn/GR;
 
        /// Commutation  ///
@@ -627,7 +630,8 @@ void commutate_open_loop(ControllerStruct *controller, EncoderStruct *encoder)
 		controller->theta_elec = encoder->elec_angle;
         angle_est = fmodf(controller->theta_elec, TWO_PI_F);
 		controller->dtheta_elec = encoder->elec_velocity;
-		controller->dtheta_mech = encoder->velocity/GR;
+		/* 与 commutate() 同理：阻尼要最短滞后的速度（见那里的注释）*/
+		controller->dtheta_mech = encoder->velocity_diff/GR;
 		controller->theta_mech = encoder->angle_multiturn/GR;
 
        /// Commutation  ///
@@ -753,6 +757,11 @@ void check_faults(ControllerStruct *controller){
 }
 
 void zero_commands(ControllerStruct * controller){
+	/* 必须把租约计数器一并清零：它只在 MOTOR_MODE 里自增并停在
+	 * CAN_TIMEOUT_CYCLES+1，而 run_fsm() 用 `> CAN_TIMEOUT_CYCLES` 判超时。
+	 * 不清的话超时之后每一拍都会再进来一次，把主站刚写进来的 command.* 当拍
+	 * 清零 —— 表现为 CSV/CSP/MIT 只生效一个控制周期，电机完全不跟指令。 */
+	controller->timeout = 0;
 	controller->t_ff = 0;
 	controller->kp = 0;
 	controller->kd = 0;

@@ -206,7 +206,7 @@ Same shape as upstream, with these N32 names:
 
 - **`ATIM1_UP_IRQHandler`** (`Core/Src/n32h47x_48x_it.c`, priority 0), every PWM cycle:
   clear update flag → kick IWDG (`IWDG->KR = 0xAAAA`) → `analog_sample` → `ps_sample`
-  → `check_faults` → `run_fsm` → `can_tx_rx` (25 µs 时基 + 最多 2 帧 → 协议分发).
+  → `check_faults`   → `run_fsm` → `can_tx_rx` (25 µs 时基 + 最多 2 帧 → 协议分发)。
 - **Main loop** calls `endpoint_serial_poll()` → `endpoint_usb_poll()` → `can_proto_poll()`
   → `run_fsm_slow(&state)` — all printing, setup/zero command handling, and flash saves.
   ISR→main handoff is via the `volatile *_pending` flags in `FSMStruct` (`fsm.h`).
@@ -218,14 +218,52 @@ Same shape as upstream, with these N32 names:
   `CTRL_VELOCITY`(CSV) 与 `CTRL_POSITION`(CSP) 是串级外环，按
   `config.vel_loop_prescaler` / `pos_loop_prescaler` 分频（默认 8 kHz / 4 kHz）。
   外环只决定 `i_q_des` 的参考，**电流环 `commutate()` 不变**；纯数学在
-  `motion_law.h`（host 可测）。外环用 `ps_update_pll()` 的编码器速度 PLL，
-  MIT 与 legacy 遥测仍用 `comm_encoder.velocity` 的整数差分。
+  `motion_law.h`（host 可测）。测速用**自适应窗口最小二乘**（`position_sensor.c`
+  的 `ps_update_velocity`，见下一条），不再用 PLL 或 19 拍整数差分。
   ⚠ `field_weaken()` 就地累加 `i_q_des`，所以分频模式每拍都要
   `i_q_des = i_q_ref` 重新赋值，否则弱磁会一拍接一拍叠上去。
   增益来源：`action.measure_inertia` 测 `config.inertia`（一条指令、自动进出电机
   模式），`action.tune_gains` 再按 `config.omega_c` / `config.tune_margin` 算出
   `vel_gain` / `vel_integrator_gain` / `pos_gain` 写进 RAM（`motion_tune_gains()`，
   公式与台架依据见 `docs/DEV.md`）。两个 action 都**不自动保存**。
+- **测速（`ps_update_velocity`）不能退回 PLL**：16 位编码器静止时原始计数 σ≈4.3
+  count，二阶 PLL 的速度噪声 ∝ bw^1.5（bw=3000 时静止 σ=0.05 rad/s 输出轴 ≈ 0.5 RPM，
+  峰峰 3 RPM）—— 客户投诉的"静止 1 RPM 波动"就是它。现在用**两个**自适应窗口的
+  位置最小二乘：`velocity`（`config.vel_est_noise`=0.4%，遥测/标定/测量）与
+  `velocity_fast`（`config.vel_ctrl_noise`=0.02，只给速度环/位置环）。
+  **MIT 阻尼与 `enable_torque_vel_lim` 仍用 `velocity_diff`（19 拍 / 475 us）**：
+  最小二乘窗口在静止时是 256 ms，从静止起步的那几十毫秒里阻尼反馈会被读成 0；
+  `inertia_step()` 同理仍用 `pll_velocity`（它的阈值和 8 ms 台阶是按 PLL 噪声标的）。
+  窗口长度按速度
+  （以及**指令值**，否则静止时窗口最长→增益最低→推不动→测速恒 0 的死循环）自适应，
+  静止时计数不动 ⇒ 斜率**精确为 0**。PLL 保留但只用于齿槽标定内环。
+  ⚠ 窗口越长滞后越大，`motion.c` 用 `ml_lag_gain_scale(OMEGA_C, vel_fast_lag)` 把
+  速度环的 kp/ki 同比例压低（`config.vel_sched_en`），低速时不会自激。
+  ⚠ 累加量是 int64（`ml_ls_t` 的 c 到 1e12 量级，int32 会溢出成"转起来测速恒为 0"）。
+- **低速摩擦**：`config.fric_coulomb` / `fric_viscous` / `fric_eps` 把摩擦前馈进
+  i_q（`ml_friction_ff`，参与限幅判断）；`config.dither_amp` / `dither_freq` /
+  `dither_v_max` 在低速（0<|v_setpoint|<v_max）叠一个高频小电流正弦，压
+  stick-slip（台架 1 RPM：无 dither 25~33% → 0.1 A/300 Hz 时 7~16%）。
+  这两个都不改控制环结构，参数为 0 时行为与没有它们时逐位一致。
+- **片上捕获只有一个入口（`scope.c`）**，三种模式用 `scope.wave` 选：1 = 阶跃、
+  2 = 正弦扫频（都会在电流参考上主动注入，结果走 `telemetry.scope_*`）、
+  **3 = PASSIVE**（只观测不注入：按 `scope.decim` 抽样存 raw/count/速度/i_q）。
+  三种模式共用 `scope.buf`（1024×4 int16）与 `action.scope_dump`（十六进制、
+  表头第 4 个字段 = 有效采样率 = 40000/decim）。测速度纹波/FFT 用 PASSIVE：
+  CAN 读一次 endpoint 只有约 190 Hz，Nyquist 连 100 Hz 都不到。台架工具
+  `tools/vel_ripple.py`（还会算 raw/count 对匀速直线的**角度域残差**与阶次谱，
+  那是判断"纹波是转矩还是测角"的唯一手段）。**不要再加第二个捕获模块**。
+  ⚠ `scope.wave` 的 `max` 要写成 3；`scope_poll()` 的"卡住"判据必须按
+  `scope.decim` 放大，否则 decim=100 时 PASSIVE 一启动就 ERR(state=4)。
+- **中高速纹波已定位到测角，不在控制环**：300~600 RPM 的 1× / 2× 转频分量幅值
+  ∝ 转速（0.0028 rad/s per Hz ≈ 0.16° 角度误差），关齿槽补偿、把 `omega_c`
+  从 450 抬到 700（kp ×1.6）都改变不了（后者更差）。所以别再靠调 PID / 加补偿
+  去压这一段；要动就动编码器线性化表（台架实测 LUT 之后的角度残差比 raw 还大，
+  见 `docs/DEV.md` 的"中高速纹波的来源"）。`config.vel_ctrl_noise` 默认 **0.02**
+  （0.05→0.02 让 300 RPM 1.95%→1.76%；0.01 反而更差）。
+- **ISR 耗时（`timing.*`）**：`timing.total_max`（周期数，1 拍 = 6000 周期）是预算
+  判据，`timing.seg_*_max` 是分段；`action.reset_timing` 在工况切换前清零。
+  测速的窗口调整、dither、PASSIVE 抽样都会进 `total_max`，改动 ISR 后要复测。
 - **电流环内部（`commutate()`）的顺序不能动**：`svm()` → 死区补偿（`dtc_comp.h`，
   参数 `config.dt_comp` / `dt_comp_tol`）→ `set_dtc()`。补偿必须在 `set_dtc()` 之前，
   因为那里按占空比算 `pcl_check_needed`（低边采样窗口判据），它要的是补偿后的值。
@@ -312,6 +350,10 @@ Same shape as upstream, with these N32 names:
   - 安全：只在 `gate_drive_enabled` 时注入，离开电机模式/故障由 `scope_poll()`
     自动中止，另有 2 s 硬超时（主机掉线不会一直灌电流）。
   - 台架：`python tools/iloop_bw.py --port COMx bode|sweep|step [--axis d|q]`。
+- **速度纹波/FFT（PASSIVE）**：`python tools/vel_ripple.py --rpm 300 --decim 5 --fit 4`
+  （控制走 CAN `--interface slcan --channel COMx`，波形走 USB CDC `--port COMy`）。
+  `--decim 100`（400 Hz / 2.56 s）看机械阶次，`--decim 5`（8 kHz / 128 ms）看
+  宽带到 900 Hz，`--decim 1`（40 kHz）看单拍增量。**报数必须写窗口**（见 `docs/DEV.md`）。
 
 ATIM1 update/TRGO and the control ISR are fixed at the PWM **peak**, inside the
 low-side sampling window. Preserve `tim.c`'s startup sequence: load the internal
@@ -554,6 +596,10 @@ Zadig 装 WinUSB（CDC 不受影响）。
   的 `config.can_timeout` 一到就会被 `zero_commands()` 清掉；**不要**用把
   `can_timeout` 置 0 来绕过）；**进入 MOTOR_MODE 必须先 `zero_commands()`**
   （`fsm_enter_state`），否则空闲态写入的 `t_ff` 会在门极打开的第一拍生效。
+  ⚠ `zero_commands()` 自己**必须把 `controller.timeout` 清零**：计数器只在
+  MOTOR_MODE 自增、停在 `CAN_TIMEOUT_CYCLES+1`，而判超时用的是 `>`；不清零的话
+  一旦超时过就**每一拍**都再进一次，主站刚写的命令当拍被清掉，表现为
+  "CSV/CSP/MIT 完全不跟指令"。
   它们的范围是运行期决定的（`range_dynamic: true`），描述符里不发 `min`/`max`。
 - 上位机：`rmc`（PyPI 包 **`robotmc`**，源码 `tools/rmc/`；`tools/mc_ep.py` 是
   转发到它的弃用 shim）：`tree|get|set|call|dump|monitor|probe|scan|backup|restore|

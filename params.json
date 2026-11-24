@@ -914,6 +914,109 @@
       "default": 0.0003
     },
     {
+      "name": "config.fric_coulomb",
+      "type": "float",
+      "access": "rw",
+      "ref": "FRIC_COULOMB",
+      "min": 0.0,
+      "max": 10.0,
+      "unit": "A",
+      "brief": "库仑摩擦前馈（电机端电流 A，按输出轴速度方向施加）。取空载突破电流（action.measure_inertia 的 telemetry.inertia_break_current）。0 = 关闭，默认关",
+      "persist": true,
+      "default": 0.0
+    },
+    {
+      "name": "config.fric_viscous",
+      "type": "float",
+      "access": "rw",
+      "ref": "FRIC_VISCOUS",
+      "min": 0.0,
+      "max": 1.0,
+      "unit": "A/(rad/s)",
+      "brief": "粘滞摩擦前馈：i_q_ff = fric_viscous·v_setpoint。用两个速度点的 i_q 均值差估：(i_q(v2)−i_q(v1))/(v2−v1)。0 = 关闭",
+      "persist": true,
+      "default": 0.0
+    },
+    {
+      "name": "config.fric_eps",
+      "type": "float",
+      "access": "rw",
+      "ref": "FRIC_EPS",
+      "min": 0.0001,
+      "max": 1.0,
+      "unit": "rad/s",
+      "brief": "库仑前馈的过零过渡宽度：|v|<fric_eps 时按比例衰减，避免速度过零时电流跳变",
+      "persist": true,
+      "default": 0.02
+    },
+    {
+      "name": "config.vel_est_noise",
+      "type": "float",
+      "access": "rw",
+      "ref": "VEL_EST_NOISE",
+      "min": 0.0005,
+      "max": 0.05,
+      "brief": "自适应窗口测速的相对噪声目标（0.004 = 0.4%）：遥测/测量用的窗口长度按它选，越小越平滑但滞后越大。默认 0.004",
+      "persist": true,
+      "default": 0.004
+    },
+    {
+      "name": "config.vel_ctrl_noise",
+      "type": "float",
+      "access": "rw",
+      "ref": "VEL_CTRL_NOISE",
+      "min": 0.001,
+      "max": 0.2,
+      "brief": "速度环反馈（另一套窗口）的相对噪声目标：默认 0.02（300 RPM 台架实测 1.95%→1.76% 速度纹波、i_q σ 0.78→0.71 A；调到 0.01 反而更差——滞后被增益调度压掉，扰动抑制变弱）。噪声经 vel_gain 变成电流纹波，不要调得太激进",
+      "persist": true,
+      "default": 0.02
+    },
+    {
+      "name": "config.dither_amp",
+      "type": "float",
+      "access": "rw",
+      "ref": "DITHER_AMP",
+      "min": 0.0,
+      "max": 2.0,
+      "unit": "A",
+      "brief": "低速 dither 幅值（q 轴电流正弦，0 = 关闭）。用于压 friction stick-slip（0.1~1 RPM 的蠕动）：幅值取库仑摩擦的 10~30%，频率远离速度环带宽",
+      "persist": true,
+      "default": 0.1
+    },
+    {
+      "name": "config.dither_freq",
+      "type": "float",
+      "access": "rw",
+      "ref": "DITHER_FREQ",
+      "min": 10.0,
+      "max": 5000.0,
+      "unit": "Hz",
+      "brief": "低速 dither 频率（Hz）。机械上被惯量滤掉：dv ~ dT/(J*2*pi*f)，频率越高速度扰动越小，但会引入可听噪声和铁损",
+      "persist": true,
+      "default": 300.0
+    },
+    {
+      "name": "config.dither_v_max",
+      "type": "float",
+      "access": "rw",
+      "ref": "DITHER_V_MAX",
+      "min": 0.0,
+      "max": 20.0,
+      "unit": "rad/s",
+      "brief": "只在 0 < |v_setpoint| 低于该值（输出轴 rad/s）时注入 dither；静止时不抖",
+      "persist": true,
+      "default": 0.5
+    },
+    {
+      "name": "config.vel_sched_en",
+      "type": "bool",
+      "access": "rw",
+      "ref": "VEL_SCHED_EN",
+      "brief": "速度环增益随测速滞后自动降低带宽（保证相位余量）。关闭只用于台架 A/B 对照",
+      "persist": true,
+      "default": 1
+    },
+    {
       "name": "config.cogging_settle_ms",
       "type": "int32",
       "access": "rw",
@@ -969,7 +1072,7 @@
       "unit": "ms",
       "brief": "扫描法：一个转子机械圈走多少毫秒（默认 8000 = 0.125 圈/s，齿槽基波约 3~15 Hz，远低于速度环带宽）。台架实测：2000/4000/8000/16000 对应两遍差异 0.243/0.111/0.043/0.032 A（信号约 0.055 A）；已经加了 90 Hz 二阶低通，默认值够用。调慢更干净但更久（两圈合计约 2×该值）",
       "persist": true,
-      "default": 8000
+      "default": 12000
     },
     {
       "name": "config.cogging_index",
@@ -1188,7 +1291,7 @@
       "access": "r",
       "get": "comm_encoder.velocity / GR",
       "unit": "rad/s",
-      "brief": "输出轴速度"
+      "brief": "输出轴速度：自适应窗口最小二乘估计（低噪声；静止时精确为 0）。旧版这里是 19 拍整数差分，噪声大，见 telemetry.velocity_diff"
     },
     {
       "name": "telemetry.velocity_motor",
@@ -1196,7 +1299,23 @@
       "access": "r",
       "get": "comm_encoder.velocity",
       "unit": "rad/s",
-      "brief": "电机侧速度"
+      "brief": "电机侧速度（最小二乘估计）"
+    },
+    {
+      "name": "telemetry.velocity_diff",
+      "type": "float",
+      "access": "r",
+      "get": "comm_encoder.velocity_diff / GR",
+      "unit": "rad/s",
+      "brief": "旧版 19 拍（475 us）整数差分速度，输出轴，仅作对照：静止时约 1 RPM 的噪声就来自它"
+    },
+    {
+      "name": "telemetry.vel_lag_ms",
+      "type": "float",
+      "access": "r",
+      "get": "comm_encoder.vel_lag * 1000.0f",
+      "unit": "ms",
+      "brief": "当前测速窗口的等效相位滞后；速度环的自动降带宽（config.vel_sched_en）按它算"
     },
     {
       "name": "telemetry.count",
@@ -1746,6 +1865,14 @@
       "brief": "控制中断周期（CPU cycles）"
     },
     {
+      "name": "timing.total_avg",
+      "type": "float",
+      "access": "r",
+      "get": "(float)isr_timing.total_sum / (float)(isr_timing.n ? isr_timing.n : 1u)",
+      "unit": "cycle",
+      "brief": "整段中断耗时均值（自上次 action.reset_timing 起；计数约 107 s 回绕，读均值前先 reset）"
+    },
+    {
       "name": "timing.count",
       "type": "uint32",
       "access": "r",
@@ -2175,8 +2302,8 @@
       "access": "rw",
       "ref": "scope.wave",
       "min": 0,
-      "max": 2,
-      "brief": "电流环扫频模式：0 关闭 / 1 阶跃 / 2 正弦。不持久化（上电为 0），只用于台架测带宽"
+      "max": 3,
+      "brief": "电流环扫频/捕获模式：0 关闭 / 1 阶跃 / 2 正弦 / 3 PASSIVE（只观测不注入：按 scope.decim 抽样存 raw/count/速度/i_q）。不持久化（上电为 0）"
     },
     {
       "name": "scope.axis",
@@ -2348,6 +2475,17 @@
       "get": "scope_t90()",
       "unit": "s",
       "brief": "阶跃的 10%→90% 上升时间；-1 表示没找到（幅度太小或已经发散）"
+    },
+    {
+      "name": "scope.decim",
+      "type": "int32",
+      "access": "rw",
+      "get": "(int32_t)scope.decim",
+      "set": "scope.decim = (uint16_t)v;",
+      "min": 1,
+      "max": 400,
+      "brief": "PASSIVE 捕获（scope.wave=3）的抽取比：每 decim 个 40 kHz 控制周期存一点（1 = 40 kHz，40 = 1 kHz）。时间基准 = 40000/decim Hz，导出的表头第 4 个字段就是它",
+      "persist": false
     }
   ]
 }

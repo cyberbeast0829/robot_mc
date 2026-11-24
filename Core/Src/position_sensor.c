@@ -195,17 +195,155 @@ int ps_finish_sample(EncoderStruct * encoder, float dt){
 	 * instead of the float angles keeps velocity resolution independent of how
 	 * far the multi-turn position is from zero */
 	/* (Tried a moving least-squares fit here; it wasn't any better than the simple difference) */
-	encoder->velocity = TWO_PI_F*((float)(count_multi - encoder->count_buff[oldest]))
+	encoder->velocity_diff = TWO_PI_F*((float)(count_multi - encoder->count_buff[oldest]))
 			/((float)ENC_CPR*dt*(float)(N_POS_SAMPLES-1));
 	encoder->elec_velocity = ppairs*encoder->velocity;
 
 	return 1;
 }
 
+/* ---------------------------------------------------------------------------
+ * 自适应窗口最小二乘测速。每 25 us 调用一次（只在编码器帧有效时）。
+ *
+ * 每 VEL_BLK_DECIM 拍把"单圈计数的增量"累加成一个块（块内求和压掉 √10 的
+ * 量化噪声），然后对最近 m 块做直线拟合，斜率就是速度。m 由运动速度决定
+ * （ml_ls_window：把斜率噪声压到 config.vel_est_noise 的相对目标），块数通过
+ * 两个滑动和增量维护，所以**每块只花 O(1)**，不需要每块重算 m 次乘加：
+ *
+ *   A   = Σ y[j]                （j = 0 最新）
+ *   B   = Σ j·y[j]
+ *   滑窗：B ← B + A_old − m·y_out,  A ← A_old + y_in − y_out
+ *   加长：A += y[m],   B += m·y[m]           （新样本的年龄是 m）
+ *   缩短：A −= y[m−1], B −= (m−1)·y[m−1]
+ *   斜率 = ((m−1)/2·A − B) / (dt·m·(m²−1)/12)
+ *
+ * 窗口长度变化时只改一两块（VEL_M_STEP），避免 m 阶重算落到一个中断周期里。
+ * ------------------------------------------------------------------------- */
+#define VEL_M_STEP		8			/* 每块最多增减的窗口块数 */
+/* 块平均后的计数噪声：原始计数 σ≈4.3 count（静止实测），块内 10 个样本求和
+ * 平均 → 4.3/√10 ≈ 1.36。写成常数避免在中断里调 sqrtf */
+#define VEL_BLK_SIGMA	1.36f
+
+static void vel_push(EncoderStruct *encoder, int32_t y)
+{
+	if(++encoder->vel_head >= VEL_BLK_MAX){ encoder->vel_head = 0; }
+	encoder->vel_blk[encoder->vel_head] = y;
+	if(encoder->vel_fill < VEL_BLK_MAX){ encoder->vel_fill++; }
+}
+
+/* 环形缓冲里"年龄 = age"的样本（0 = 最新） */
+static int32_t vel_at(const EncoderStruct *encoder, int age)
+{
+	int idx = (int)encoder->vel_head - age;
+	if(idx < 0){ idx += VEL_BLK_MAX; }
+	return encoder->vel_blk[idx];
+}
+
+/* 一套窗口滑一拍 + 朝目标长度调整（两套窗口共用同一个环形缓冲） */
+static void vel_fit_step(const EncoderStruct *encoder, ml_ls_t *s, int32_t y, int m_t)
+{
+	/* 1) 窗口滑一拍。窗口还没盖满历史时不移出样本，而是顺势长一块。
+	 * ⚠ m<2 时 m<fill 不代表"有样本移出窗口"（那会把唯一的老样本丢掉），
+	 * 必须先按"0 → 1 → 2"补齐，所以这个分支要放在最前面 */
+	if(s->m < 2){
+		ml_ls_slide(s, y, 0);
+		s->m++;
+	}
+	else if(s->m < (int)encoder->vel_fill){
+		ml_ls_slide(s, y, vel_at(encoder, s->m));	/* 年龄 m 的样本移出窗口 */
+	}
+	else{
+		ml_ls_slide(s, y, 0);
+		if(s->m < (VEL_BLK_MAX - 1)){ s->m++; }		/* 还没盖满：窗口长一块 */
+	}
+
+	/* 2) 窗口长度朝目标调整，每块最多 VEL_M_STEP 块；不能超过已有历史 */
+	int step = m_t - s->m;
+	if(step > VEL_M_STEP){ step = VEL_M_STEP; }
+	if(step < -VEL_M_STEP){ step = -VEL_M_STEP; }
+	while((step > 0) && (s->m < (int)encoder->vel_fill) && (s->m < (VEL_BLK_MAX - 1))){
+		ml_ls_grow(s, vel_at(encoder, s->m));		/* 年龄 m：窗口外的下一块 */
+		step--;
+	}
+	while((step < 0) && (s->m > 2)){
+		ml_ls_shrink(s, vel_at(encoder, s->m - 1));	/* 去掉最老的一块 */
+		step++;
+	}
+}
+
+void ps_update_velocity(EncoderStruct *encoder, float dt)
+{
+	const int cpr = ENC_CPR;
+
+	int dw = (int)encoder->count_wrapped - (int)encoder->vel_prev_w;
+	if(dw > (cpr/2)){ dw -= cpr; }
+	else if(dw < -(cpr/2)){ dw += cpr; }
+	encoder->vel_prev_w = encoder->count_wrapped;
+	encoder->vel_acc += dw;
+
+	if(++encoder->vel_blk_cnt < VEL_BLK_DECIM){ return; }
+	encoder->vel_blk_cnt = 0;
+
+	const int32_t y = encoder->vel_acc;
+	encoder->vel_acc = 0;
+	vel_push(encoder, y);
+
+	const float dt_blk = (float)VEL_BLK_DECIM*dt;
+
+	if(encoder->vel_fill < 2u){
+		ml_ls_reset(&encoder->vel_fit);
+		ml_ls_reset(&encoder->vel_fit_fast);
+		encoder->vel_ls_counts = 0.0f;
+		encoder->vel_fast_counts = 0.0f;
+		encoder->velocity = 0.0f;
+		encoder->velocity_fast = 0.0f;
+		encoder->elec_velocity = 0.0f;
+		encoder->vel_lag = ml_ls_lag(VEL_BLK_MAX, dt_blk);
+		encoder->vel_fast_lag = encoder->vel_lag;
+		return;
+	}
+
+	/* 窗口选择用的"速度提示"：测量值本身 + **指令值**。
+	 * 只用测量值会掉进陷阱：静止时窗口取最长（滞后最大）→ 增益被压到最低 →
+	 * 加上一个速度指令也推不动 → 测量值一直是 0，窗口永远缩不回来。
+	 * 指令值（输出轴 rad/s）换算成电机端 counts/s 后取较大者即可破环。 */
+	float hint = fabsf(encoder->vel_ls_counts);
+	{
+		const float gr = (GR > 0.0f) ? GR : 1.0f;
+		const float v_cmd = fabsf(controller.v_setpoint)*gr*((float)cpr/TWO_PI_F);
+		if((v_cmd == v_cmd) && (v_cmd > hint)){ hint = v_cmd; }
+	}
+
+	/* 遥测/测量窗口：噪声目标严（config.vel_est_noise），滞后大也无所谓 */
+	int m_precise = ml_ls_window(hint, dt_blk, VEL_BLK_SIGMA, VEL_EST_NOISE, VEL_BLK_MAX - 1);
+	/* 速度环窗口：噪声目标宽（config.vel_ctrl_noise），换更小的滞后 */
+	int m_fast = ml_ls_window(hint, dt_blk, VEL_BLK_SIGMA, VEL_CTRL_NOISE, VEL_BLK_MAX - 1);
+	if(m_precise > (int)encoder->vel_fill){ m_precise = (int)encoder->vel_fill; }
+	if(m_fast > (int)encoder->vel_fill){ m_fast = (int)encoder->vel_fill; }
+	if(m_precise < 2){ m_precise = 2; }
+	if(m_fast < 2){ m_fast = 2; }
+
+	vel_fit_step(encoder, &encoder->vel_fit, y, m_precise);
+	vel_fit_step(encoder, &encoder->vel_fit_fast, y, m_fast);
+
+	encoder->vel_ls_counts = ml_ls_slope(&encoder->vel_fit, dt_blk);
+	encoder->vel_fast_counts = ml_ls_slope(&encoder->vel_fit_fast, dt_blk);
+	const float rad_per_count = TWO_PI_F/(float)cpr;
+	encoder->velocity = encoder->vel_ls_counts*rad_per_count;
+	encoder->velocity_fast = encoder->vel_fast_counts*rad_per_count;
+	encoder->elec_velocity = encoder->ppairs*encoder->velocity;
+	encoder->vel_lag = ml_ls_lag(encoder->vel_fit.m, dt_blk);
+	encoder->vel_fast_lag = ml_ls_lag(encoder->vel_fit_fast.m, dt_blk);
+}
+
 void ps_update_pll(EncoderStruct * encoder, float dt){
-	/* 编码器速度 PLL（临界阻尼，见 motion_law.h）。速度环/位置环用它当反馈：
-	 * 比下面那条 475 us 整数差分平滑，且带宽可调。只在本周期的帧有效时调用 ——
-	 * 丢帧还继续预测会让估计值一直漂。MIT 与 legacy 遥测仍走 encoder->velocity。 */
+	/* 自适应窗口最小二乘测速：encoder->velocity / elec_velocity 由它更新。
+	 * 速度环、位置环与遥测都用这条（低噪声）；MIT 阻尼走 velocity_diff（要短滞后），
+	 * PLL 只给齿槽标定内环。 */
+	ps_update_velocity(encoder, dt);
+
+	/* 编码器速度 PLL（临界阻尼，见 motion_law.h）。只在本周期的帧有效时调用
+	 * —— 丢帧还继续预测会让估计值一直漂。 */
 	float kp, ki;
 	ml_pll_gains(PLL_BW, dt, &kp, &ki);
 
@@ -228,6 +366,23 @@ void ps_reset_pll(EncoderStruct * encoder){
 	encoder->pll_seeded = 0;
 	encoder->pll_vel_counts = 0.0f;
 	encoder->pll_velocity = 0.0f;
+
+	/* 最小二乘测速同样清空：窗口里的旧计数属于上一个运行段，带过来会在
+	 * 头几块里算出一个假速度 */
+	encoder->vel_prev_w = encoder->count_wrapped;
+	encoder->vel_acc = 0;
+	encoder->vel_blk_cnt = 0;
+	encoder->vel_fill = 0;
+	encoder->vel_head = 0;
+	ml_ls_reset(&encoder->vel_fit);
+	ml_ls_reset(&encoder->vel_fit_fast);
+	encoder->vel_ls_counts = 0.0f;
+	encoder->vel_fast_counts = 0.0f;
+	encoder->vel_lag = ml_ls_lag(VEL_BLK_MAX, (float)VEL_BLK_DECIM*DT);
+	encoder->vel_fast_lag = encoder->vel_lag;
+	encoder->velocity = 0.0f;
+	encoder->velocity_fast = 0.0f;
+	encoder->elec_velocity = 0.0f;
 }
 
 void ps_sample(EncoderStruct * encoder, float dt){

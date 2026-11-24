@@ -11,10 +11,20 @@
 
 //#include "structs.h"
 #include "spi.h"
+#include "motion_law.h"
 #include <stdint.h>
 
 #define N_POS_SAMPLES 20		// Number of position samples to store.  should put this somewhere else...
 #define N_LUT 128
+
+/* 自适应窗口最小二乘测速（见 position_sensor.c 的 ps_update_velocity 与
+ * motion_law.h 里的公式）：
+ *   - 每 VEL_BLK_DECIM 个 40 kHz 控制周期把计数增量累加成一个"块"（默认 10 →
+ *     4 kHz），块内求和本身就压掉 √10 的量化噪声；
+ *   - 对最近 m 个块做直线拟合，斜率 = 速度；m 随速度自适应（4 kHz 下最长
+ *     VEL_BLK_MAX 块 = 128 ms）。 */
+#define VEL_BLK_DECIM	10
+#define VEL_BLK_MAX		1024
 
 typedef struct{
 	union{
@@ -26,8 +36,10 @@ typedef struct{
 		uint16_t spi_rx_word;
 	};
 	float angle_singleturn, old_angle, angle_multiturn, elec_angle, velocity, elec_velocity, ppairs;
+	float velocity_diff;			// 旧的 19 拍整数差分（只做诊断/对照；噪声大，见 ps_finish_sample）
 	int raw, count, turns;
 	int count_buff[N_POS_SAMPLES];		// multi-turn position history (ring, newest at count_head), for the velocity calculation
+	int32_t vel_blk[VEL_BLK_MAX];		// 4 kHz 块计数（整数：最小二乘的累加要精确，见 ml_ls_t）
 	int count_multi;					// newest multi-turn count (= the old count_buff[0]); cogging uses this as its table index
 	uint8_t count_head;					// ring head: slot holding the newest sample
 	int count_wrapped;					// single-turn count in [0, ENC_CPR), input of the velocity PLL
@@ -41,6 +53,22 @@ typedef struct{
 	float pll_vel_counts;	// PLL 速度，counts/s
 	float pll_velocity;		// PLL 速度，电机端 rad/s
 	uint8_t pll_seeded;		// 0 = 还没用有效样本播种，下一帧直接对齐
+	/* 自适应窗口最小二乘测速（见 ps_update_velocity）。velocity 就是它的输出，
+	 * 速度环/位置环/遥测都用这个；MIT 阻尼用 velocity_diff（要短滞后），
+	 * pll_velocity 只给齿槽标定内环。
+	 * 两套窗口：遥测/标定用长窗口（低噪声），速度环用短窗口（滞后小、噪声换带宽）*/
+	int32_t vel_prev_w;		// 上一拍的 count_wrapped
+	int32_t vel_acc;		// 当前块内的计数增量
+	uint8_t vel_blk_cnt;	// 块内已累加的控制周期数
+	uint16_t vel_fill;		// 已积累的有效块数
+	uint16_t vel_head;		// 环形缓冲的最新一块
+	ml_ls_t vel_fit;		// 遥测/测量窗口的增量状态（低噪声）
+	ml_ls_t vel_fit_fast;	// 速度环窗口的增量状态（短窗口、滞后小）
+	float vel_ls_counts;	// 遥测窗口估计速度 counts/s
+	float vel_lag;			// 遥测窗口的相位滞后 s
+	float vel_fast_counts;	// 速度环窗口估计速度 counts/s
+	float vel_fast_lag;		// 速度环窗口的相位滞后 s
+	float velocity_fast;	// 速度环反馈（电机端 rad/s）
 	/* 齿轮式双编上电恢复（见 ps_dual_gear_restore）：下一帧用它覆盖 turns，
 	 * 然后自动清 abs_turns_valid —— 不能在主循环里直接改 turns，
 	 * 因为第一帧的 first_sample 逻辑会把它清零 */
@@ -63,6 +91,7 @@ void ps_start_read(void);
 int ps_finish_sample(EncoderStruct * encoder, float dt);
 void ps_sample(EncoderStruct * encoder, float dt);
 void ps_update_pll(EncoderStruct * encoder, float dt);
+void ps_update_velocity(EncoderStruct * encoder, float dt);	// 自适应窗口最小二乘测速（4 kHz 块）
 void ps_reset_pll(EncoderStruct * encoder);
 void ps_print(EncoderStruct * encoder, int dt_ms);
 
