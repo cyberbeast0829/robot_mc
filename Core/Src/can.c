@@ -432,7 +432,7 @@ float can_read_variable(uint8_t var_id){
         case CAN_VAR_VELOCITY:		return comm_encoder.velocity/GR;
         case CAN_VAR_I_Q:			return controller.i_q_filt;
         case CAN_VAR_I_D:			return controller.i_d_filt;
-        case CAN_VAR_TORQUE:		return controller.i_q_filt*KT*GR;
+        case CAN_VAR_TORQUE:		return controller.i_q_filt*controller.kt_eff*GR;
         case CAN_VAR_V_BUS:			return controller.v_bus_filt;
         case CAN_VAR_V_Q:			return controller.v_q;
         case CAN_VAR_V_D:			return controller.v_d;

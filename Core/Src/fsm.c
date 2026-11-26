@@ -137,6 +137,10 @@ extern uint32_t _reboot_cookie;
 			 /* 齿槽补偿：按转子位置查表，把前馈电流叠到 i_q_des 上（在弱磁之前，
 			  * 这样弱磁仍有最终话语权）。标定期间它自己什么都不做 */
 			 cogging_apply(&controller, &comm_encoder);
+			 /* MTPA：把上面汇总出来的"转矩当量" q 电流拆成 (Id, Iq)。
+			  * 必须在弱磁之前（弱磁要在 MTPA 的 Id 上继续加深，而不是覆盖它），
+			  * 也必须在所有转矩来源（外环/dither/齿槽前馈）都叠完之后 */
+			 mtpa_apply(&controller);
 			 field_weaken(&controller);
 			 /* 扫频注入：改写两个轴的 i_*_des（被测轴 = bias+激励，另一轴 = 0）。
 			  * 放在 cogging_apply/field_weaken 之后，避免它们的前馈混进测量。
@@ -567,6 +571,10 @@ extern uint32_t _reboot_cookie;
 	  * 浮点指令，而温度的时间常数是 0.1 s 量级，1 ms 更新一次绰绰有余。
 	  * dt 由 loop_count 的差算出，与主循环节奏无关（见 update_thermistors） */
 	 update_thermistors(&controller);
+
+	 /* MTPA：参数变化时重建查表（否则只是一次比较）。中断里只查表，
+	  * 见 foc.c 的 mtpa_service() */
+	 mtpa_service();
 
 	 /* 电流环扫频的结果合并/看门狗/导波形（重活，绝不能放在中断里）*/
 	 scope_poll();

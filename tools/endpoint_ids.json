@@ -1,5 +1,5 @@
 {
-  "next_id": 287,
+  "next_id": 292,
   "map": {
     "config.i_bw": 1,
     "config.i_max": 2,
@@ -285,6 +285,11 @@
     "config.dither_freq": 283,
     "config.dither_v_max": 284,
     "timing.total_avg": 285,
-    "scope.decim": 286
+    "scope.decim": 286,
+    "config.enable_mtpa": 287,
+    "config.mtpa_id_frac": 288,
+    "telemetry.current_kt_eff": 289,
+    "telemetry.mtpa_id": 290,
+    "telemetry.mtpa_gain": 291
   }
 }

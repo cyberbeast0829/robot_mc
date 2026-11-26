@@ -172,6 +172,12 @@ extern "C" {
 #define COG_SWEEP_MS            __int_reg[150]                                  // 扫描法：一个转子机械圈走多少毫秒
 #define GEAR_SEC_REVERSED       gear_sec_reversed_flag	// 副编码器读数随正转变小（磁铁反装/外啮合）→ 解算前镜像
 #define GEAR_REF_VALID          gear_ref_valid_flag		// 双编参考是否已建立（=1 才在上电时恢复位置）
+/* ---- MTPA（每安培最大转矩，数学见 mtpa_law.h，控制路径见 foc.c 的 mtpa_apply）----
+ * 凸极电机（Ld < Lq）在 d 轴注入负电流，用磁阻转矩换更高的每安培转矩。
+ * 默认关；SPM 电机（Ld≈Lq）开了也会自动退化为恒等（凸极指数 < 0.02 跳过）。
+ * ⚠ 惯量/齿槽标定期间自动跳过（那两套标定按 KT 的线性转矩关系整定）。 */
+#define MTPA_EN                 mtpa_en_flag			// 总开关（config.enable_mtpa）
+#define MTPA_ID_FRAC            __float_reg[65]			// |Id| ≤ frac·i_max（0.9；0 = 关闭）
 /* 布尔/标志类配置单独用 uint8_t 存：TLV 里 bool 记录只有 1 字节，塞进 __int_reg
  * （int）会只写低字节，虽然在小端上能用，但不如独立字节干净。 */
 #define PRE_CALIBRATED          pre_calibrated_flag		// 标定完成标志（0 = 未标定，禁止进电机模式）
@@ -183,7 +189,7 @@ extern "C" {
 #define COGGING_VALID           cogging_valid_flag			// 齿槽补偿表有效（标定成功才置 1，config.cogging_valid）
 #define VEL_SCHED_EN            vel_sched_en_flag			// 速度环增益按测速滞后自动降带宽（config.vel_sched_en）
 extern uint8_t pre_calibrated_flag, fet_temp_en_flag, mot_temp_en_flag;
-extern uint8_t vel_limit_en_flag, torque_vel_lim_en_flag;
+extern uint8_t vel_limit_en_flag, torque_vel_lim_en_flag, mtpa_en_flag;
 extern uint8_t gear_ref_valid_flag;
 extern uint8_t gear_sec_reversed_flag;
 extern uint8_t cogging_en_flag, cogging_valid_flag;

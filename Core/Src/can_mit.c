@@ -36,9 +36,12 @@ static void can_mit_rx(const can_frame_t *f)
 
     case CAN_OP_LEGACY:
         if (dlc == 8) {
-            /* Legacy protocol: all 8-byte frames.  Reply with the packed telemetry */
+            /* 转矩估计用 kt_eff（含 MTPA 的磁阻分量）；MTPA 关时等于 KT。
+             * 12 位位域的范围仍是 I_MAX*KT*GR（pack_reply 里），那是**线上常量**，
+             * 不能跟着 kt_eff 变 —— 凸极很强的电机在满力矩时这个老协议的字段会饱和，
+             * 要精确读数请用 endpoint 的 telemetry.torque */
             pack_reply(&can_tx, CAN_ID, comm_encoder.angle_multiturn / GR, comm_encoder.velocity / GR,
-                       controller.i_q_filt * KT * GR, controller.v_bus_filt);
+                       controller.i_q_filt * controller.kt_eff * GR, controller.v_bus_filt);
             can_send_legacy(&can_tx);
 
             /* Check for special Commands: bytes 0-6 all 0xFF, command in byte 7 */

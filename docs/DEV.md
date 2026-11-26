@@ -665,6 +665,206 @@ CSV/CSP 回归：1 rad/s 正反向误差 −1.8%/−1.7%，位置保持误差 0.
 选把 V0 压到 ≈0 的取值写进 `params.json` 的 `default`。**不是制造公差敏感的常数**：
 死区由固件固定，器件压降由 FET 型号固定，同一设计的所有单元共用同一个值。
 
+## MTPA（每安培最大转矩）
+
+凸极电机（IPM，`Ld < Lq`）里 d 轴电流**也**产生转矩（磁阻转矩），所以在同样的
+转矩下把一部分电流挪到 d 轴（取负）可以减小总电流。`config.enable_mtpa` 打开后，
+`mtpa_apply()` 把控制律输出的"转矩当量 q 电流"拆成 `(Id, Iq)` 再交给电流环。
+**转矩指令本身不变**，变的是"用多少电流去实现它"。
+
+- 纯数学：[`Core/Inc/mtpa_law.h`](../Core/Inc/mtpa_law.h)（host 测 `tools/test_mtpa.c`，
+  已进 `make hosttest`）；控制路径：`foc.c` 的 `mtpa_apply()` / `mtpa_active()`。
+- 插入点（`fsm.c` 的 MOTOR_MODE）：`motion_control` → `motion_dither` →
+  `cogging_apply` → **`mtpa_apply`** → `field_weaken` → `scope_apply` → `commutate`。
+  在所有"转矩来源"汇总之后、弱磁之前（弱磁要在 MTPA 的 Id 上继续加深，而不是覆盖）。
+
+### 公式
+
+```
+τ = 1.5·p·(λ·Iq + ΔL·Id·Iq),        ΔL = Ld − Lq < 0（凸极）
+KT = 1.5·p·λ                        （标定给出，见 measure_lr）
+```
+
+MTPA 条件（`∂τ/∂Id = 0`，`Id²+Iq² = const`）等价于 `Iq² = Id² + k·|Id|`，
+其中 `k = λ/|ΔL|`。由此得到**一元单调方程**（`a = |iq_cmd|`，Newton 求解）：
+
+```
+y·(k + √(k² + 4y²)) = 2·k·a          y = Iq，解出 |Id| = (√(k²+4y²) − k)/2
+```
+
+电流圆上的最优点：`|Id|_c = (√(k² + 8·Imax²) − k)/4`，它的转矩与 `λ·a` 一比就知道
+是否饱和（`|I| ≤ a` 恒成立，所以 `a < Imax` 时根本不用算这一支）。
+
+⚠ **不要退回 ODrive 4680 的"轨迹 + 一次代入"**：那是固定点迭代，弱凸极一次就收敛，
+强凸极（ξ = `Imax·|ΔL|/λ` 到 3）会震荡 —— 台架复算时 Id 从 −134 A 跳到 −17.5 A，
+算出的转矩比指令大 25%。Newton 与凸极强度无关，`ML_MTPA_NEWTON_MAX` = 4（弱点 2 次就停）。
+
+⚠ **小电流必须用有理化形式**：`(−λ + √(λ²+q²))` 在 `q ≪ λ` 时灾难性抵消，float32 下
+1e-6 A 的指令会让 Id 直接归零（应有 `Id ∝ Iq²`）。头文件里两处除法都是有理化的。
+
+### 与弱磁、标定、限幅的关系
+
+| 交互 | 处理 |
+|---|---|
+| 弱磁 | 两个 Id 都 ≤0，**取更深的那个、不叠加**；Id 变了按 `Iq = iq_cmd·λ/(λ+ΔL·Id)` 重算 Iq（保转矩）再按电流圆收口（与 ODrive `vesc_field_weakening.cpp` 同构） |
+| 惯量 / 齿槽标定 | `mtpa_on()` 返回 0，整条路径走原来的（那两套标定按 `KT` 的线性转矩关系整定，MTPA 会改变这个隐含增益） |
+| 转矩限幅 `config.torque_lim` | 用 `kt_eff`（**上一拍**的值，本拍 Id 还没定）换算，与 ODrive 用上一拍 Id 同一个理由 |
+| 遥测 / 机械功率 / 老协议转矩 | 一律用 `controller.kt_eff`；MTPA 关且 Id=0 时它恒等于 `KT`，逐位不变 |
+| 扫频 `scope.*` | `scope_apply()` 在 `field_weaken()` 之后接管两轴，不受影响 |
+
+`kt_eff = KT + 1.5·p·ΔL·Id` 有 5% KT 的下限兜底（Ld/Lq 填错时不让它变成 0/负）。
+
+### ⚠ 求解必须在主循环：中断里只查表
+
+第一版在 40 kHz 中断里直接解（Newton + 有理化）。台架实测（MZW55，1.0.7 首版）：
+
+| | `seg_fsm_max` |
+|---|---|
+| MTPA 关 | 2551 |
+| MTPA 开（中断内求解） | **3366（+815 拍 / +32%）**，`total_max` 6102 → **超过 6000 上限**，overrun 从 38 涨到 49 / 1.2 s |
+
+原因不是浮点运算本身，而是本仓库的取指成本：flash 等待 + ICACHE 未命中把每条指令
+放大到约 **2.7 拍**（见"中断预算"一节），300 条指令就是 800 拍。
+
+所以 `mtpa_service()`（**主循环**，`run_fsm_slow` 每轮调一次）在参数
+（`KT/PPAIRS/L_D/L_Q/I_MAX/mtpa_id_frac`）变化时重建一张 **49 点表**（约 12 µs，
+双缓冲 + `mtpa_tab_gen` 发布，中断永远读一张完整的表），中断里的 `mtpa_apply()`
+只做"一次乘法 + 取整 + 两次线性插值"。实测：
+
+| | `seg_fsm_max` | `total_max` |
+|---|---|---|
+| MTPA 关 | 2566 | 5312 |
+| MTPA 开（查表 + 降流收口） | **2974（+416 拍 / +16%）** | **5716（95% 预算）** |
+| MTPA 开（同一份代码，`config.torque_lim = 0`） | +154 | 5374 |
+
+> 表里第二行是**本机台架的真实配置**（`config.torque_lim = 3`）：转矩限幅生效时要
+> 多算一次 `cosφ`（一次开方 + 一次除法），第三行是关掉转矩限幅后的同版本固件。
+> 代价换来的是"降流/限幅时 MTPA 不会比 SPM 差"（见上一节），`total_max` 仍在 6000
+> 之内；`ovr`（超预算的拍数占比）与 MTPA 关时相同（都是 20% 上下，属基线噪声）。
+
+表范围 `[0, I_MAX·g]`（`g` = 电流圆上的转矩增益，也就是 `torque_control()` 的钳位
+上限），顶端几格落在饱和分支（圆上最优点，恒定）。映射 `|Id|(|Iq|)` **只由 λ/ΔL 决定、
+与电流上限无关**，所以温度降流不需要重建表 —— 但饱和点必须按**实际**的圆收口，见下面
+"降流/限幅时的收口"。插值误差由 `tools/test_mtpa.c` 的 `test_table_resolution` 守着
+（与 `mtpa_service` 同一套参数化）：满量程转矩 < 0.1%、
+`|ΔId| < 0.2% Imax`；本机（ξ=0.14）实际是 0.0004% 量级，最强的 ξ=3 也有 0.055%。
+
+### 收益（`telemetry.mtpa_gain`）
+
+`ξ = Imax·|ΔL|/λ`，电流极限处的转矩增益 `≈ 1 + ξ²/2 − ξ⁴/2`：
+
+| ξ | 典型参数 | 增益 |
+|---|---|---|
+| 0.04 | λ 1.885 mWb、ΔL −22.5 µH、3 A（旧台架数据） | +0.13% |
+| 0.136 | λ 1.852 mWb、ΔL −20.9 µH、**12 A**（当前台架 MZW55） | **+0.90%** |
+| 0.16 | λ 31.1 mWb、ΔL −100 µH、50 A | +1.3% |
+| 0.5 | λ 8 mWb、ΔL −200 µH、20 A | +10% |
+| 3.0 | λ 10 mWb、ΔL −300 µH、100 A | +124% |
+
+⇒ 先读 `telemetry.mtpa_gain` 判断值不值得开，不要凭经验。
+
+#### 峰值转矩口径（`mtpa_iq_scale()`）
+
+`i_q_des` 是"SPM 等价"的电流，而 MTPA 在电流圆上还能多给出 `g` 倍的转矩，所以
+**电流上限在这套口径里要乘 `g`**：
+
+- `commutate()` 每拍把**实际**电流上限换算成 `controller.i_q_peak =
+  mtpa_iq_peak(i_max)`（SPM 等价峰值，≥ `i_max`），并更新 `mtpa_scale_f =
+  i_q_peak/i_max`；MTPA 未就绪时两者就是 `i_max` / 1（逐位不变）；
+- `torque_control()`：`i_q_des` 钳在 `±i_q_peak`。饱和时 `mtpa_apply()` 返回圆上
+  最优点，`|I|` 正好等于物理 `i_max`；
+- `motion.c` 的 CSV/CSP：`i_cmd_max·mtpa_iq_scale()`，再用 `i_q_peak` 兜住
+  （帧里的 cur_limit 是按 `I_MAX` 钳的，降流后可能大于实际上限）；
+- 转矩限幅 `config.torque_lim`、`telemetry.torque`、机械功率、老协议转矩读数一律用
+  `kt_eff`，所以"N·m 上限"不受影响（口径细节见下一条）。
+
+**速度环/位置环增益不需要重算**：`i_q_des` 到转矩仍是严格的 `KT·GR`（保转矩拆解），
+`config.pos_gain` / `vel_gain` / `vel_integrator_gain` 与 MTPA 前同一套值即可。
+
+#### 降流/限幅时的收口（两个容易写错的地方）
+
+1. **`config.torque_lim` 要除 cosφ，不能只除 `kt_eff`。**
+   转矩由 **i_q** 产生，而 `limit_norm` 限的是 **|I|**。只按
+   `TORQUE_LIM/(kt_eff·GR)` 换算会把 `|I|` 限成"应交付转矩所需的 `i_q`"，于是
+   实际交付小于配置值（仿真：ξ=3 的电机满电流时只剩 **59%**、50% 处 68%）。
+   正确换算是
+
+   ```
+   |I|_torque = TORQUE_LIM / (GR · kt_eff · cosφ),   cosφ = |i_q|/|I|
+   ```
+
+   `cosφ` 就是本拍电流矢量的 q 轴占比（`field_weaken()` 已经定完方向，只缩放幅值），
+   所以这是**精确**的、不需要迭代。MTPA 关时 Id=0 ⇒ cosφ=1 ⇒ 与改动前逐位一致。
+   `T=0`（默认）时整块跳过，中断里没有这次开方。
+2. **饱和点必须按实际电流圆收口，不能按 `I_MAX`。**
+   表锚在 `I_MAX`，但温度降流 / 转矩限幅会让 `i_max` 远小于它；若仍用大圆的比例取
+   Id，小圆上 `i_q` 会被 `√(i_max²−Id²)` 卡住 —— 强凸极电机降流到 15% 时 MTPA 只有
+   SPM 转矩的 **72%**（比不开还差），按小圆收口后是 **108%**。所以
+   `mtpa_iq_peak()` 用**实际** `i_max` 调 `ml_mtpa_iq_cmd_at_limit()`，`mtpa_apply()`
+   先把指令幅值钳到它（轨迹与电流上限无关，圆上最优点恒在轨迹上，所以钳完再查表
+   得到的正是小圆的最优点）。`tools/test_mtpa.c` 的 `test_live_limit` 守着
+   "`|I| = live`"与"MTPA 不劣于 SPM"两条（把收口改回 `I_MAX` 它就红）。
+
+### 参数 / 遥测
+
+| 名称 | 说明 |
+|---|---|
+| `config.enable_mtpa` | 总开关，默认 **0** |
+| `config.mtpa_id_frac` | `|Id| ≤ frac·i_max`，默认 0.9（0 = 关闭）。ξ ≤ 3 的电机自然不会碰到 |
+| `telemetry.mtpa_id` | MTPA 单独给出的 Id（弱磁更深时与 `i_d_des` 不同） |
+| `telemetry.current_kt_eff` | 含磁阻分量的等效 Kt（电机端） |
+| `telemetry.mtpa_gain` | 电流极限处的转矩增益（选型用；也是 `torque_control` 的钳位系数） |
+| `telemetry.torque` | 已改成 `i_q_filt·kt_eff·GR` |
+
+### 台架验证（2026-11-26，MZW55 / 24.4 V / Keil 镜像）
+
+`python tools/mtpa_test.py --channel COM7 status|verify|budget|peak`（CAN 直连；
+`verify` 会临时关掉 dither/齿槽并最后复原，`budget` 做 ISR A/B，`peak` 临时把
+`i_max` 降到 2 A 在**同一 |I|** 下比转矩）。
+
+实测（`t_ff = ±0.3 N·m`，关 dither/齿槽）：
+
+| 项目 | MTPA 关 | MTPA 开 | 结论 |
+|---|---|---|---|
+| `i_d_des` | 0 | **−0.01357**（+矩）/−0.01357（−矩） | 理论 `(ΔL/λ)Iq² = −0.01344` ✓，两个转向都是 Id<0 ✓ |
+| `kt_eff` | 0.030566 | 0.030570 | 比 1.000069，理论 1.000068 ✓ |
+| **参考转矩** `kt_eff·i_q_des` | 0.033333 | 0.033333 | **相对差 0.000%**（转矩严格守恒）✓ |
+| `|I|`（Id²+Iq² 的模） | 1.09055 | 1.09047 | 比 **0.999924**，理论 1/(1+ξ²/2) = 0.999924 ✓ |
+| `seg_fsm_max` / `total_max` | 2496 / 5248 | 2649 / 5374 | 均在 6000 内，`overrun` 不增加 |
+
+**峰值口径**（`peak`，临时 `i_max = 2 A`、`t_ff = 0.715 N·m` 饱和）：
+
+| 项目 | MTPA 关 | MTPA 开 |
+|---|---|---|
+| `i_d_des` | 0 | **−0.04516**（理论 −0.0452） |
+| `i_q_des` | 2.00000（= i_max） | 1.99949 |
+| `|I|` | 2.00000 | **2.00000**（正好在电流圆上） |
+| 参考转矩 `kt_eff·i_q_des` | 0.061131 | **0.061147** |
+| 比值 | — | **1.000255 = `telemetry.mtpa_gain`** ✓ |
+
+⚠ 关节是**自由**的（阻抗模式 `kp=kd=0`）：0.3 N·m / 300 ms 就能转 12 rad，
+所以峰值测试必须用小 `i_max`（饱和力矩小），台架上不要用 12 A 去试峰值。
+
+`telemetry.torque` 在自由关节上会随运动漂（±5%），所以**判据用参考侧
+`kt_eff·i_q_des`**，不要用测量转矩。
+
+其余检查：
+
+1. **无回归**：`enable_mtpa = 0` 时 `kt_eff == KT`、`i_d_des == 0`、
+   `i_q_des` 仍按 `±i_max` 钳，`csv_csp_test.py sweep` / `iloop_bw.py bode`
+   与改动前一致。
+2. **保护**：`config.torque_lim` 设小值，MTPA 开/关都应稳定钳在同一 N·m
+   （本机 `torque_lim = 3`，两种状态的 `i_max` 都要落在
+   `TORQUE_LIM/(kt_eff·GR·cosφ)`；本机 ξ=0.136，cosφ 项只有 1e-4 量级，
+   台架看不出差别 —— 这条的判据是 `tools/test_mtpa.c` 的 `test_live_limit`
+   加上 `docs/DEV.md` 上一节的仿真表，**强凸极电机才能显出来**）。
+3. **OTA 后**：`system.prefs_loaded = true`、`prefs_sequence` 不变（配置保留）。
+   ⚠ 新增/缺失参数记录时首启会重写一次配置块（`prefs_sequence` +1~2），属正常。
+   ⚠ OTA 期间**不要**在 500 kbit/s 与应用（1 Mbit/s）之间来回切：应用发的帧没人
+   ACK 会让 FDCAN 进 bus-off，本固件不做 bus-off 恢复，只能断电重启
+   （2026-11-26 踩过）。正确顺序：`enter_bootloader_mode` → **重试** `blcan.py sync`
+   直到 `SYNC OK` → `upgrade`，之后再只用 1 Mbit/s 通信。
+
 ## 中断预算（40 kHz = 6000 拍）与它的优化顺序
 
 `timing.*` 端点报的是**周期数**（DWT，240 MHz，1 拍 = 4.17 ns）。2026-11-20 台架
@@ -2338,7 +2538,7 @@ schema 1 → 2 迁移已实机验证（同一块配置，不动 flash）：旧�
 自动检查：`make check`（生成物/文档最新）、
 `make hosttest`（`prefs_codec` + `test_can_cyberbeast` + `test_motion_law` +
 `test_dual_gear` + `test_cogging` + `test_scope_law` + `test_phase_current` +
-`test_endpoint_proto`）、
+`test_dtc_comp` + `test_mtpa` + `test_endpoint_proto`）、
 `make`（链接）。
 上位机侧的 CAN 传输有 `python tools/test_mc_ep_can.py`（或 `make hosttest-py`；
 需要 `pip install python-can`，不需要硬件：用 python-can 的 virtual 总线模拟一台

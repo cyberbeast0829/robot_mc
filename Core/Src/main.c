@@ -78,6 +78,7 @@ uint8_t gear_sec_reversed_flag = 0;		// 副编码器读数方向（1 = 随正转
 uint8_t cogging_en_flag = 0;			// config.cogging_en：默认关（标定成功后再打开）
 uint8_t cogging_valid_flag = 0;			// config.cogging_valid：表有效（标定成功才置 1）
 uint8_t vel_sched_en_flag = 1;			// config.vel_sched_en：测速滞后大时自动降速度环带宽（默认开）
+uint8_t mtpa_en_flag = 0;				// config.enable_mtpa：默认关（SPM 电机没有收益）
 PreferenceWriter prefs;
 
 /* Structs for control, etc */

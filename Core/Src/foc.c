@@ -13,6 +13,7 @@
 #include "hw_config.h"
 #include "user_config.h"
 #include "cogging.h"
+#include "mtpa_law.h"
 #include "phase_current_law.h"
 #include "dtc_comp.h"
 #include "timing.h"
@@ -272,6 +273,12 @@ void init_controller_params(ControllerStruct *controller){
 	/* 电流环 PI 增益由标定的 R/L 推导（未标定时退回常量），见 current_loop_retune() */
 	current_loop_retune(controller);
     controller->flux_linkage = KT/(1.5f*PPAIRS);
+    /* MTPA 的等效转矩常数先按 Id=0 起步；commutate() 每拍刷新。
+     * 整定为 KT 保证 MTPA 关闭时下游（转矩限幅/遥测）逐位不变 */
+    controller->kt_eff = KT;
+    controller->mtpa_id = 0.0f;
+    controller->mtpa_iq_cmd = 0.0f;
+    controller->i_q_peak = I_MAX;
     /* 低边采样窗口阈值（analog_sample / phase_current_law.h）：AR 运行期不变，
      * 所以在这里换算一次，40 kHz 中断里只剩一次比较。必须在 MX_TIM1_Init() 之后 */
     controller->i_min_low_ticks = (uint32_t)(I_SAMPLE_MIN_LOW_FRAC*(float)TIM_PWM->AR + 0.5f);
@@ -313,6 +320,12 @@ void reset_foc(ControllerStruct *controller){
     controller->i_max = I_MAX;
     controller->temp_i_lim = I_MAX;
     controller->pcl_check_needed = 1;
+    /* MTPA 状态同样清零：进电机模式的第一拍 torque_control() 只用 KT 换算，
+     * 别让上一次留下的 Id/kt_eff 参与转矩限幅 */
+    controller->kt_eff = KT;
+    controller->mtpa_id = 0.0f;
+    controller->mtpa_iq_cmd = 0.0f;
+    controller->i_q_peak = I_MAX;
     /* 每次进电机模式都按当前标定的 R/L 与 config.i_bw 重算电流环增益，这样
      * 标定完成或改了 i_bw 都不必等重启。纯浮点运算，只在状态切换时执行一次 */
     current_loop_retune(controller);
@@ -437,12 +450,262 @@ void update_observer(ControllerStruct *controller, ObserverStruct *observer)
     */
 }
 
+/* ---- MTPA（每安培最大转矩）：见 Core/Inc/mtpa_law.h 的推导与不变式 ----
+ *
+ * 要不要真的去算：默认关；SPM 电机（凸极太弱）、未标定、以及**惯量/齿槽标定期间**
+ * 都不参与 —— 那两套标定都用 KT 把电流换算成转矩（ml_inertia_from_slopes /
+ * ml_tune_gains），MTPA 会改变这个隐含增益，测出来的 J 和齿槽表会带系统偏差。
+ * 这些门都在 `mtpa_service()`（主循环）里算成 `mtpa_ready`，中断只看它 + 两个
+ * 标定状态；关闭时 mtpa_apply()/field_weaken() 都走原来逐位不变的路径。
+ *
+ * 为什么是"主循环建表、中断查表"：直接在 40 kHz 中断里解 MTPA 方程（Newton +
+ * 有理化）在台架上实测让 seg_fsm_max 从 2551 涨到 3366（**+815 拍 / +32%**）——
+ * 本仓库的中断已经跑到 ~96% 的周期预算，而 flash 等待 + ICACHE 未命中会把每条
+ * 指令放大到约 2.7 拍，300 条指令就变成 800 拍。所以求解搬到主循环：
+ * 参数（KT/PPAIRS/LD/LQ/I_MAX/mtpa_id_frac）变化时重建一张表（约 12 µs），
+ * 中断里只剩一次乘法、一次取整和两次线性插值（约 30 条指令）。
+ * 表范围 [0, I_MAX·g]（g = 电流圆上的转矩增益，见 mtpa_law.h）：上界就是
+ * torque_control() 的钳位上限，顶端几格落在饱和分支（圆上最优点，恒定）。
+ * 点数由 host 测试 test_table_resolution 守着：49 点时强凸极（ξ=3）的插值误差
+ * 也有 0.06% 满量程转矩 / 0.15% Imax 的 Id，本机（ξ=0.14）是 0.0004% 量级。 */
+
+#define MTPA_TAB_N	49
+
+typedef struct{
+	float inv_da;					// (MTPA_TAB_N-1)/I_MAX，把 |iq_cmd| 换算成表下标
+	float id[MTPA_TAB_N];			// 有符号（凸极电机为负）
+	float iq[MTPA_TAB_N];			// |Iq|（正）
+} MtpaTable;
+
+/* 常量缓存：λ / ΔL 只在标定或改参数时变，中断里直接读快照 */
+typedef struct{
+	float kt, ppairs, ld, lq;		// 缓存键：变了就重算
+	float lambda, dL;
+	int ok;							// 0 = 参数不可用（未标定 / 非法）
+} MtpaConsts;
+static MtpaConsts mtpa_c;
+
+static MtpaTable mtpa_tab[2];			// 双缓冲：中断只读 mtpa_tab_gen 指定的那张
+static volatile uint8_t mtpa_tab_gen;
+static volatile uint8_t mtpa_ready;		// 主循环维护：开关/参数/凸极都允许
+/* **实际**电流上限处的转矩增益 g = i_q_peak/i_max（≥1）。由 commutate() 每拍更新，
+ * 因为 i_max 会被温度降流/转矩限幅改动，而表的 Id(Iq) 轨迹与电流上限无关 ——
+ * 见 mtpa_iq_peak() 的注释。MTPA 未就绪时恒为 1 */
+static float mtpa_scale_f = 1.0f;
+static float mtpa_lambda_f, mtpa_dL_f;	// mtpa_ready 为 1 时中断直接用
+/* mtpa_iq_peak() 的缓存：实际上限变化不大就复用上次的峰值（见该函数注释） */
+static float mtpa_peak_in = -1.0f, mtpa_peak_out;
+
+static const MtpaConsts *mtpa_consts(void)
+{
+	if ((mtpa_c.kt != KT) || (mtpa_c.ppairs != PPAIRS) || (mtpa_c.ld != L_D) || (mtpa_c.lq != L_Q)) {
+		mtpa_c.kt = KT;
+		mtpa_c.ppairs = PPAIRS;
+		mtpa_c.ld = L_D;
+		mtpa_c.lq = L_Q;
+		mtpa_c.ok = (KT > 0.0f) && (PPAIRS > 0.0f) && (L_D > 0.0f) && (L_Q > 0.0f) && (L_D != L_Q);
+		if (mtpa_c.ok) {
+			mtpa_c.lambda = KT/(1.5f*PPAIRS);
+			mtpa_c.dL = L_D - L_Q;
+		} else {
+			mtpa_c.lambda = 0.0f;
+			mtpa_c.dL = 0.0f;
+		}
+	}
+	return &mtpa_c;
+}
+
+/* 中断侧的门：主循环算好的 mtpa_ready + 两个标定状态（由中断自己改，必须现场看） */
+static inline int mtpa_on(const ControllerStruct *controller)
+{
+	return mtpa_ready
+	    && (controller->inertia_state == INERTIA_IDLE)
+	    && (cogging_cal.state == COG_CAL_IDLE)
+	    && !controller->cogging_req;
+}
+
+/* 主循环：重建表 + 刷新 mtpa_ready。每 ~1 ms 调一次，只有参数变化时才真的干活 */
+void mtpa_service(void)
+{
+	static float key_kt, key_pp, key_ld, key_lq, key_imax, key_frac;
+	static int key_init;
+	const MtpaConsts *c = mtpa_consts();
+	int ok;
+
+	if (!c->ok || !(I_MAX > 0.0f) || !(MTPA_ID_FRAC > 0.0f)) {
+		mtpa_ready = 0;
+		return;
+	}
+	ok = (MTPA_EN != 0)
+	     && (ml_mtpa_saliency(I_MAX, c->lambda, c->dL) >= ML_MTPA_SALIENCY_MIN);
+
+	if (!(key_init
+	      && (key_kt == KT) && (key_pp == PPAIRS) && (key_ld == L_D) && (key_lq == L_Q)
+	      && (key_imax == I_MAX) && (key_frac == MTPA_ID_FRAC))) {
+		uint8_t g = (uint8_t)(mtpa_tab_gen ^ 1u);
+		MtpaTable *t = &mtpa_tab[g];
+		/* 表的上界 = I_MAX 这个电流圆上还能交付的最大 q 指令（SPM 等价）= I_MAX·g。
+		 * 顶端几格落入 ml_mtpa_split() 的饱和分支（圆上最优点，恒定）。
+		 * 表只锚在**配置**的 I_MAX 上；实际电流上限（温度降流/转矩限幅）更小时，
+		 * 由 mtpa_iq_peak() 按小圆重新收口，不需要重建表。
+		 * g 钳在 [1, 8)：增益 8 对应 ξ≈16，已经不是"凸极"而是参数错误了 */
+		float gs = ml_mtpa_gain_at_limit(c->lambda, c->dL, I_MAX, MTPA_ID_FRAC);
+		float a_max;
+		int k;
+
+		if (!(gs >= 1.0f) || !(gs < 8.0f)) { gs = 1.0f; }
+		a_max = I_MAX*gs;
+
+		key_kt = KT; key_pp = PPAIRS; key_ld = L_D; key_lq = L_Q;
+		key_imax = I_MAX; key_frac = MTPA_ID_FRAC;
+		key_init = 1;
+
+		t->inv_da = (float)(MTPA_TAB_N - 1)/a_max;
+		for (k = 0; k < MTPA_TAB_N; k++) {
+			float a = (float)k*a_max/(float)(MTPA_TAB_N - 1);
+			ml_mtpa_t r = ml_mtpa_split(a, c->lambda, c->dL, I_MAX, MTPA_ID_FRAC);
+			t->id[k] = r.id;
+			t->iq[k] = fabsf(r.iq);
+		}
+		mtpa_tab_gen = g;		/* 发布：中断下次就读到新表 */
+	}
+
+	/* 快照与开关**最后**发布，保证中断看到 mtpa_ready=1 时表和常量都已就绪 */
+	mtpa_lambda_f = c->lambda;
+	mtpa_dL_f = c->dL;
+	mtpa_ready = (uint8_t)ok;
+	mtpa_peak_in = -1.0f;		/* 参数/开关变了：让 i_q_peak 的缓存失效 */
+}
+
+/* 把**实际**电流上限换算成 SPM 等价 q 电流峰值（≥ i_max）。
+ *
+ * 为什么必须按实际（而不是配置的 I_MAX）算：表的 Id(Iq) 轨迹只由 λ/ΔL 决定、与电流
+ * 上限无关，但"饱和点"在圆上。温度降流把 i_max 压到 I_MAX 的 30% 时，若仍按大圆的
+ * 比例取 Id，小圆上就会留下一个过深的 Id、Iq 被 √(i_max²−Id²) 卡住 —— 台架仿真：
+ * ξ=3 的电机降流到 15% 时 MTPA 只有 SPM 转矩的 72%（比不开还差）。按实际圆收口后
+ * 同样工况是 108%。 */
+static float mtpa_iq_peak(float i_max)
+{
+	if (!mtpa_ready) {
+		mtpa_peak_in = -1.0f;
+		mtpa_scale_f = 1.0f;
+		return i_max;
+	}
+	/* 只在**实际**上限变化超过 2% 时重算（两次开方 + 三次除法，稳态下这块完全不执行；
+	 * 温度降流是 0.1 s 低通后的慢变量）。缓存值偏大只会让指令被 limit_norm 稍微收一下，
+	 * 方向是安全的。g 也在这里算好，省掉中断里每拍一次除法 */
+	if ((mtpa_peak_in <= 0.0f) || (fabsf(i_max - mtpa_peak_in) > 0.02f*mtpa_peak_in)) {
+		float p;
+		if (!(i_max > 0.0f)) { mtpa_peak_in = -1.0f; mtpa_scale_f = 1.0f; return i_max; }
+		p = ml_mtpa_iq_cmd_at_limit(mtpa_lambda_f, mtpa_dL_f, i_max, MTPA_ID_FRAC);
+		mtpa_peak_out = (p > i_max) ? p : i_max;
+		mtpa_peak_in = i_max;
+		mtpa_scale_f = mtpa_peak_out/i_max;
+	}
+	return mtpa_peak_out;
+}
+
+/* 电流上限的换算系数 g（≥1）：SPM 等价 i_q 域的上限 = 物理电流上限 × g。
+ * 按**实际**电流上限算（commutate() 每拍更新），MTPA 未激活时恒为 1（逐位不变）。 */
+float mtpa_iq_scale(void)
+{
+	return mtpa_scale_f;
+}
+
+void mtpa_apply(ControllerStruct *controller)
+{
+	controller->mtpa_id = 0.0f;
+	controller->mtpa_iq_cmd = 0.0f;
+	if (!mtpa_on(controller)) { return; }
+
+	{
+		const MtpaTable *t = &mtpa_tab[mtpa_tab_gen];
+		float cmd = controller->i_q_des;
+		float lim = controller->i_q_peak;		/* 上一拍：实际电流上限的 SPM 等价峰值 */
+		float x, f, id, iq;
+		int i, i1;
+
+		if (!isfinite(cmd)) {
+			/* 坏指令不进控制环：连 Id 一起清零，别留上一拍的 i_d_des */
+			controller->i_d_des = 0.0f;
+			controller->i_q_des = 0.0f;
+			return;
+		}
+		/* 按**实际**电流圆收口（温度降流/转矩限幅后 i_max 可能远小于 I_MAX）。
+		 * 表锚在 I_MAX，但轨迹与电流上限无关，钳到小圆的 SPM 等价峰值后查表
+		 * 得到的仍正是小圆上的 MTPA 最优点（圆上最优点恒在轨迹上） */
+		if (cmd > lim) { cmd = lim; }
+		if (cmd < -lim) { cmd = -lim; }
+
+		x = fabsf(cmd)*t->inv_da;
+		if (!(x <= (float)(MTPA_TAB_N - 1))) { x = (float)(MTPA_TAB_N - 1); }
+		if (x < 0.0f) { x = 0.0f; }
+		i = (int)x;
+		f = x - (float)i;
+		i1 = (i < (MTPA_TAB_N - 1)) ? (i + 1) : (MTPA_TAB_N - 1);
+		id = t->id[i] + f*(t->id[i1] - t->id[i]);
+		iq = t->iq[i] + f*(t->iq[i1] - t->iq[i]);
+
+		controller->mtpa_iq_cmd = cmd;		/* 转矩当量，field_weaken() 要用 */
+		controller->mtpa_id = id;			/* Id 与转矩方向无关（磁阻 ∝ Id·Iq） */
+		controller->i_d_des = id;
+		controller->i_q_des = (cmd < 0.0f) ? -iq : iq;
+	}
+}
+
+/* telemetry.mtpa_gain：电流极限处 MTPA 相对 SPM 的转矩增益（主循环调用，1 = 没用） */
+float mtpa_gain(void)
+{
+	const MtpaConsts *c = mtpa_consts();
+	if (!c->ok) { return 1.0f; }
+	return ml_mtpa_gain_at_limit(c->lambda, c->dL, I_MAX, MTPA_ID_FRAC);
+}
+
 void field_weaken(ControllerStruct *controller)
 {
        /// Field Weakening ///
 
        controller->fw_int += controller->ki_fw*(controller->v_max - 1.0f - controller->v_ref);
        controller->fw_int = fast_fmaxf(fast_fminf(controller->fw_int, 0.0f), -fast_fminf(I_FW_MAX, controller->i_max));
+
+       if (mtpa_on(controller)) {
+           /* ---- MTPA + 弱磁：两个都是 ≤0 的 Id，取更深的那个，**不叠加** ----
+            * Id 变了之后按"转矩不变"重算 Iq（Iq = iq_cmd·λ/(λ+ΔL·Id)），再按电流圆收口。
+            * 见 mtpa_law.h 的文件头，以及 ODrive 的 vesc_field_weakening.cpp 末尾。
+            * λ/ΔL 用主循环发布的快照，中断里只做一次除法（λ/kt）与一次开方（qmax，
+            * 且只在实际需要收口时才开方） */
+           const float lambda = mtpa_lambda_f;
+           const float id = fast_fminf(controller->i_d_des, controller->fw_int);
+
+           controller->i_d_des = id;
+           if (id == 0.0f) {
+               /* 没弱磁、MTPA 也没让 Id 离 0：与旧快路径等价，省掉除法/开方 */
+               controller->i_q_des = fast_fmaxf(fast_fminf(controller->mtpa_iq_cmd, controller->i_max), -controller->i_max);
+               return;
+           }
+           {
+               float kt = lambda + mtpa_dL_f*id;
+               float iq, q2, qmax;
+               if (!(kt > 0.5f*lambda)) {
+                   /* 参数异常（Ld/Lq 填错、或 Id 太深）：整对退回 SPM，别留下
+                    * 一个 kt 与 (Id,Iq) 不自洽的工作点 */
+                   controller->i_d_des = 0.0f;
+                   controller->i_q_des = fast_fmaxf(fast_fminf(controller->mtpa_iq_cmd, controller->i_max), -controller->i_max);
+                   return;
+               }
+               iq = controller->mtpa_iq_cmd*(lambda/kt);
+               q2 = controller->i_max*controller->i_max - id*id;
+               /* 先比平方再开方：正常工况（|Iq| 远小于圆上余量）直接跳过 sqrtf */
+               if ((q2 <= 0.0f) || (iq*iq > q2)) {
+                   qmax = (q2 > 0.0f) ? sqrtf(q2) : 0.0f;
+                   controller->i_q_des = fast_fmaxf(fast_fminf(iq, qmax), -qmax);
+               } else {
+                   controller->i_q_des = iq;
+               }
+           }
+           return;
+       }
+
        /* Reduce the q current reference magnitude as field weakening increases, saturating at zero */
        if(controller->i_q_des > 0.0f){controller->i_q_des = fast_fmaxf(controller->i_q_des + controller->fw_int, 0.0f);}
        else{controller->i_q_des = fast_fminf(controller->i_q_des - controller->fw_int, 0.0f);}
@@ -500,13 +763,45 @@ void commutate(ControllerStruct *controller, EncoderStruct *encoder)
                i_lim *= frac;
            }
            /* config.torque_lim 是**输出端** N·m，与 command.t_ff / telemetry.torque
-            * 同量纲；换算到电机端安培是 /(KT*GR) */
-           if((TORQUE_LIM > 0.0f) && (KT*GR > 0.0f)){
-               float t_lim = TORQUE_LIM/(KT*GR);
-               if(t_lim < i_lim){i_lim = t_lim;}
+            * 同量纲；换算到电机端安培是 /(KT*GR)。
+            * MTPA 下"每安培的转矩"是 kt_eff 而不是 KT，但转矩由 **i_q** 产生、限幅却
+            * 作用在 |I| 上，所以要再除本拍电流矢量的 q 轴占比 cosφ = |iq|/|I|：
+            *   |I|_torque = TORQUE_LIM / (GR·kt_eff·cosφ)
+            * 只除 kt_eff（假设 cosφ=1）会让实际可交付转矩比配置值小（ξ=3 的电机在
+            * 满电流时只剩 59%）。MTPA 关时 Id=0 ⇒ cosφ=1，与改动前逐位一致。
+            * 电流方向是**本拍**的（field_weaken 已经定完），kt_eff 是上一拍的
+            * （本拍的 Id 还没定）——与 ODrive 的 max_available_torque() 同一个理由。 */
+           {
+               float kt = controller->kt_eff;
+               if (!(kt > 0.0f) || !isfinite(kt)) { kt = KT; }
+               if ((TORQUE_LIM > 0.0f) && (kt*GR > 0.0f)) {
+                   float t_lim = TORQUE_LIM/(kt*GR);
+                   /* 只有"可能生效"时才去算 cosφ（一次开方 + 一次除法），
+                    * 而 cosφ ≤ 1 只会把上限**抬高**，所以 t_lim ≥ i_lim 时必然不生效 */
+                   if (t_lim < i_lim) {
+                       /* 只有 d 轴真有电流（MTPA/弱磁）时 cosφ 才不等于 1；Id=0 的
+                        * 常见情形连开方都不做，与改动前逐位一致且零开销 */
+                       if (controller->i_d_des != 0.0f) {
+                           float m2 = controller->i_d_des*controller->i_d_des
+                                    + controller->i_q_des*controller->i_q_des;
+                           if (m2 > 0.0f) {
+                               float cosphi = fabsf(controller->i_q_des)/sqrtf(m2);
+                               /* cosφ 很小说明电流几乎全在 d 轴：限幅不适用 */
+                               if (cosphi > 0.05f) { t_lim /= cosphi; }
+                           }
+                       }
+                       if(t_lim < i_lim){i_lim = t_lim;}
+                   }
+               }
            }
            controller->i_max = i_lim;
            controller->temp_i_lim = i_lim;
+
+           /* MTPA：实际电流上限对应的 SPM 等价 q 电流峰值与增益 g。表的轨迹与电流
+            * 上限无关，所以降流不需要重建表，只需要按小圆重新收口（见 mtpa_iq_peak，
+            * g 在里面一起算好并缓存）。torque_control() / motion.c 用它当钳位上限，
+            * mtpa_apply() 用它兜底 */
+           controller->i_q_peak = mtpa_iq_peak(i_lim);
        }
 
        /* 母线电流软限幅：只按比例回压，不锁故障（估算值不足以判断过流）。
@@ -520,6 +815,14 @@ void commutate(ControllerStruct *controller, EncoderStruct *encoder)
        }
 
        limit_norm(&controller->i_d_des, &controller->i_q_des, controller->i_max);	// 2.3 us
+
+       /* 等效转矩常数（含磁阻分量）：本拍的 Id 到这里才定下来（MTPA 与弱磁都写完了）。
+        * MTPA 关、Id=0 时 kt_eff == KT，转矩限幅/机械功率/遥测全部逐位不变。
+        * 下限 5% KT 挡住 Ld/Lq 填错时 kt_eff 变成 0/负（那会让 i_q_des = τ/kt 爆掉）。 */
+       {
+           float kt = KT + 1.5f*PPAIRS*(L_D - L_Q)*controller->i_d_des;
+           controller->kt_eff = (kt > 0.05f*KT) ? kt : KT;
+       }
 
        /// PI Controller ///
        float i_d_error = controller->i_d_des - controller->i_d;
@@ -617,7 +920,7 @@ void commutate(ControllerStruct *controller, EncoderStruct *encoder)
            controller->i_bus_filt = (1.0f-VBUS_FILT_ALPHA)*controller->i_bus_filt
                                   + VBUS_FILT_ALPHA*i_bus;
            /* 机械功率：输出端转矩 × 输出轴角速度（>0 输出机械功，<0 回馈） */
-           controller->mech_power = controller->i_q_filt*KT*GR*controller->dtheta_mech;
+           controller->mech_power = controller->i_q_filt*controller->kt_eff*GR*controller->dtheta_mech;
        }
 
     }
@@ -680,7 +983,14 @@ void torque_control(ControllerStruct *controller){
 
 	controller->t_ff_filt = 0.9f*controller->t_ff_filt + 0.1f*t_ff;
     float torque_des = controller->kp*(controller->p_des - controller->theta_mech) + controller->t_ff_filt + controller->kd*(controller->v_des - controller->dtheta_mech);
-    controller->i_q_des = fast_fmaxf(fast_fminf(torque_des/(KT*GR), controller->i_max), -controller->i_max);
+    {
+        /* MTPA：电流上限在"SPM 等价 i_q"域里是 i_q_peak —— 实际电流圆上还能多出
+         * 这份转矩（= telemetry.mtpa_gain），饱和时就是峰值转矩提升。
+         * MTPA 未激活时 i_q_peak == i_max，钳位与改动前逐位一致。
+         * `i_max` 仍是**物理**电流上限，commutate() 的 limit_norm 仍按它收口 */
+        float i_lim = controller->i_q_peak;
+        controller->i_q_des = fast_fmaxf(fast_fminf(torque_des/(KT*GR), i_lim), -i_lim);
+    }
 
     /* config.enable_torque_vel_lim（默认关）：阻抗/力矩/电流模式下也限制速度。
      * 与 ODrive 的 limitVel() 同构，只是直接在安培域做 —— VEL_GAIN 就是

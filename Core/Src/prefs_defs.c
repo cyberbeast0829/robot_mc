@@ -111,6 +111,8 @@ const prefs_entry_t prefs_entries[] = {
 	{282, PREFS_T_F32, 4, (void *)&(DITHER_AMP)},
 	{283, PREFS_T_F32, 4, (void *)&(DITHER_FREQ)},
 	{284, PREFS_T_F32, 4, (void *)&(DITHER_V_MAX)},
+	{287, PREFS_T_BOOL, 1, (void *)&(MTPA_EN)},
+	{288, PREFS_T_F32, 4, (void *)&(MTPA_ID_FRAC)},
 };
 const unsigned prefs_entry_count = sizeof(prefs_entries) / sizeof(prefs_entries[0]);
 
@@ -216,6 +218,8 @@ void config_apply_defaults(void){
 	DITHER_AMP = 0.1f;
 	DITHER_FREQ = 300.0f;
 	DITHER_V_MAX = 0.5f;
+	MTPA_EN = 0;
+	MTPA_ID_FRAC = 0.9f;
 }
 
 void config_apply_limits(void){
@@ -434,4 +438,8 @@ void config_apply_limits(void){
 	if(!isfinite(DITHER_V_MAX)){DITHER_V_MAX = 0.5f;}
 	if(DITHER_V_MAX < 0.0f){DITHER_V_MAX = 0.0f;}
 	if(DITHER_V_MAX > 20.0f){DITHER_V_MAX = 20.0f;}
+	if(MTPA_EN > 1){MTPA_EN = 1;}
+	if(!isfinite(MTPA_ID_FRAC)){MTPA_ID_FRAC = 0.9f;}
+	if(MTPA_ID_FRAC < 0.0f){MTPA_ID_FRAC = 0.0f;}
+	if(MTPA_ID_FRAC > 0.95f){MTPA_ID_FRAC = 0.95f;}
 }

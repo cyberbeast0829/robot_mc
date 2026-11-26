@@ -528,7 +528,14 @@ void motion_control(ControllerStruct *controller, EncoderStruct *encoder)
 			}
 			const float i_ff = ml_friction_ff(FRIC_COULOMB, FRIC_VISCOUS, FRIC_EPS,
 			                                  controller->v_setpoint);
-			controller->i_q_ref = ml_vel_pi_ff(vg, vig, controller->i_cmd_max,
+			/* 帧里的 cur_limit 是**物理**电流上限；MTPA 下"SPM 等价 i_q"域还能多出
+			 * g 倍（同电流、更多转矩），所以限幅乘 mtpa_iq_scale()。再用 i_q_peak
+			 * 兜住 —— cur_limit 是按 I_MAX 钳的，温度降流后可能大于实际上限。
+			 * MTPA 未激活时 g=1 且 i_q_peak == i_max，行为与改动前逐位一致。实际 |I|
+			 * 仍由 commutate() 的 limit_norm 按物理 i_max 收口 */
+			float i_lim = controller->i_cmd_max*mtpa_iq_scale();
+			if(i_lim > controller->i_q_peak){ i_lim = controller->i_q_peak; }
+			controller->i_q_ref = ml_vel_pi_ff(vg, vig, i_lim,
 			                                   &controller->vel_integ,
 			                                   controller->v_setpoint, v_meas,
 			                                   i_ff, dt_v);

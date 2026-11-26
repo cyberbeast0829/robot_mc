@@ -41,6 +41,8 @@ ID 由 `tools/endpoint_ids.json` 锁定，固件升级不会改变；`access` �
 | `config.torque_ramp_rate` | 184 | float | rw | N-m/s | 0.0 .. 10000.0 | 1.0 | 是 | input_mode=6（转矩斜坡）下前馈转矩的变化率；0 = 不限（直通）。只在阻抗/MIT 模式下生效 |
 | `config.enable_vel_limit` | 185 | bool | rw |  | — | 1 | 是 | 速度设定值限幅总开关：false 时 CSV/CSP/帧内 vel_limit 都不再受 config.v_max 约束（此时 command.v_des 的物理范围是 ±200 rad/s）。默认 true |
 | `config.enable_torque_vel_lim` | 186 | bool | rw |  | — | 0 | 是 | 阻抗/力矩/电流模式下的速度限制开关：打开后按 i_q <= (v_max - v)·vel_gain 限制推力，防止超过 v_max（默认关，与改动前行为一致） |
+| `config.enable_mtpa` | 287 | bool | rw |  | — | 0 | 是 | MTPA（每安培最大转矩）总开关：凸极电机（Ld<Lq）在 d 轴注入负电流，用磁阻转矩换更高的每安培转矩，转矩指令保持不变。默认关；SPM 电机（凸极指数 i_max·\|Ld-Lq\|/λ < 0.02）开了也自动退化为恒等；惯量/齿槽标定期间自动跳过。收益读 telemetry.mtpa_gain |
+| `config.mtpa_id_frac` | 288 | float | rw |  | 0.0 .. 0.95 | 0.9 | 是 | MTPA 的 d 轴电流上限系数：\|Id\| <= frac·i_max，防止 Ld/Lq 填错时把 d 轴电流推大。0.9 对凸极指数 <=3 的电机都不会碰到；0 = 不做 MTPA |
 | `config.pos_error_fault` | 141 | float | rw | rad | 0.0 .. 1000.0 | 0.0 | 是 | 位置跟随误差故障阈值（输出轴）；0 = 关闭。只在位置环未被速度限幅饱和时判定，需持续 100 ms；必须小于 v_max/pos_gain 才会触发 |
 | `config.pll_bandwidth` | 142 | float | rw | rad/s | 20.0 .. 5000.0 | 3000.0 | 是 | 编码器速度 PLL 带宽（速度环/位置环的反馈来源）；越大相位滞后越小、噪声越大。这是速度环真正的瓶颈：P-only 自激频率随它走（1k/2k/4k/5k → 109/157/206/224 Hz）。默认 3000（约 477 Hz）：2000 时 vel_gain 2.23 的 5 rad/s 阶跃过冲 52%，3000 降到 38% 而静止电流噪声只从 0.088 涨到 0.103 A |
 | `config.inertia` | 151 | float | rw | kg·m^2 | 0.0 .. 100.0 | 0.000996 | 是 | 输出端惯量（关节折算值）。可由 action.measure_inertia 测得（只写 RAM，不自动保存）；用于推荐增益与 pos_error_fault。0 = 未知。默认 0.000996 来自 2026-11-16 台架（GR 9、KT 0.0335）；2026-11-06 同一台架测得 0.000865~0.000967（极差 11%、σ 3.7%） |
@@ -186,6 +188,9 @@ ID 由 `tools/endpoint_ids.json` 锁定，固件升级不会改变；`access` �
 | `telemetry.i_scale` | 87 | float | r | A/count | — | — | 否 | 相电流标定系数 |
 | `telemetry.flux_linkage` | 88 | float | r | Wb | — | — | 否 | 磁链 λ（标定得出；由 KT 与极对数换算） |
 | `telemetry.ld_lq_diff` | 135 | float | r | H | — | — | 否 | 感差 Ld-Lq（标定得出；凸极电机为负） |
+| `telemetry.current_kt_eff` | 289 | float | r | N-m/A | — | — | 否 | 含磁阻分量的等效转矩常数（电机端）：KT + 1.5·ppairs·(Ld-Lq)·Id，Id 取本拍最终值（含 MTPA 与弱磁）。MTPA 关时为 config.kt |
+| `telemetry.mtpa_id` | 290 | float | r | A | — | — | 否 | MTPA 单独给出的 d 轴电流（A，≤0）；弱磁更深时与 telemetry.i_d_des 不同，用来确认 MTPA 在起作用 |
+| `telemetry.mtpa_gain` | 291 | float | r |  | — | — | 否 | 电流极限处 MTPA 相对 SPM 的转矩增益（1 = 没有收益）。= 有效磁链比 × 电流圆上的 q 轴占比；本机（MZW55，12 A）约 1.009，凸极指数 0.5 约 1.10、3.0 约 2.24 |
 | `telemetry.current_k_d` | 214 | float | r | V/A | — | — | 否 | 电流环 d 轴 P 增益（指令伏/A，由 config.i_bw 与标定的 l_d 推导，见 current_loop_retune()） |
 | `telemetry.current_k_q` | 215 | float | r | V/A | — | — | 否 | 电流环 q 轴 P 增益（指令伏/A）；凸极电机 q 轴电感更大，所以 k_q > k_d |
 | `telemetry.current_ki_d` | 216 | float | r |  | — | — | 否 | 电流环 d 轴积分零点（rad/sample）= 1-exp(-r_phase*DT/l_d)，与带宽无关 |

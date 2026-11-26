@@ -868,6 +868,53 @@ dev.call("action.save")                   # 门极关闭（回到菜单）时才
 - 表是**隐藏记录**，不在第 6 节的 backup/restore 里（换控制器板要重标，不能靠
   参数备份搬过去）。
 
+## 5.3 MTPA（每安培最大转矩）
+
+凸极电机（IPM，`Ld < Lq`）的 d 轴电流**也**能产生转矩（磁阻转矩）。打开 MTPA 后，
+同样的转矩只需要更少的电流 —— 热裕度更好、效率更高，**转矩指令本身不变**。
+
+```python
+print(dev.read("telemetry.mtpa_gain"))      # 电流极限处的转矩增益（1 = 没收益）
+print(dev.read("telemetry.ld_lq_diff"))     # Ld - Lq（标定得出，凸极电机为负）
+
+dev.write("config.enable_mtpa", True)       # 打开（默认关）
+dev.call("action.save")                     # 保存（门极必须关闭）
+```
+
+**要不要开？** 先读 `telemetry.mtpa_gain`：
+
+| `mtpa_gain` | 含义 | 建议 |
+|---|---|---|
+| 1.0000 ~ 1.001 | 凸极几乎为零（SPM 电机） | 开了也自动退化，无意义 |
+| 1.001 ~ 1.02 | 弱凸极 | 收益很小，可不折腾 |
+| > 1.02 | 明显凸极 | **开**，热裕度/效率有实际收益 |
+
+**怎么确认在起作用**
+
+```python
+dev.call("action.motor_mode")               # 进电机模式（先标定过）
+print(dev.read("telemetry.mtpa_id"))        # MTPA 给出的 Id（A，≤0）
+print(dev.read("telemetry.current_kt_eff")) # 含磁阻分量的等效 Kt（≥ config.kt）
+print(dev.read("telemetry.i_d_des"))        # 实际下发的 Id（含弱磁）
+print(dev.read("telemetry.torque"))         # 已按 kt_eff 计算
+```
+
+**注意**
+
+- 只影响**电机模式**；惯量/齿槽标定期间自动跳过（那两套标定按 `KT` 的线性转矩
+  关系整定），所以标定结果不受影响。
+- 弱磁（`config.i_fw_max`）仍然有效：两者都往 d 轴加电流时取更深的那个，不叠加。
+- `config.mtpa_id_frac`（默认 0.9）是 `|Id|` 的上限系数，防止 Ld/Lq 填错时把 d 轴
+  电流推大；正常电机不会碰到，除非你确实想限制 d 轴电流。
+- **峰值转矩也跟着提高**：电流上限在"转矩当量"口径里乘 `mtpa_gain`，所以顶到电流
+  上限时输出转矩是 `mtpa_gain ×`（12 A 的台架电机是 +0.9%，强凸极电机可以到 +10%
+  甚至更多）。温度降流后也一样（按降流后的电流圆重算，不会因为 d 轴电流过深而
+  反而变小）。转矩限幅 `config.torque_lim` 仍是输出端 N·m，不受影响。
+- 速度环/位置环增益**不用重调**：`i_q_des` 到转矩仍然是严格的 `KT·GR`
+  （保转矩拆解），同一套 `pos_gain`/`vel_gain`/`vel_integrator_gain` 即可。
+- 老协议（11-bit）的 12 位力矩字段量程仍是 `i_max·kt·gr`，强凸极电机满力矩时该字段
+  可能饱和；要精确读数用 `telemetry.torque` 或 CYBERBEAST/endpoint。
+
 ## 6. 备份与恢复
 
 只备份"持久化 = 是"的参数（见 [parameters.md](parameters.md)）。LUT 是隐藏记录，

@@ -77,6 +77,17 @@ typedef struct{
     float d_int, q_int;                                     // Current error integrals
 	int adc_a_offset, adc_b_offset, adc_c_offset;		// Physical ADC1/2/3 zero offsets; independent of PHASE_ORDER
     float i_d_des, i_q_des, t_ff_filt;                      // Current references
+	/* ---- MTPA（config.enable_mtpa，数学见 mtpa_law.h，实现在 foc.c 的 mtpa_apply）----
+	 * i_q_des 是"SPM 等价"的 q 轴电流（τ = KT·i_q_des），mtpa_apply() 把它拆成
+	 * (i_d_des, i_q_des)，所以：
+	 *   mtpa_iq_cmd —— 拆解**之前**的 q 轴电流（转矩当量），field_weaken() 用它
+	 *                  在弱磁加深 Id 之后重算 Iq（保转矩）；
+	 *   mtpa_id     —— MTPA 单独给出的 Id（弱磁更深时与 i_d_des 不同，调试用）；
+	 *   kt_eff      —— 含磁阻分量的等效转矩常数 λ+ΔL·Id 乘 1.5·PPAIRS（电机端
+	 *                  N·m/A）。MTPA 关且 Id=0 时恒等于 KT，下游逐位不变。
+	 *   i_q_peak    —— **实际**电流上限（含温度降流/转矩限幅）在 SPM 等价 q 域里的
+	 *                  峰值（≥ i_max），由 commutate() 每拍更新；MTPA 关时等于 i_max。 */
+	float mtpa_iq_cmd, mtpa_id, kt_eff, i_q_peak;
     int loop_count;                                         // Degubbing counter
     int timeout;                                            // Watchdog counter
     union{
@@ -191,6 +202,18 @@ void current_loop_retune(ControllerStruct *controller);
 void commutate(ControllerStruct *controller, EncoderStruct *encoder);
 void commutate_open_loop(ControllerStruct *controller, EncoderStruct *encoder);
 void torque_control(ControllerStruct *controller);
+/* MTPA：把 SPM 等价的 i_q_des 拆成 (i_d_des, i_q_des)。在 fsm.c 的 MOTOR_MODE 里
+ * 紧跟 cogging_apply()、在 field_weaken() 之前调用。config.enable_mtpa 关、
+ * 或凸极太弱、或正在做惯量/齿槽标定时是空调用（一条比较 + 返回）。 */
+void mtpa_apply(ControllerStruct *controller);
+/* 主循环：按参数变化重建 MTPA 查表并刷新 mtpa_ready（run_fsm_slow 每轮调用） */
+void mtpa_service(void);
+/* 电流上限的换算系数 g（≥1）：SPM 等价 i_q 域的上限 = 物理电流上限 × g。
+ * 按**实际**（含温度降流/转矩限幅）的电流上限算，MTPA 未激活时恒为 1。
+ * 给 motion.c 的外环把帧里的物理 cur_limit 换成 SPM 等价上限用 */
+float mtpa_iq_scale(void);
+/* telemetry.mtpa_gain：电流极限处 MTPA 相对 SPM 的转矩增益（1 = 没收益），主循环调用 */
+float mtpa_gain(void);
 /* Control-law dispatcher for MOTOR_MODE (motion.c): picks impedance / velocity /
  * position from controller.ctrl_mode and runs the prescaled outer loops. */
 void motion_control(ControllerStruct *controller, EncoderStruct *encoder);

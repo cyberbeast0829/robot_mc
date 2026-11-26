@@ -169,6 +169,7 @@ HOSTTEST_COG = $(BUILD_DIR)/test_cogging
 HOSTTEST_SCOPE = $(BUILD_DIR)/test_scope_law
 HOSTTEST_IPH = $(BUILD_DIR)/test_phase_current
 HOSTTEST_DTC = $(BUILD_DIR)/test_dtc_comp
+HOSTTEST_MTPA = $(BUILD_DIR)/test_mtpa
 
 hosttest: $(BUILD_DIR)
 	$(HOSTCC) -std=gnu11 -O1 -Wall -Wextra -ICore/Inc tools/test_prefs_codec.c Core/Src/prefs_codec.c -lm -o $(HOSTTEST)
@@ -187,6 +188,8 @@ hosttest: $(BUILD_DIR)
 	./$(HOSTTEST_IPH)
 	$(HOSTCC) -std=gnu11 -O1 -Wall -Wextra -ICore/Inc tools/test_dtc_comp.c -lm -o $(HOSTTEST_DTC)
 	./$(HOSTTEST_DTC)
+	$(HOSTCC) -std=gnu11 -O1 -Wall -Wextra -ICore/Inc tools/test_mtpa.c -lm -o $(HOSTTEST_MTPA)
+	./$(HOSTTEST_MTPA)
 	$(HOSTCC) -std=gnu11 -O1 -Wall -Wextra -ICore/Inc tools/test_endpoint_proto.c Core/Src/endpoint.c -lm -o $(HOSTTEST_EP)
 	./$(HOSTTEST_EP)
 

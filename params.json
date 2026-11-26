@@ -347,6 +347,27 @@
       "default": 0
     },
     {
+      "name": "config.enable_mtpa",
+      "type": "bool",
+      "access": "rw",
+      "ref": "MTPA_EN",
+      "brief": "MTPA（每安培最大转矩）总开关：凸极电机（Ld<Lq）在 d 轴注入负电流，用磁阻转矩换更高的每安培转矩，转矩指令保持不变。默认关；SPM 电机（凸极指数 i_max·|Ld-Lq|/λ < 0.02）开了也自动退化为恒等；惯量/齿槽标定期间自动跳过。收益读 telemetry.mtpa_gain",
+      "persist": true,
+      "default": 0
+    },
+    {
+      "name": "config.mtpa_id_frac",
+      "type": "float",
+      "access": "rw",
+      "ref": "MTPA_ID_FRAC",
+      "min": 0.0,
+      "max": 0.95,
+      "unit": "",
+      "brief": "MTPA 的 d 轴电流上限系数：|Id| <= frac·i_max，防止 Ld/Lq 填错时把 d 轴电流推大。0.9 对凸极指数 <=3 的电机都不会碰到；0 = 不做 MTPA",
+      "persist": true,
+      "default": 0.9
+    },
+    {
       "name": "config.pos_error_fault",
       "type": "float",
       "access": "rw",
@@ -1328,7 +1349,7 @@
       "name": "telemetry.torque",
       "type": "float",
       "access": "r",
-      "get": "controller.i_q_filt * KT * GR",
+      "get": "controller.i_q_filt * controller.kt_eff * GR",
       "unit": "N-m",
       "brief": "输出轴转矩估计"
     },
@@ -1637,6 +1658,30 @@
       "get": "(L_D - L_Q)",
       "unit": "H",
       "brief": "感差 Ld-Lq（标定得出；凸极电机为负）"
+    },
+    {
+      "name": "telemetry.current_kt_eff",
+      "type": "float",
+      "access": "r",
+      "get": "controller.kt_eff",
+      "unit": "N-m/A",
+      "brief": "含磁阻分量的等效转矩常数（电机端）：KT + 1.5·ppairs·(Ld-Lq)·Id，Id 取本拍最终值（含 MTPA 与弱磁）。MTPA 关时为 config.kt"
+    },
+    {
+      "name": "telemetry.mtpa_id",
+      "type": "float",
+      "access": "r",
+      "get": "controller.mtpa_id",
+      "unit": "A",
+      "brief": "MTPA 单独给出的 d 轴电流（A，≤0）；弱磁更深时与 telemetry.i_d_des 不同，用来确认 MTPA 在起作用"
+    },
+    {
+      "name": "telemetry.mtpa_gain",
+      "type": "float",
+      "access": "r",
+      "get": "mtpa_gain()",
+      "unit": "",
+      "brief": "电流极限处 MTPA 相对 SPM 的转矩增益（1 = 没有收益）。= 有效磁链比 × 电流圆上的 q 轴占比；本机（MZW55，12 A）约 1.009，凸极指数 0.5 约 1.10、3.0 约 2.24"
     },
     {
       "name": "telemetry.current_k_d",
