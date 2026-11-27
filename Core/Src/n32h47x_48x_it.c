@@ -1,7 +1,7 @@
 /* USER CODE BEGIN Header */
 /**
   ******************************************************************************
-  * @file    stm32f4xx_it.c
+  * @file    n32h47x_48x_it.c
   * @brief   Interrupt Service Routines.
   ******************************************************************************
   * @attention
@@ -217,10 +217,10 @@ void SysTick_Handler(void)
 }
 
 /******************************************************************************/
-/* STM32F4xx Peripheral Interrupt Handlers                                    */
+/* N32H47x Peripheral Interrupt Handlers                                      */
 /* Add here the Interrupt Handlers for the used peripherals.                  */
 /* For the available peripheral interrupt handler names,                      */
-/* please refer to the startup file (startup_stm32f4xx.s).                    */
+/* please refer to the startup files in Drivers/CMSIS/device/startup.         */
 /******************************************************************************/
 
 /**

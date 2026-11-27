@@ -59,10 +59,12 @@ Two equivalent builds produce the same firmware:
   `Core/Inc`, `Drivers/CMSIS/{core,device}`,
   `Drivers/n32h47x_48x_std_periph_driver/inc`, `Drivers/n32h47x_48x_usbfsd_driver/inc`.
 
-- ⚠ `Core/Inc/stm32f4xx_hal_conf.h` is a stale upstream leftover (STM32F446) used by
-  neither build. `motorcontrol.ioc` is the **STM32F446RETx** CubeMX file — **do not
-  regenerate** from it (it would revert the port); `adc.c`/`tim.c` also contain hand edits
-  *outside* the `USER CODE` blocks that a regeneration would silently drop.
+- ⚠ `adc.c`/`tim.c` contain hand edits *outside* the `USER CODE` blocks that a CubeMX
+  regeneration would silently drop. The STM32F446-era CubeMX/CubeIDE files
+  (`motorcontrol.ioc`, `.cproject`, `.project`, `.mxproject`), the upstream
+  `STM32F446RETX_{FLASH,RAM}.ld` linker scripts, `Core/Inc/stm32f4xx_hal_conf.h` and the
+  IAR startup `startup_n32h473_EWARM.s` were **deleted** in this fork — neither build uses
+  them; don't restore them from upstream merges.
 - ⚠⚠ **The two builds are NOT equivalent on hardware** (2026-10-26 bench): the `make`
   (GNU/`arm-none-eabi-gcc`) image boots and talks CAN, but the commutation encoder reads a
   constant 0 (`telemetry.encoder_raw == 0`, `elec_angle` frozen, `lost_frames == 0`) with the

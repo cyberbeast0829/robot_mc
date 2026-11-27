@@ -6,11 +6,14 @@ Keil/*.uvguix*
 *.map
 *.axf
 *.lnp
-Keil/Objects/*.*
-Keil/Listing/*.*
+Keil/Objects/
+Keil/Listings/
+Keil/RTE/
 Keil/*.scvd
 Keil/*.txt
 Keil/*.ini
+Keil/*.bin
 build/
 __pycache__/
 *.pyc
+.venv/

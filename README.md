@@ -28,8 +28,9 @@ MSYS2 bash：Chocolatey 的 make 用 cmd，`mkdir -p` 会失败。
 
 也支持 **Keil MDK（AC6）**：`Keil/mit_h473.uvprojx`，scatter `Keil/ODrive_N32.sct`。
 
-> ⚠ `motorcontrol.ioc` 是上游 STM32F446 的 CubeMX 文件，**不要重新生成**；
-> `adc.c`/`tim.c` 有 `USER CODE` 块之外的手工修改。
+> ⚠ `adc.c`/`tim.c` 有 `USER CODE` 块之外的手工修改，CubeMX 重新生成会静默丢掉它们。
+> 上游 STM32F446 时代的 `motorcontrol.ioc`、`.cproject`/`.project`/`.mxproject`、
+> `STM32F446RETX_*.ld` 与 `stm32f4xx_hal_conf.h` 已从本仓库删除，不要从上游合并回来。
 
 ## 文档
 
