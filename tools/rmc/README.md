@@ -24,6 +24,7 @@ Windows / Linux 都支持。CAN 适配器按后端另需：
 | `slcan`（CANable / CandleLight，默认） | 仅 `pyserial`（已在依赖里） |
 | `pcan`（PCAN-USB） | 安装 PEAK 的 PCAN-Basic 驱动 |
 | `socketcan`（Linux） | 先 `ip link set can0 up type can bitrate 1000000` |
+| `cansub`（CSS Electronics CANsub，USB / 以太网） | `pip install python-can-cansub`，无需驱动；`--channel aabbccdd-usb.local@1` |
 | `gs_usb` / `kvaser` / `vector` / `ixxat` … | 对应 python-can 后端与厂商驱动 |
 
 ## 五分钟上手
